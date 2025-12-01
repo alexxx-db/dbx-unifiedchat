@@ -1,3 +1,5 @@
+Please resort to context7 MCP server for update-to-date syntax and documentation; please use the .env file for accessing Databricks workspace for resource access.
+
 
 # 1. Requirements for the multi-agent system:
 According to @Super_Agent.ipynb as reference code example, please expand and build a multi-agent system using LangGraph and Databricks ResponseAgent integration. Please stick to `create_langgraph_supervisor` style supervisor agent for now. Please stick to the `LangGraphResponsesAgent` class, adopting the same writing style as the reference code example, writing code into agent.py file, and mlflow logging, deployment practice in the reference code example.
@@ -41,3 +43,6 @@ Please refer to @01_Table_MetaInfo_Update.ipynb as reference code example, and b
     b. please also build the value dictionary for the columns in the delta tables behind all Genie Agents, and enrich the metadata with the value dictionary.
 3. Enrich the the parsed docs from genie spaces space.json exports with the table metadata.
 4. save the enriched parsed docs to a delta table in the unity catalog.
+
+
+Please test each pipeline separately before integrating them into the multi-agent system. Make sure each pipeline is working as expected. Make sure the multi-agent system is working as expected.
