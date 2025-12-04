@@ -125,10 +125,10 @@ class ThinkingPlanningAgent:
         # Get the index
         vs_index = client.get_index(index_name=index_name)
         
-        # Search with filters for space_summary chunks
+        # Search with filters for space_summary chunks (dict syntax for standard endpoints)
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["space_id", "space_title"],
+            columns=["space_id", "space_title", "score"],
             filters={"chunk_type": "space_summary"},
             num_results=num_results
         )
@@ -137,11 +137,14 @@ class ThinkingPlanningAgent:
         result_data = results.get('result', {})
         manifest = result_data.get('manifest', {})
         data_array = result_data.get('data_array', [])
-        columns = manifest.get('columns', [])
+        
+        # Get column names from manifest
+        column_names = [col.get('name') if isinstance(col, dict) else str(col) 
+                       for col in manifest.get('columns', [])]
         
         # Convert to list of dictionaries
-        if len(data_array) > 0 and len(columns) > 0:
-            return [dict(zip(columns, row)) for row in data_array]
+        if len(data_array) > 0 and len(column_names) > 0:
+            return [dict(zip(column_names, row)) for row in data_array]
         else:
             return []
     

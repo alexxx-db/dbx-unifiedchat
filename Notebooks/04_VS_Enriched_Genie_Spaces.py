@@ -209,7 +209,7 @@ for query in test_queries:
         # Use Python SDK similarity_search
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title", "table_name", "column_name"],
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "column_name", "score"],
             num_results=5
         )
         
@@ -242,10 +242,10 @@ for query in space_queries:
     print("-" * 80)
     
     try:
-        # Use Python SDK with filters parameter
+        # Use Python SDK with filters parameter (dict syntax for standard endpoints)
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title"],
+            columns=["chunk_id", "chunk_type", "space_title", "score"],
             filters={"chunk_type": "space_summary"},
             num_results=3
         )
@@ -279,10 +279,10 @@ for query in table_queries:
     print("-" * 80)
     
     try:
-        # Use Python SDK with filters parameter
+        # Use Python SDK with filters parameter (dict syntax for standard endpoints)
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title", "table_name", "is_temporal"],
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "is_temporal", "score"],
             filters={"chunk_type": "table_overview"},
             num_results=5
         )
@@ -309,10 +309,10 @@ print("="*80)
 # Find categorical columns
 print("\nFind categorical columns with valid value sets:")
 try:
-    # Use Python SDK with multiple filter conditions
+    # Use Python SDK with multiple filter conditions (dict syntax for standard endpoints)
     results = vs_index.similarity_search(
         query_text="location or place of service",
-        columns=["chunk_id", "table_name", "column_name"],
+        columns=["chunk_id", "table_name", "column_name", "score"],
         filters={"chunk_type": "column_detail", "has_value_dictionary": True},
         num_results=5
     )
@@ -332,7 +332,7 @@ print("\nFind patient identifier columns:")
 try:
     results = vs_index.similarity_search(
         query_text="patient identifier or patient id",
-        columns=["chunk_id", "table_name", "column_name", "is_identifier"],
+        columns=["chunk_id", "table_name", "column_name", "is_identifier", "score"],
         filters={"chunk_type": "column_detail", "is_identifier": True},
         num_results=5
     )
@@ -352,7 +352,7 @@ print("\nFind date/time columns:")
 try:
     results = vs_index.similarity_search(
         query_text="service date or claim date",
-        columns=["chunk_id", "table_name", "column_name", "is_temporal"],
+        columns=["chunk_id", "table_name", "column_name", "is_temporal", "score"],
         filters={"chunk_type": "column_detail", "is_temporal": True},
         num_results=5
     )
@@ -409,14 +409,14 @@ def create_genie_chunk_search_function():
         if filter_identifier is not None:
             filters['is_identifier'] = filter_identifier
         
-        # Define columns to return
+        # Define columns to return (including score for relevance ranking)
         columns = [
             "chunk_id", "chunk_type", "space_id", "space_title", 
             "table_name", "column_name", "is_categorical", 
-            "is_temporal", "is_identifier", "has_value_dictionary"
+            "is_temporal", "is_identifier", "has_value_dictionary", "score"
         ]
         
-        # Use Python SDK similarity_search
+        # Use Python SDK similarity_search with dict-based filters for standard endpoints
         results = vs_index.similarity_search(
             query_text=query,
             columns=columns,
