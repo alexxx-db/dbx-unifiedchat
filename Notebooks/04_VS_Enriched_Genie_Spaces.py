@@ -187,6 +187,9 @@ print("\n" + "="*80)
 print("Testing Vector Search with Multi-Level Chunks")
 print("="*80)
 
+# Get the index for Python SDK queries
+vs_index = client.get_index(index_name=index_name)
+
 # Test 1: General queries across all chunk types
 print("\n" + "="*80)
 print("Test 1: General Semantic Search (All Chunk Types)")
@@ -203,17 +206,24 @@ for query in test_queries:
     print("-" * 80)
     
     try:
-        result_df = spark.sql(f"""
-            SELECT chunk_id, chunk_type, space_title, table_name, column_name, score
-            FROM vector_search(
-                index => '{index_name}',
-                query => '{query}',
-                num_results => 5
-            )
-            ORDER BY score DESC
-        """)
+        # Use Python SDK similarity_search
+        results = vs_index.similarity_search(
+            query_text=query,
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "column_name"],
+            num_results=5
+        )
         
-        display(result_df)
+        # Extract result data
+        result_data = results.get('result', {})
+        manifest = result_data.get('manifest', {})
+        data_array = result_data.get('data_array', [])
+        
+        # Convert to DataFrame for display
+        if len(data_array) > 0:
+            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            display(result_df)
+        else:
+            print("No results found")
     except Exception as e:
         print(f"Error searching: {str(e)}")
 
@@ -232,18 +242,25 @@ for query in space_queries:
     print("-" * 80)
     
     try:
-        result_df = spark.sql(f"""
-            SELECT chunk_id, chunk_type, space_title, score
-            FROM vector_search(
-                index => '{index_name}',
-                query => '{query}',
-                num_results => 3,
-                filters => 'chunk_type = "space_summary"'
-            )
-            ORDER BY score DESC
-        """)
+        # Use Python SDK with filters parameter
+        results = vs_index.similarity_search(
+            query_text=query,
+            columns=["chunk_id", "chunk_type", "space_title"],
+            filters={"chunk_type": "space_summary"},
+            num_results=3
+        )
         
-        display(result_df)
+        # Extract result data
+        result_data = results.get('result', {})
+        manifest = result_data.get('manifest', {})
+        data_array = result_data.get('data_array', [])
+        
+        # Convert to DataFrame for display
+        if len(data_array) > 0:
+            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            display(result_df)
+        else:
+            print("No results found")
     except Exception as e:
         print(f"Error searching: {str(e)}")
 
@@ -262,18 +279,25 @@ for query in table_queries:
     print("-" * 80)
     
     try:
-        result_df = spark.sql(f"""
-            SELECT chunk_id, chunk_type, space_title, table_name, is_temporal, score
-            FROM vector_search(
-                index => '{index_name}',
-                query => '{query}',
-                num_results => 5,
-                filters => 'chunk_type = "table_overview"'
-            )
-            ORDER BY score DESC
-        """)
+        # Use Python SDK with filters parameter
+        results = vs_index.similarity_search(
+            query_text=query,
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "is_temporal"],
+            filters={"chunk_type": "table_overview"},
+            num_results=5
+        )
         
-        display(result_df)
+        # Extract result data
+        result_data = results.get('result', {})
+        manifest = result_data.get('manifest', {})
+        data_array = result_data.get('data_array', [])
+        
+        # Convert to DataFrame for display
+        if len(data_array) > 0:
+            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            display(result_df)
+        else:
+            print("No results found")
     except Exception as e:
         print(f"Error searching: {str(e)}")
 
@@ -285,51 +309,61 @@ print("="*80)
 # Find categorical columns
 print("\nFind categorical columns with valid value sets:")
 try:
-    result_df = spark.sql(f"""
-        SELECT chunk_id, table_name, column_name, score
-        FROM vector_search(
-            index => '{index_name}',
-            query => 'location or place of service',
-            num_results => 5,
-            filters => 'chunk_type = "column_detail" AND has_value_dictionary = true'
-        )
-        ORDER BY score DESC
-    """)
-    display(result_df)
+    # Use Python SDK with multiple filter conditions
+    results = vs_index.similarity_search(
+        query_text="location or place of service",
+        columns=["chunk_id", "table_name", "column_name"],
+        filters={"chunk_type": "column_detail", "has_value_dictionary": True},
+        num_results=5
+    )
+    result_data = results.get('result', {})
+    manifest = result_data.get('manifest', {})
+    data_array = result_data.get('data_array', [])
+    if len(data_array) > 0:
+        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        display(result_df)
+    else:
+        print("No results found")
 except Exception as e:
     print(f"Error searching: {str(e)}")
 
 # Find identifier columns
 print("\nFind patient identifier columns:")
 try:
-    result_df = spark.sql(f"""
-        SELECT chunk_id, table_name, column_name, is_identifier, score
-        FROM vector_search(
-            index => '{index_name}',
-            query => 'patient identifier or patient id',
-            num_results => 5,
-            filters => 'chunk_type = "column_detail" AND is_identifier = true'
-        )
-        ORDER BY score DESC
-    """)
-    display(result_df)
+    results = vs_index.similarity_search(
+        query_text="patient identifier or patient id",
+        columns=["chunk_id", "table_name", "column_name", "is_identifier"],
+        filters={"chunk_type": "column_detail", "is_identifier": True},
+        num_results=5
+    )
+    result_data = results.get('result', {})
+    manifest = result_data.get('manifest', {})
+    data_array = result_data.get('data_array', [])
+    if len(data_array) > 0:
+        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        display(result_df)
+    else:
+        print("No results found")
 except Exception as e:
     print(f"Error searching: {str(e)}")
 
 # Find temporal columns
 print("\nFind date/time columns:")
 try:
-    result_df = spark.sql(f"""
-        SELECT chunk_id, table_name, column_name, is_temporal, score
-        FROM vector_search(
-            index => '{index_name}',
-            query => 'service date or claim date',
-            num_results => 5,
-            filters => 'chunk_type = "column_detail" AND is_temporal = true'
-        )
-        ORDER BY score DESC
-    """)
-    display(result_df)
+    results = vs_index.similarity_search(
+        query_text="service date or claim date",
+        columns=["chunk_id", "table_name", "column_name", "is_temporal"],
+        filters={"chunk_type": "column_detail", "is_temporal": True},
+        num_results=5
+    )
+    result_data = results.get('result', {})
+    manifest = result_data.get('manifest', {})
+    data_array = result_data.get('data_array', [])
+    if len(data_array) > 0:
+        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        display(result_df)
+    else:
+        print("No results found")
 except Exception as e:
     print(f"Error searching: {str(e)}")
 
@@ -364,46 +398,43 @@ def create_genie_chunk_search_function():
         Returns:
             List of Row objects with chunk information
         """
-        # Build filter string
-        filters = []
+        # Build filter dictionary for Python SDK
+        filters = {}
         if chunk_type:
-            filters.append(f'chunk_type = "{chunk_type}"')
+            filters['chunk_type'] = chunk_type
         if filter_categorical is not None:
-            filters.append(f'is_categorical = {str(filter_categorical).lower()}')
+            filters['is_categorical'] = filter_categorical
         if filter_temporal is not None:
-            filters.append(f'is_temporal = {str(filter_temporal).lower()}')
+            filters['is_temporal'] = filter_temporal
         if filter_identifier is not None:
-            filters.append(f'is_identifier = {str(filter_identifier).lower()}')
+            filters['is_identifier'] = filter_identifier
         
-        filter_clause = " AND ".join(filters) if filters else None
+        # Define columns to return
+        columns = [
+            "chunk_id", "chunk_type", "space_id", "space_title", 
+            "table_name", "column_name", "is_categorical", 
+            "is_temporal", "is_identifier", "has_value_dictionary"
+        ]
         
-        # Build query
-        if filter_clause:
-            sql = f"""
-                SELECT chunk_id, chunk_type, space_id, space_title, table_name, column_name, 
-                       is_categorical, is_temporal, is_identifier, has_value_dictionary, score
-                FROM vector_search(
-                    index => '{index_name}',
-                    query => '{query}',
-                    num_results => {num_results},
-                    filters => '{filter_clause}'
-                )
-                ORDER BY score DESC
-            """
+        # Use Python SDK similarity_search
+        results = vs_index.similarity_search(
+            query_text=query,
+            columns=columns,
+            filters=filters if filters else None,
+            num_results=num_results
+        )
+        
+        # Extract result data
+        result_data = results.get('result', {})
+        manifest = result_data.get('manifest', {})
+        data_array = result_data.get('data_array', [])
+        
+        # Convert to DataFrame and return as Row objects
+        if len(data_array) > 0:
+            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            return result_df.collect()
         else:
-            sql = f"""
-                SELECT chunk_id, chunk_type, space_id, space_title, table_name, column_name,
-                       is_categorical, is_temporal, is_identifier, has_value_dictionary, score
-                FROM vector_search(
-                    index => '{index_name}',
-                    query => '{query}',
-                    num_results => {num_results}
-                )
-                ORDER BY score DESC
-            """
-        
-        result_df = spark.sql(sql)
-        return result_df.collect()
+            return []
     
     return search_genie_chunks
 

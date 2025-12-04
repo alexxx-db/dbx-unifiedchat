@@ -108,16 +108,42 @@ class ThinkingPlanningAgent:
         self.name = "ThinkingPlanning"
     
     def _search_relevant_spaces(self, query: str, num_results: int = 5) -> List[Dict]:
-        """Search for relevant Genie spaces using vector search."""
+        """Search for relevant Genie spaces using vector search Python SDK."""
+        from databricks.vector_search.client import VectorSearchClient
         from pyspark.sql import SparkSession
-        spark = SparkSession.builder.getOrCreate()
         
-        result_df = spark.sql(f"""
-            SELECT space_id, space_title, score
-            FROM {self.vector_search_function}('{query}', {num_results})
-        """)
+        # Initialize Vector Search client
+        client = VectorSearchClient()
         
-        return [row.asDict() for row in result_df.collect()]
+        # Extract index name from function name (format: catalog.schema.function_name)
+        # The index name is typically: catalog.schema.enriched_genie_docs_chunks_vs_index
+        parts = self.vector_search_function.split('.')
+        catalog = parts[0]
+        schema = parts[1]
+        index_name = f"{catalog}.{schema}.enriched_genie_docs_chunks_vs_index"
+        
+        # Get the index
+        vs_index = client.get_index(index_name=index_name)
+        
+        # Search with filters for space_summary chunks
+        results = vs_index.similarity_search(
+            query_text=query,
+            columns=["space_id", "space_title"],
+            filters={"chunk_type": "space_summary"},
+            num_results=num_results
+        )
+        
+        # Extract result data
+        result_data = results.get('result', {})
+        manifest = result_data.get('manifest', {})
+        data_array = result_data.get('data_array', [])
+        columns = manifest.get('columns', [])
+        
+        # Convert to list of dictionaries
+        if len(data_array) > 0 and len(columns) > 0:
+            return [dict(zip(columns, row)) for row in data_array]
+        else:
+            return []
     
     def analyze_query(self, query: str) -> QueryPlan:
         """
