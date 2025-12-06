@@ -29,9 +29,10 @@ from databricks_langchain import (
 from databricks_langchain.genie import GenieAgent
 from langchain_core.runnables import Runnable
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain.agents import create_agent
-from langgraph.graph.state import CompiledStateGraph
-from langgraph_supervisor import create_supervisor
+from langchain.agents import create_tool_calling_agent
+from langgraph.graph import StateGraph, MessagesState
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import (
     ResponsesAgentRequest,
@@ -450,7 +451,7 @@ def create_langgraph_supervisor(
     vector_search_function: str = None,
 ):
     """
-    Create a LangGraph supervisor for the multi-agent system.
+    Create a LangGraph supervisor for the multi-agent system using modern LangGraph patterns.
     
     Args:
         llm: Language model for agents
@@ -458,14 +459,15 @@ def create_langgraph_supervisor(
         in_code_agents: List of in-code agent configurations
         vector_search_function: UC function name for vector search
     """
-    agents = []
+    # Build agent registry
+    agents = {}
     agent_descriptions = ""
     
     # Add Thinking and Planning Agent
     thinking_agent = ThinkingPlanningAgent(llm, vector_search_function)
-    agents.append(thinking_agent)
+    agents["thinking_planning"] = thinking_agent
     agent_descriptions += (
-        f"- {thinking_agent.name}: Analyzes queries, breaks them into sub-tasks, "
+        f"- ThinkingPlanning: Analyzes queries, breaks them into sub-tasks, "
         "and determines execution strategy\n"
     )
     
@@ -479,86 +481,150 @@ def create_langgraph_supervisor(
             include_context=True  # Include reasoning and SQL
         )
         genie_agent.name = genie.name
-        agents.append(genie_agent)
+        agents[genie.name.lower().replace(" ", "_")] = genie_agent
     
     # Add SQL Synthesis Agent
     sql_synthesis_agent = SQLSynthesisAgent(llm)
-    agents.append(sql_synthesis_agent)
+    agents["sql_synthesis"] = sql_synthesis_agent
     agent_descriptions += (
-        f"- {sql_synthesis_agent.name}: Synthesizes SQL queries across multiple "
+        f"- SQLSynthesis: Synthesizes SQL queries across multiple "
         "tables or combines results from Genie agents\n"
     )
     
     # Add SQL Execution Agent
     sql_exec_agent = SQLExecutionAgent()
-    agents.append(sql_exec_agent)
+    agents["sql_execution"] = sql_exec_agent
     agent_descriptions += (
-        f"- {sql_exec_agent.name}: Executes SQL queries and returns results\n"
+        f"- SQLExecution: Executes SQL queries and returns results\n"
     )
     
     # Add in-code tool-calling agents
-    for agent in in_code_agents:
-        agent_descriptions += f"- {agent.name}: {agent.description}\n"
-        uc_toolkit = UCFunctionToolkit(function_names=agent.tools)
+    for agent_config in in_code_agents:
+        agent_descriptions += f"- {agent_config.name}: {agent_config.description}\n"
+        uc_toolkit = UCFunctionToolkit(function_names=agent_config.tools)
         TOOLS.extend(uc_toolkit.tools)
-        agents.append(create_agent(llm, tools=uc_toolkit.tools, name=agent.name))
+        tool_agent = create_tool_calling_agent(llm, tools=uc_toolkit.tools)
+        agents[agent_config.name.lower().replace(" ", "_")] = tool_agent
     
-    # Supervisor prompt
-    prompt = f"""
-    You are a supervisor in a multi-agent system designed to answer complex questions
-    across multiple Genie spaces (data sources).
+    # Create supervisor with modern LangGraph StateGraph
+    workflow = StateGraph(MessagesState)
     
-    **Your workflow:**
+    # Supervisor routing logic
+    def supervisor_node(state: MessagesState):
+        """Supervisor decides which agent to call next."""
+        messages = state.get("messages", [])
+        
+        # Simple routing logic - this could be enhanced with LLM-based routing
+        # For now, always start with thinking_planning
+        if len(messages) == 1:  # First message
+            return {"next": "thinking_planning"}
+        
+        # Route based on last message
+        last_msg = messages[-1]
+        if hasattr(last_msg, 'name'):
+            if last_msg.name == "ThinkingPlanning":
+                # Analyze plan and route accordingly
+                try:
+                    plan = json.loads(last_msg.content)
+                    if not plan.get("question_clear", True):
+                        return {"next": "END"}
+                    if plan.get("requires_join"):
+                        return {"next": "sql_synthesis"}
+                    elif plan.get("requires_multiple_spaces"):
+                        # Route to first relevant space
+                        spaces = plan.get("relevant_space_ids", [])
+                        if spaces:
+                            return {"next": "genie"}
+                        return {"next": "END"}
+                    else:
+                        return {"next": "genie"}
+                except:
+                    return {"next": "END"}
+            elif last_msg.name == "SQLSynthesis":
+                return {"next": "sql_execution"}
+            else:
+                return {"next": "END"}
+        
+        return {"next": "END"}
     
-    1. **Understand**: Read the user's question carefully
-    2. **Plan**: Call ThinkingPlanning agent to analyze the question
-    3. **Check Clarity**: If question needs clarification, ask user for clarification
-    4. **Route Execution**:
-       - **Single Space**: If one Genie can answer, call that Genie agent
-       - **Multiple Spaces (No Join)**: Call each relevant Genie, then verbally merge answers
-       - **Multiple Spaces (With Join)**:
-         * **Fast Route**: Call SQLSynthesis with metadata, then SQLExecution
-         * **Slow Route**: Call each Genie for sub-questions, SQLSynthesis combines, SQLExecution runs
-    5. **Respond**: Provide a clear, comprehensive answer with:
-       - Thinking process
-       - SQL query used (if applicable)
-       - Results
+    # Add nodes for each agent
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("thinking_planning", lambda state: thinking_agent(state))
+    workflow.add_node("sql_synthesis", lambda state: sql_synthesis_agent(state))
+    workflow.add_node("sql_execution", lambda state: sql_exec_agent(state))
     
-    **Available Agents:**
-    {agent_descriptions}
+    # Add Genie agent nodes
+    for genie in genie_spaces:
+        agent_key = genie.name.lower().replace(" ", "_")
+        workflow.add_node(agent_key, lambda state, a=agents[agent_key]: a(state))
     
-    **Important Guidelines:**
-    - Always start with ThinkingPlanning agent
-    - Show your reasoning process transparently
-    - For multi-space joins, prefer fast route when possible
-    - Ensure patient counts < 10 are returned as "Count is less than 10"
-    - Never show individual patient_ids, only counts
-    - Be thorough and accurate
+    # Set entry point
+    workflow.set_entry_point("thinking_planning")
     
-    Let's help the user find the answer!
-    """
+    # Add edges
+    workflow.add_edge("thinking_planning", "supervisor")
     
-    return create_supervisor(
-        agents=agents,
-        model=llm,
-        prompt=prompt,
-        add_handoff_messages=False,
-        output_mode="full_history",
-    ).compile()
+    # Conditional routing from supervisor
+    def route_supervisor(state):
+        next_agent = state.get("next", "END")
+        return next_agent
+    
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_supervisor,
+        {
+            "thinking_planning": "thinking_planning",
+            "sql_synthesis": "sql_synthesis",
+            "sql_execution": "sql_execution",
+            "genie": list(agents.keys())[1] if len(agents) > 1 else "END",  # Route to first Genie
+            "END": "__end__"
+        }
+    )
+    
+    workflow.add_edge("sql_synthesis", "sql_execution")
+    workflow.add_edge("sql_execution", "__end__")
+    
+    # Add memory checkpointer
+    memory = MemorySaver()
+    
+    return workflow.compile(checkpointer=memory)
 
 
 ########################################
-# ResponsesAgent Wrapper
+# ResponsesAgent Wrapper for MLflow 3.7.0
 ########################################
 
 class LangGraphResponsesAgent(ResponsesAgent):
-    """Wraps LangGraph supervisor as a ResponsesAgent for MLflow deployment."""
+    """
+    MLflow 3.7.0 ResponsesAgent wrapper for LangGraph multi-agent system.
     
-    def __init__(self, agent: CompiledStateGraph):
+    This wrapper implements the ResponsesAgent interface following the official
+    MLflow 3.7.0 patterns for serving LangGraph agents.
+    
+    Based on: https://mlflow.org/docs/latest/genai/flavors/responses-agent-intro.html
+    """
+    
+    def __init__(self, agent: StateGraph):
+        """
+        Initialize with a compiled LangGraph agent.
+        
+        Args:
+            agent: Compiled StateGraph (CompiledStateGraph) from LangGraph
+        """
         self.agent = agent
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
-        """Synchronous prediction."""
+        """
+        Synchronous prediction method.
+        
+        Collects all streaming events and returns a complete ResponsesAgentResponse.
+        
+        Args:
+            request: ResponsesAgentRequest with input messages and custom inputs
+            
+        Returns:
+            ResponsesAgentResponse with output items and custom outputs
+        """
         outputs = [
             event.item
             for event in self.predict_stream(request)
@@ -573,39 +639,105 @@ class LangGraphResponsesAgent(ResponsesAgent):
         self,
         request: ResponsesAgentRequest,
     ) -> Generator[ResponsesAgentStreamEvent, None, None]:
-        """Streaming prediction."""
+        """
+        Streaming prediction method.
+        
+        Streams ResponsesAgentStreamEvents as the agent processes the request.
+        
+        Args:
+            request: ResponsesAgentRequest with input messages
+            
+        Yields:
+            ResponsesAgentStreamEvent objects as the agent processes
+        """
+        # Convert request input to chat completions format
         cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
-        first_message = True
-        seen_ids = set()
 
+        # Stream agent execution
         for _, events in self.agent.stream(
             {"messages": cc_msgs}, 
             stream_mode=["updates"]
         ):
-            new_msgs = [
-                msg
-                for v in events.values()
-                for msg in v.get("messages", [])
-                if msg.id not in seen_ids
+            # Process each node's output
+            for node_data in events.values():
+                if "messages" in node_data:
+                    # Convert messages to response items stream
+                    yield from output_to_responses_items_stream(node_data["messages"])
+
+
+class MultiAgentSystem:
+    """
+    Simplified wrapper for testing and local development.
+    For production deployment, use LangGraphChatModel with MLflow.
+    """
+    
+    def __init__(self, graph):
+        self.graph = graph
+        self.config = {"configurable": {"thread_id": "default"}}
+
+    def predict(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Synchronous prediction for testing.
+        
+        Args:
+            input_dict: Dictionary with "input" key containing message list
+            
+        Returns:
+            Dictionary with agent response
+        """
+        messages = []
+        for msg in input_dict.get("input", []):
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                messages.append(SystemMessage(content=msg["content"]))
+        
+        result = self.graph.invoke(
+            {"messages": messages},
+            config=self.config
+        )
+        
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": msg.content if hasattr(msg, 'content') else str(msg)
+                }
+                for msg in result.get("messages", [])
             ]
+        }
+
+    def predict_stream(self, input_dict: Dict[str, Any]) -> Generator[Dict[str, Any], None, None]:
+        """
+        Streaming prediction for testing.
+        
+        Args:
+            input_dict: Dictionary with "input" key containing message list
             
-            if first_message:
-                seen_ids.update(msg.id for msg in new_msgs[:len(cc_msgs)])
-                new_msgs = new_msgs[len(cc_msgs):]
-                first_message = False
-            else:
-                seen_ids.update(msg.id for msg in new_msgs)
-                node_name = tuple(events.keys())[0]
-                yield ResponsesAgentStreamEvent(
-                    type="response.output_item.done",
-                    item=self.create_text_output_item(
-                        text=f"<name>{node_name}</name>",
-                        id=str(uuid4())
-                    ),
-                )
-            
-            if len(new_msgs) > 0:
-                yield from output_to_responses_items_stream(new_msgs)
+        Yields:
+            Dictionaries with agent responses
+        """
+        messages = []
+        for msg in input_dict.get("input", []):
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+        
+        for event in self.graph.stream(
+            {"messages": messages},
+            config=self.config,
+            stream_mode="updates"
+        ):
+            for node, output in event.items():
+                if "messages" in output:
+                    for msg in output["messages"]:
+                        yield {
+                            "node": node,
+                            "content": msg.content if hasattr(msg, 'content') else str(msg)
+                        }
 
 
 ########################################
@@ -622,52 +754,38 @@ VECTOR_SEARCH_FUNCTION = os.getenv(
     "yyang.multi_agent_genie.search_genie_spaces"
 )
 
-# Genie Spaces (populated from vector search at runtime)
-# For now, configure known spaces
+# Genie Spaces Configuration
+# Only include the 3 core Genie agents for Provider Enrollment, Claims, and Diagnosis/Procedures
 GENIE_SPACES = [
     Genie(
-        space_id="01f072dbd668159d99934dfd3b17f544",
-        name="GENIE_PATIENT",
+        space_id="01f0956a54af123e9cd23907e8167df9",
+        name="Provider Enrollment",
         description=(
-            "Patient demographics, age, ECOG scores, appointments, and insurance data. "
-            "Use this for questions about patient age, location, demographics, "
-            "appointments with doctors, and insurance coverage."
+            "This agent can answer questions about provider and patient enrollment. "
+            "This dataset contains two tables: provider and enrollment. The provider table includes "
+            "information about healthcare claims, such as claim ID, patient ID, provider NPI, provider role, "
+            "and taxonomy code. "
+            "The enrollment table contains patient demographic and enrollment details, including gender, year of birth, ZIP code, state, enrollment dates, benefit type, and pay type."
         ),
     ),
     Genie(
-        space_id="01f08f4d1f5f172ea825ec8c9a3c6064",
-        name="MEDICATIONS",
+        space_id="01f0956a387714969edde65458dcc22a",
+        name="Claims",
         description=(
-            "Patient medications including drug names, medication class, dates ordered "
-            "and discontinued, route, strength, and dosage. Use this for questions about "
-            "medications, prescriptions, and drugs patients are taking."
+            "This agent can answer questions about Medical and pharmacy claims. There are two "
+            "tables: medical_claim and pharmacy_claim, both in the hv_claims_sample schema. Each "
+            "table contains claims data with columns for claim_id, patient_id, date_service, and "
+            "pay_type, among others. They can be connected by the patient_id column, which "
+            "identifies the patient associated with each claim."
         ),
-    ),
+    ), 
     Genie(
-        space_id="01f073c5476313fe8f51966e3ce85bd7",
-        name="GENIE_DIAGNOSIS_STAGING",
+        space_id="01f0956a4b0512e2a8aa325ffbac821b",
+        name="Diagnosiss and Procedures",
         description=(
-            "Patient diagnoses including primary cancer diagnoses, metastatic cancer, "
-            "comorbidities, and staging details. Use this for questions about cancer "
-            "types, diagnosis, disease staging, and patient conditions."
-        ),
-    ),
-    Genie(
-        space_id="01f07795f6981dc4a99d62c9fc7c2caa",
-        name="GENIE_TREATMENT",
-        description=(
-            "Patient treatments including surgeries, diagnostic procedures, radiological "
-            "testing, cancer treatment plans, and bone marrow/stem cell transplants. "
-            "Use this for questions about treatments, procedures, and interventions."
-        ),
-    ),
-    Genie(
-        space_id="01f08a9fd9ca125a986d01c1a7a5b2fe",
-        name="GENIE_LABORATORY_BIOMARKERS",
-        description=(
-            "Laboratory testing and genomic testing for cancer biomarkers including "
-            "testing dates, results, and contextual information. Use this for questions "
-            "about lab results, biomarkers, and genomic testing."
+            "This agent can answer questions about diagnosiss and procedures. There are two tables: procedure and diagnosis, "
+            "both in the hv_claims_sample schema. They are connected by the columns claim_id and patient_id, which appear in "
+            "both tables and can be used to join procedure and diagnosis information for the same claim and patient."
         ),
     ),
 ]
@@ -688,19 +806,27 @@ IN_CODE_AGENTS = [
 # Create and Configure Agent
 ########################################
 
-supervisor = create_langgraph_supervisor(
-    llm=llm,
-    genie_spaces=GENIE_SPACES,
-    in_code_agents=IN_CODE_AGENTS,
-    vector_search_function=VECTOR_SEARCH_FUNCTION,
-)
+def get_agent_graph():
+    """Factory function to create the agent graph."""
+    return create_langgraph_supervisor(
+        llm=llm,
+        genie_spaces=GENIE_SPACES,
+        in_code_agents=IN_CODE_AGENTS,
+        vector_search_function=VECTOR_SEARCH_FUNCTION,
+    )
 
-# Enable MLflow autologging
+# Create agent instance
+supervisor_graph = get_agent_graph()
+
+# Create wrapper for local testing (notebook use)
+AGENT = MultiAgentSystem(supervisor_graph)
+
+# Create MLflow 3.7.0 ResponsesAgent wrapper for deployment
+MLFLOW_AGENT = LangGraphResponsesAgent(agent=supervisor_graph)
+
+# Enable MLflow autologging for tracing
 mlflow.langchain.autolog()
 
-# Create ResponsesAgent wrapper
-AGENT = LangGraphResponsesAgent(supervisor)
-
-# Set as the model for MLflow
-mlflow.models.set_model(AGENT)
+# Set the MLflow model for deployment
+mlflow.models.set_model(MLFLOW_AGENT)
 
