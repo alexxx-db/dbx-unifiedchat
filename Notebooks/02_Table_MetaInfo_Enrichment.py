@@ -7,6 +7,7 @@
 # MAGIC 2. Builds value dictionaries for columns
 # MAGIC 3. Enriches parsed docs from Genie space.json exports
 # MAGIC 4. Saves enriched docs to Unity Catalog delta table
+# MAGIC 5. TODO: remove substring contraints from space/table/column content to enable richer information there.
 
 # COMMAND ----------
 
@@ -33,8 +34,8 @@ dbutils.widgets.text("schema_name", os.getenv("SCHEMA_NAME", "multi_agent_genie"
 dbutils.widgets.text("genie_exports_volume", os.getenv("GENIE_EXPORTS_VOLUME", "yyang.multi_agent_genie.volume"))
 dbutils.widgets.text("enriched_docs_table", os.getenv("ENRICHED_DOCS_TABLE", "yyang.multi_agent_genie.enriched_genie_docs"))
 dbutils.widgets.text("llm_endpoint", os.getenv("LLM_ENDPOINT", "databricks-claude-sonnet-4-5"))
-dbutils.widgets.text("sample_size", os.getenv("SAMPLE_SIZE", "100"))
-dbutils.widgets.text("max_unique_values", os.getenv("MAX_UNIQUE_VALUES", "50"))
+dbutils.widgets.text("sample_size", os.getenv("SAMPLE_SIZE", "20"))
+dbutils.widgets.text("max_unique_values", os.getenv("MAX_UNIQUE_VALUES", "20"))
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
@@ -268,6 +269,111 @@ def enhance_comments_with_llm(columns: List[Dict], llm_endpoint: str) -> List[Di
         return columns
 
 
+def synthesize_table_description(table_identifier: str, enriched_columns: List[Dict], llm_endpoint: str) -> str:
+    """
+    Synthesize a comprehensive table description using column metadata.
+    
+    Args:
+        table_identifier: Fully qualified table name
+        enriched_columns: List of enriched column dictionaries
+        llm_endpoint: LLM endpoint name
+    
+    Returns:
+        Synthesized table description
+    """
+    # Helper to serialize dates and other objects
+    def safe_json_default(obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        return str(obj)
+    
+    # Prepare column summary for LLM
+    col_summaries = []
+    for col in enriched_columns:
+        col_summary = {
+            'column_name': col['column_name'],
+            'data_type': col['data_type'],
+            'enhanced_comment': col.get('enhanced_comment', col.get('comment', '')),
+            'has_value_dictionary': 'value_dictionary' in col,
+            'sample_values': col.get('sample_values', [])[:3] if 'sample_values' in col else []
+        }
+        col_summaries.append(col_summary)
+    
+    prompt = (
+        f"You are analyzing a database table: {table_identifier}\n\n"
+        f"Here are the columns with their descriptions:\n"
+        f"{json.dumps(col_summaries, indent=2, default=safe_json_default)}\n\n"
+        "Based on this information, write a concise 2-3 sentence description of what this table contains "
+        "and its purpose. Focus on the data domain, key entities, and typical use cases. "
+        "Return only the description text, no JSON or formatting."
+    )
+    
+    try:
+        llm_result = spark.sql(
+            f"SELECT ai_query('{llm_endpoint}', ?) as result", 
+            [prompt]
+        ).collect()[0]['result']
+        
+        # Clean up response
+        table_description = llm_result.strip()
+        return table_description
+    except Exception as e:
+        print(f"Error synthesizing table description: {str(e)}")
+        # Fallback: create a simple description
+        return f"Table {table_identifier} with {len(enriched_columns)} columns."
+
+
+def synthesize_space_description(enriched_tables: List[Dict], llm_endpoint: str) -> str:
+    """
+    Synthesize a comprehensive space description using table metadata.
+    
+    Args:
+        enriched_tables: List of enriched table dictionaries
+        llm_endpoint: LLM endpoint name
+    
+    Returns:
+        Synthesized space description
+    """
+    # Helper to serialize dates and other objects
+    def safe_json_default(obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        return str(obj)
+    
+    # Prepare table summary for LLM
+    table_summaries = []
+    for table in enriched_tables:
+        table_summary = {
+            'table_identifier': table['table_identifier'],
+            'table_description': table.get('table_description', ''),
+            'column_count': table['total_columns']
+        }
+        table_summaries.append(table_summary)
+    
+    prompt = (
+        f"You are analyzing a Genie space that contains {len(enriched_tables)} tables.\n\n"
+        f"Here are the tables with their descriptions:\n"
+        f"{json.dumps(table_summaries, indent=2, default=safe_json_default)}\n\n"
+        "Based on this information, write a concise 2-3 sentence description of what this Genie space provides "
+        "and its overall purpose. Focus on the data domain, key use cases, and the types of queries it can answer. "
+        "Return only the description text, no JSON or formatting."
+    )
+    
+    try:
+        llm_result = spark.sql(
+            f"SELECT ai_query('{llm_endpoint}', ?) as result", 
+            [prompt]
+        ).collect()[0]['result']
+        
+        # Clean up response
+        space_description = llm_result.strip()
+        return space_description
+    except Exception as e:
+        print(f"Error synthesizing space description: {str(e)}")
+        # Fallback: create a simple description
+        return f"Genie space with {len(enriched_tables)} tables for data analysis."
+
+
 # COMMAND ----------
 
 # DBTITLE 1,Load and Process Genie Space Exports
@@ -333,23 +439,36 @@ def process_genie_space(space_json_path: str, enriched_docs_table: str) -> Dict[
                 # Enhance comments with LLM
                 enriched_columns = enhance_comments_with_llm(enriched_columns, llm_endpoint)
                 
+                # Synthesize table description using enriched column metadata
+                print(f"  → Synthesizing table description...")
+                table_description = synthesize_table_description(table_identifier, enriched_columns, llm_endpoint)
+                
                 enriched_table = {
                     'table_identifier': table_identifier,
                     'original_config': table_config,
                     'enriched_columns': enriched_columns,
-                    'total_columns': len(enriched_columns)
+                    'total_columns': len(enriched_columns),
+                    'table_description': table_description
                 }
                 
                 enriched_tables.append(enriched_table)
                 print(f"  ✓ Enriched {len(enriched_columns)} columns")
+                print(f"  ✓ Table description: {table_description[:100]}...")
             else:
                 print(f"  ✗ Could not get metadata for {table_identifier}")
+    
+    # Synthesize space description if empty
+    space_description = space_data.get('description', '')
+    if not space_description and enriched_tables:
+        print(f"\n→ Space description is empty. Synthesizing from table metadata...")
+        space_description = synthesize_space_description(enriched_tables, llm_endpoint)
+        print(f"✓ Synthesized space description: {space_description[:100]}...")
     
     # Build final enriched document
     enriched_doc = {
         'space_id': space_id,
         'space_title': space_title,
-        'space_description': space_data.get('description', ''),
+        'space_description': space_description,
         'warehouse_id': space_data.get('warehouse_id', ''),
         'original_space_data': space_data,
         'serialized_space': serialized_space,
@@ -449,21 +568,22 @@ def create_multi_level_chunks(enriched_docs: List[Dict]) -> List[Dict]:
         table_summaries = []
         for table in enriched_tables:
             table_id = table.get('table_identifier', '')
+            table_desc = table.get('table_description', '')
             columns = table.get('enriched_columns', [])
             col_count = len(columns)
             
             # Get key column types
             categorical_cols = [c['column_name'] for c in columns if 'value_dictionary' in c]
             temporal_cols = [c['column_name'] for c in columns if any(t in c.get('data_type', '').lower() for t in ['date', 'time', 'timestamp'])]
-            id_cols = [c['column_name'] for c in columns if any(k in c['column_name'].lower() for k in ['_id', 'id_'])]
+            id_cols = [c['column_name'] for c in columns if any(k in c['column_name'].lower() for k in ['_id', 'id_'])] # TODO: this could be more flexible to allow for other identifier patterns.
             
-            table_summary = f"• {table_id} ({col_count} columns)"
+            table_summary = f"• {table_id} ({col_count} columns)\n  Description: {table_desc}"
             if categorical_cols:
-                table_summary += f"\n  - Categorical fields: {', '.join(categorical_cols[:5])}"
+                table_summary += f"\n  - Categorical fields: {', '.join(categorical_cols)}"
             if temporal_cols:
-                table_summary += f"\n  - Temporal fields: {', '.join(temporal_cols[:3])}"
+                table_summary += f"\n  - Temporal fields: {', '.join(temporal_cols)}"
             if id_cols:
-                table_summary += f"\n  - Identifier fields: {', '.join(id_cols[:3])}"
+                table_summary += f"\n  - Identifier fields: {', '.join(id_cols)}"
             
             table_summaries.append(table_summary)
         
@@ -497,11 +617,45 @@ Purpose: This Genie space provides access to structured data across {len(enriche
         chunk_id += 1
         
         # ===================================================================
+        # Level 1B: Space Details Chunk (Full enriched document)
+        # ===================================================================
+        # This chunk contains everything from enriched_doc for precision retrieval
+        space_details_text = f"""Space: {space_title}
+Space ID: {space_id}
+
+Description: {space_description}
+
+This is a comprehensive view of the entire Genie space including all tables, columns, and metadata.
+Use this for detailed analysis when precision is more important than speed.
+
+Total Tables: {len(enriched_tables)}
+
+Metadata_json: {json.dumps(doc, default=json_serializer)}
+"""
+        
+        all_chunks.append({
+            'chunk_id': chunk_id,
+            'chunk_type': 'space_details',
+            'space_id': space_id,
+            'space_title': space_title,
+            'table_name': None,
+            'column_name': None,
+            'searchable_content': space_details_text,
+            'is_categorical': False,
+            'is_temporal': False,
+            'is_identifier': False,
+            'has_value_dictionary': False,
+            'metadata_json': json.dumps(doc, default=json_serializer)
+        })
+        chunk_id += 1
+        
+        # ===================================================================
         # Level 2: Table Overview Chunks (one per table)
         # ===================================================================
         for table in enriched_tables:
             table_id = table.get('table_identifier', '')
             table_name = table_id.split('.')[-1] if '.' in table_id else table_id
+            table_desc = table.get('table_description', '')
             columns = table.get('enriched_columns', [])
             
             # Build column list with brief descriptions
@@ -514,19 +668,21 @@ Purpose: This Genie space provides access to structured data across {len(enriche
                 enhanced_comment = col.get('enhanced_comment', col.get('comment', ''))
                 
                 # Truncate long descriptions for overview
-                if len(enhanced_comment) > 100:
-                    enhanced_comment = enhanced_comment[:97] + "..."
+                if len(enhanced_comment) > 300:
+                    enhanced_comment = enhanced_comment[:300-3] + "..."
                 
                 column_lines.append(f"• {col_name} ({col_type}): {enhanced_comment}")
                 
                 # Track categorical fields with top values
                 if 'value_dictionary' in col and col['value_dictionary']:
-                    top_values = list(col['value_dictionary'].keys())[:3]
+                    top_values = list(col['value_dictionary'].keys())[:5]
                     categorical_fields.append(f"• {col_name}: {', '.join(top_values)}")
             
             table_overview_text = f"""Table: {table_name}
 Full Path: {table_id}
 Space: {space_title}
+
+Table Description: {table_desc}
 
 Columns ({len(columns)} total):
 {chr(10).join(column_lines)}
@@ -667,7 +823,7 @@ print("\n" + "="*80)
 print("Sample Chunks by Type")
 print("="*80)
 
-for chunk_type in ['space_summary', 'table_overview', 'column_detail']:
+for chunk_type in ['space_summary', 'space_details', 'table_overview', 'column_detail']:
     print(f"\n{chunk_type.upper()}:")
     sample = spark.table(chunks_table_name).filter(f"chunk_type = '{chunk_type}'").limit(1)
     display(sample.select('chunk_id', 'chunk_type', 'space_title', 'table_name', 'column_name', 'searchable_content'))
@@ -681,17 +837,25 @@ for chunk_type in ['space_summary', 'table_overview', 'column_detail']:
 # MAGIC 1. ✓ Sampled column values from all Genie space tables
 # MAGIC 2. ✓ Built value dictionaries for configured columns
 # MAGIC 3. ✓ Enhanced column descriptions using LLM
-# MAGIC 4. ✓ Enriched Genie space.json exports with table metadata
-# MAGIC 5. ✓ Saved enriched docs to Unity Catalog delta table
-# MAGIC 6. ✓ Created multi-level chunks using Hybrid Multi-Level Chunking Strategy:
-# MAGIC    - **Level 1**: Space Summary Chunks (overview of all tables in a space)
-# MAGIC    - **Level 2**: Table Overview Chunks (column list and summaries per table)
+# MAGIC 4. ✓ Synthesized table descriptions from enriched column metadata
+# MAGIC 5. ✓ Synthesized space descriptions (if empty) from table metadata
+# MAGIC 6. ✓ Enriched Genie space.json exports with table metadata
+# MAGIC 7. ✓ Saved enriched docs to Unity Catalog delta table
+# MAGIC 8. ✓ Created multi-level chunks using Hybrid Multi-Level Chunking Strategy:
+# MAGIC    - **Level 1**: Space Summary Chunks (overview with space & table descriptions)
+# MAGIC    - **Level 1B**: Space Details Chunks (full enriched document for precision)
+# MAGIC    - **Level 2**: Table Overview Chunks (with table descriptions and column list)
 # MAGIC    - **Level 3**: Column Detail Chunks (full descriptions, samples, value dictionaries)
-# MAGIC 7. ✓ Added metadata fields for filtered retrieval (chunk_type, is_categorical, is_temporal, etc.)
+# MAGIC 9. ✓ Added metadata fields for filtered retrieval (chunk_type, is_categorical, is_temporal, etc.)
 # MAGIC 
 # MAGIC **Key Outputs:**
 # MAGIC - Enriched Docs Table: `{enriched_docs_table}`
 # MAGIC - Multi-Level Chunks Table: `{enriched_docs_table}_chunks`
+# MAGIC 
+# MAGIC **New Features:**
+# MAGIC - Table descriptions synthesized from column metadata
+# MAGIC - Space descriptions synthesized from table metadata (when empty)
+# MAGIC - Space Details chunks for precision retrieval vs. Space Summary for speed
 # MAGIC 
 # MAGIC Next: Use these chunks to build vector search index (04_VS_Enriched_Genie_Spaces.py)
 
