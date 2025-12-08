@@ -209,18 +209,18 @@ for query in test_queries:
         # Use Python SDK similarity_search
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title", "table_name", "column_name", "score"],
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "column_name"],
             num_results=5
         )
         
         # Extract result data
         result_data = results.get('result', {})
-        manifest = result_data.get('manifest', {})
+        manifest = results.get('manifest', {})
         data_array = result_data.get('data_array', [])
         
-        # Convert to DataFrame for display
+        # Convert to DataFrame for display (score is included in manifest)
         if len(data_array) > 0:
-            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
             display(result_df)
         else:
             print("No results found")
@@ -245,19 +245,19 @@ for query in space_queries:
         # Use Python SDK with filters parameter (dict syntax for standard endpoints)
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title", "score"],
+            columns=["chunk_id", "chunk_type", "space_title"],
             filters={"chunk_type": "space_summary"},
             num_results=3
         )
         
         # Extract result data
         result_data = results.get('result', {})
-        manifest = result_data.get('manifest', {})
+        manifest = results.get('manifest', {})
         data_array = result_data.get('data_array', [])
         
-        # Convert to DataFrame for display
+        # Convert to DataFrame for display (score is included in manifest)
         if len(data_array) > 0:
-            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
             display(result_df)
         else:
             print("No results found")
@@ -282,19 +282,19 @@ for query in table_queries:
         # Use Python SDK with filters parameter (dict syntax for standard endpoints)
         results = vs_index.similarity_search(
             query_text=query,
-            columns=["chunk_id", "chunk_type", "space_title", "table_name", "is_temporal", "score"],
+            columns=["chunk_id", "chunk_type", "space_title", "table_name", "is_temporal"],
             filters={"chunk_type": "table_overview"},
             num_results=5
         )
         
         # Extract result data
         result_data = results.get('result', {})
-        manifest = result_data.get('manifest', {})
+        manifest = results.get('manifest', {})
         data_array = result_data.get('data_array', [])
         
-        # Convert to DataFrame for display
+        # Convert to DataFrame for display (score is included in manifest)
         if len(data_array) > 0:
-            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
             display(result_df)
         else:
             print("No results found")
@@ -312,15 +312,15 @@ try:
     # Use Python SDK with multiple filter conditions (dict syntax for standard endpoints)
     results = vs_index.similarity_search(
         query_text="location or place of service",
-        columns=["chunk_id", "table_name", "column_name", "score"],
+        columns=["chunk_id", "table_name", "column_name"],
         filters={"chunk_type": "column_detail", "has_value_dictionary": True},
         num_results=5
     )
     result_data = results.get('result', {})
-    manifest = result_data.get('manifest', {})
+    manifest = results.get('manifest', {})
     data_array = result_data.get('data_array', [])
     if len(data_array) > 0:
-        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
         display(result_df)
     else:
         print("No results found")
@@ -332,15 +332,15 @@ print("\nFind patient identifier columns:")
 try:
     results = vs_index.similarity_search(
         query_text="patient identifier or patient id",
-        columns=["chunk_id", "table_name", "column_name", "is_identifier", "score"],
+        columns=["chunk_id", "table_name", "column_name", "is_identifier"],
         filters={"chunk_type": "column_detail", "is_identifier": True},
         num_results=5
     )
     result_data = results.get('result', {})
-    manifest = result_data.get('manifest', {})
+    manifest = results.get('manifest', {})
     data_array = result_data.get('data_array', [])
     if len(data_array) > 0:
-        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
         display(result_df)
     else:
         print("No results found")
@@ -352,15 +352,15 @@ print("\nFind date/time columns:")
 try:
     results = vs_index.similarity_search(
         query_text="service date or claim date",
-        columns=["chunk_id", "table_name", "column_name", "is_temporal", "score"],
+        columns=["chunk_id", "table_name", "column_name", "is_temporal"],
         filters={"chunk_type": "column_detail", "is_temporal": True},
         num_results=5
     )
     result_data = results.get('result', {})
-    manifest = result_data.get('manifest', {})
+    manifest = results.get('manifest', {})
     data_array = result_data.get('data_array', [])
     if len(data_array) > 0:
-        result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+        result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
         display(result_df)
     else:
         print("No results found")
@@ -409,11 +409,11 @@ def create_genie_chunk_search_function():
         if filter_identifier is not None:
             filters['is_identifier'] = filter_identifier
         
-        # Define columns to return (including score for relevance ranking)
+        # Define columns to return (score is automatically included by vector_search)
         columns = [
             "chunk_id", "chunk_type", "space_id", "space_title", 
             "table_name", "column_name", "is_categorical", 
-            "is_temporal", "is_identifier", "has_value_dictionary", "score"
+            "is_temporal", "is_identifier", "has_value_dictionary"
         ]
         
         # Use Python SDK similarity_search with dict-based filters for standard endpoints
@@ -426,12 +426,12 @@ def create_genie_chunk_search_function():
         
         # Extract result data
         result_data = results.get('result', {})
-        manifest = result_data.get('manifest', {})
+        manifest = results.get('manifest', {})
         data_array = result_data.get('data_array', [])
         
-        # Convert to DataFrame and return as Row objects
+        # Convert to DataFrame and return as Row objects (score is included in manifest)
         if len(data_array) > 0:
-            result_df = spark.createDataFrame(data_array, schema=manifest.get('columns', []))
+            result_df = spark.createDataFrame(data_array, schema= [col.get('name') if isinstance(col, dict) else str(col) for col in  manifest.get('columns', [])] )
             return result_df.collect()
         else:
             return []

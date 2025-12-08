@@ -14,8 +14,8 @@
           "genie_exports_volume": "yyang.multi_agent_genie.volume",
           "enriched_docs_table": "yyang.multi_agent_genie.enriched_genie_docs",
           "llm_endpoint": "databricks-claude-sonnet-4-5",
-          "sample_size": "100",
-          "max_unique_values": "50"
+          "sample_size": "20",
+          "max_unique_values": "20"
         }
       },
       "timeout_seconds": 3600,
