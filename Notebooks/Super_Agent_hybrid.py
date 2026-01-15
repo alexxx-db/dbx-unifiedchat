@@ -153,6 +153,8 @@ class AgentState(TypedDict):
     question_clear: bool
     clarification_needed: Optional[str]
     clarification_options: Optional[List[str]]
+    clarification_count: Optional[int]  # Track clarification attempts (max 1)
+    user_clarification_response: Optional[str]  # User's response to clarification
     
     # Planning
     sub_questions: Optional[List[str]]
@@ -194,43 +196,55 @@ class ClarificationAgent:
         self.context = context
         self.name = "Clarification"
     
-    def check_clarity(self, query: str) -> Dict[str, Any]:
+    def check_clarity(self, query: str, clarification_count: int = 0) -> Dict[str, Any]:
         """
         Check if the user query is clear and answerable.
         
         Args:
             query: User's question
+            clarification_count: Number of times clarification has been requested
             
         Returns:
             Dictionary with clarity analysis
         """
+        # If already clarified once, don't ask again - proceed with best effort
+        if clarification_count >= 1:
+            print("⚠ Max clarification attempts reached (1) - proceeding with query as-is")
+            return {"question_clear": True}
+        
         clarity_prompt = f"""
 Analyze the following question for clarity and specificity based on the context.
 
+IMPORTANT: Only mark as unclear if the question is TRULY VAGUE or IMPOSSIBLE to answer.
+Be lenient - if the question can reasonably be answered with the available data, mark it as clear.
+
 Question: {query}
 
-Context: {json.dumps(self.context, indent=2)}
+Context (Available Data Sources):
+{json.dumps(self.context, indent=2)}
 
 Determine if:
-1. The question is clear and answerable as-is
-2. The question needs clarification
+1. The question is clear and answerable as-is (BE LENIENT - default to TRUE)
+2. The question is TRULY VAGUE and needs critical clarification (ONLY if essential information is missing)
+3. If the question mentions any metrics/dimensions/filters that can be mapped to available data with certain confidence, mark it as CLEAR; otherwise, mark it as UNCLEAR and ask for clarification.
 
-If clarification is needed, provide:
-- A brief explanation of what's unclear
+
+If clarification is truly needed, provide:
+- A brief explanation of what's critically unclear
 - 2-3 specific clarification options the user can choose from
 
 Return your analysis as JSON:
 {{
     "question_clear": true/false,
-    "clarification_needed": "explanation if unclear",
-    "clarification_options": ["option 1", "option 2", "option 3"]
+    "clarification_needed": "explanation if unclear (null if clear)",
+    "clarification_options": ["option 1", "option 2", "option 3"] or null
 }}
 
 Only return valid JSON, no explanations.
 """
         
         response = self.llm.invoke(clarity_prompt)
-        json_str = response.content.strip('```json').strip('```')
+        json_str = response.content.strip('```json').strip('```').strip()
         
         try:
             clarity_result = json.loads(json_str)
@@ -239,9 +253,9 @@ Only return valid JSON, no explanations.
             print(f"⚠ JSON parsing error: {e}, defaulting to clear")
             return {"question_clear": True}
     
-    def __call__(self, query: str) -> Dict[str, Any]:
+    def __call__(self, query: str, clarification_count: int = 0) -> Dict[str, Any]:
         """Make agent callable for easy invocation."""
-        return self.check_clarity(query)
+        return self.check_clarity(query, clarification_count)
 
 print("✓ ClarificationAgent class defined")
 
@@ -761,17 +775,39 @@ def clarification_node(state: AgentState) -> AgentState:
     """
     Clarification node wrapping ClarificationAgent class.
     Combines OOP modularity with explicit state management.
+    
+    Handles up to 1 clarification request. If user provides clarification,
+    incorporates it and proceeds to planning.
     """
     print("\n" + "="*80)
     print("🔍 CLARIFICATION AGENT")
     print("="*80)
     
+    # Initialize clarification count if not present
+    clarification_count = state.get("clarification_count", 0)
+    
+    # Check if this is a user response to a previous clarification request
+    user_response = state.get("user_clarification_response")
+    if user_response and clarification_count > 0:
+        print("✓ User provided clarification - incorporating feedback")
+        # Append user's clarification to the original query
+        original = state["original_query"]
+        state["original_query"] = f"{original} [User Clarification: {user_response}]"
+        state["question_clear"] = True
+        state["next_agent"] = "planning"
+        
+        state["messages"].append(
+            SystemMessage(content=f"User clarification incorporated: {user_response}")
+        )
+        
+        return state
+    
     query = state["original_query"]
     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_CLARIFICATION)
     
-    # Use OOP agent
+    # Use OOP agent with clarification count
     clarification_agent = ClarificationAgent(llm, context)
-    clarity_result = clarification_agent(query)
+    clarity_result = clarification_agent(query, clarification_count)
     
     # Update explicit state
     state["question_clear"] = clarity_result.get("question_clear", True)
@@ -782,8 +818,31 @@ def clarification_node(state: AgentState) -> AgentState:
         print("✓ Query is clear - proceeding to planning")
         state["next_agent"] = "planning"
     else:
-        print("⚠ Query needs clarification")
+        print("⚠ Query needs clarification (attempt 1 of 1)")
+        print(f"   Reason: {state['clarification_needed']}")
+        if state["clarification_options"]:
+            print("   Options:")
+            for i, opt in enumerate(state["clarification_options"], 1):
+                print(f"     {i}. {opt}")
+        
+        # Increment clarification count
+        state["clarification_count"] = clarification_count + 1
+        
+        # Wait for user clarification response (set next_agent to "end" to pause workflow)
         state["next_agent"] = "end"
+        
+        # Add message prompting user for clarification
+        clarification_message = (
+            f"I need clarification: {state['clarification_needed']}\n\n"
+            f"Please choose one of the following options or provide your own clarification:\n"
+        )
+        if state["clarification_options"]:
+            for i, opt in enumerate(state["clarification_options"], 1):
+                clarification_message += f"{i}. {opt}\n"
+        
+        state["messages"].append(
+            AIMessage(content=clarification_message)
+        )
     
     state["messages"].append(
         SystemMessage(content=f"Clarification result: {json.dumps(clarity_result, indent=2)}")
@@ -1246,6 +1305,79 @@ def invoke_super_agent_hybrid(query: str, thread_id: str = "default") -> Dict[st
 
 # COMMAND ----------
 
+# DBTITLE 1,Helper Function: Respond to Clarification
+def respond_to_clarification(
+    clarification_response: str, 
+    previous_state: Dict[str, Any],
+    thread_id: str = "default"
+) -> Dict[str, Any]:
+    """
+    Respond to a clarification request and continue the workflow.
+    
+    Use this function when the agent requests clarification. Provide your
+    clarification and the workflow will continue to planning and execution.
+    
+    Args:
+        clarification_response: Your clarification/answer to the agent's question
+        previous_state: The state returned from the previous invoke call
+        thread_id: Thread ID for conversation tracking (must match previous call)
+    
+    Returns:
+        Final state with execution results
+    
+    Example:
+        # First call
+        state1 = invoke_super_agent_hybrid("Show me the data", thread_id="session_001")
+        
+        # If clarification needed
+        if not state1['question_clear']:
+            print("Clarification needed:", state1['clarification_needed'])
+            print("Options:", state1['clarification_options'])
+            
+            # Provide clarification
+            state2 = respond_to_clarification(
+                "Show me patient count by age group",
+                previous_state=state1,
+                thread_id="session_001"
+            )
+    """
+    print("\n" + "="*80)
+    print("💬 RESPONDING TO CLARIFICATION")
+    print("="*80)
+    print(f"User Response: {clarification_response}")
+    print(f"Thread ID: {thread_id}")
+    print("="*80)
+    
+    # Create new state with user's clarification response
+    new_state = {
+        "original_query": previous_state["original_query"],
+        "question_clear": False,
+        "clarification_count": previous_state.get("clarification_count", 1),
+        "user_clarification_response": clarification_response,
+        "messages": [
+            HumanMessage(content=previous_state["original_query"]),
+            HumanMessage(content=f"Clarification: {clarification_response}")
+        ],
+        "next_agent": "clarification"  # Re-enter clarification node to process response
+    }
+    
+    # Configure with thread (must match previous call)
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Enable MLflow tracing
+    mlflow.langchain.autolog()
+    
+    # Continue the workflow
+    final_state = super_agent_hybrid.invoke(new_state, config)
+    
+    print("\n" + "="*80)
+    print("✅ WORKFLOW COMPLETE AFTER CLARIFICATION")
+    print("="*80)
+    
+    return final_state
+
+# COMMAND ----------
+
 # DBTITLE 1,Helper Function: Display Results
 def display_results(final_state: Dict[str, Any]):
     """
@@ -1261,15 +1393,26 @@ def display_results(final_state: Dict[str, Any]):
     
     # Clarification
     print(f"\n✓ Clarification:")
+    clarification_count = final_state.get('clarification_count', 0)
+    print(f"  Attempts: {clarification_count}")
+    
     if final_state.get('question_clear'):
-        print("  Query is clear")
+        print("  Status: Query is clear")
+        if final_state.get('user_clarification_response'):
+            print(f"  User provided: {final_state['user_clarification_response']}")
     else:
-        print("  ⚠ Clarification needed:")
-        print(f"    {final_state.get('clarification_needed', 'N/A')}")
+        print("  Status: ⚠ Clarification needed")
+        print(f"  Reason: {final_state.get('clarification_needed', 'N/A')}")
         if final_state.get('clarification_options'):
             print("  Options:")
-            for opt in final_state['clarification_options']:
-                print(f"    - {opt}")
+            for i, opt in enumerate(final_state['clarification_options'], 1):
+                print(f"    {i}. {opt}")
+        print("\n  💡 To continue, use:")
+        print("     state2 = respond_to_clarification(")
+        print("         'your clarification here',")
+        print(f"         previous_state=final_state,")
+        print(f"         thread_id='{final_state.get('thread_id', 'default')}'")
+        print("     )")
         return
     
     # Planning
@@ -1358,6 +1501,87 @@ display_results(result_3)
 test_query_4 = "What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group?"
 result_4 = invoke_super_agent_hybrid(test_query_4, thread_id="test_hybrid_complex")
 display_results(result_4)
+
+# COMMAND ----------
+
+# DBTITLE 1,Test Case 5: Clarification Flow (Vague Query → Clarify → Continue)
+# Test with an intentionally vague query
+test_query_5 = "How many?"  # Vague - should trigger clarification
+result_5a = invoke_super_agent_hybrid(test_query_5, thread_id="test_hybrid_clarification")
+display_results(result_5a)
+
+# If clarification was requested, respond to it
+if not result_5a.get('question_clear'):
+    print("\n" + "="*80)
+    print("📝 PROVIDING CLARIFICATION")
+    print("="*80)
+    
+    # User provides clarification
+    result_5b = respond_to_clarification(
+        "I want to know how many patients are in the dataset",
+        previous_state=result_5a,
+        thread_id="test_hybrid_clarification"
+    )
+    
+    # Display final results after clarification
+    display_results(result_5b)
+else:
+    print("✓ No clarification needed - query was clear enough")
+
+# COMMAND ----------
+
+# DBTITLE 1,Test Case 6: Another Clarification Example
+# Test with another vague query
+test_query_6 = "Show me the data"  # Vague - should trigger clarification
+result_6a = invoke_super_agent_hybrid(test_query_6, thread_id="test_hybrid_clarification2")
+display_results(result_6a)
+
+# If clarification was requested, respond to it
+if not result_6a.get('question_clear'):
+    print("\n" + "="*80)
+    print("📝 PROVIDING CLARIFICATION")
+    print("="*80)
+    
+    # User chooses one of the suggested options
+    result_6b = respond_to_clarification(
+        "Show me patient count grouped by age group",
+        previous_state=result_6a,
+        thread_id="test_hybrid_clarification2"
+    )
+    
+    # Display final results after clarification
+    display_results(result_6b)
+else:
+    print("✓ No clarification needed - query was clear enough")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Clarification Flow Summary
+# MAGIC
+# MAGIC The clarification system now works as follows:
+# MAGIC
+# MAGIC 1. **Lenient by Default**: Only asks for clarification on truly vague queries
+# MAGIC 2. **Max 1 Clarification**: Won't ask endlessly - at most one clarification request
+# MAGIC 3. **Easy Response Flow**: Use `respond_to_clarification()` to provide feedback
+# MAGIC 4. **Proceeds Automatically**: After clarification, continues to planning and execution
+# MAGIC
+# MAGIC **Example Flow:**
+# MAGIC ```python
+# MAGIC # Step 1: Try with vague query
+# MAGIC state1 = invoke_super_agent_hybrid("How many?", thread_id="session_001")
+# MAGIC
+# MAGIC # Step 2: Check if clarification needed
+# MAGIC if not state1['question_clear']:
+# MAGIC     # Step 3: Provide clarification
+# MAGIC     state2 = respond_to_clarification(
+# MAGIC         "How many patients are in the dataset?",
+# MAGIC         previous_state=state1,
+# MAGIC         thread_id="session_001"
+# MAGIC     )
+# MAGIC     # Step 4: Get results
+# MAGIC     display_results(state2)
+# MAGIC ```
 
 # COMMAND ----------
 
