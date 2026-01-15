@@ -245,13 +245,26 @@ Only return valid JSON, no explanations.
 """
         
         response = self.llm.invoke(clarity_prompt)
-        json_str = response.content.strip('```json').strip('```').strip()
+        content = response.content.strip()
+        
+        # Use regex to extract JSON from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            # No code blocks, assume entire content is JSON
+            json_str = content
+        
+        # Remove any trailing commas before ] or }
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
         
         try:
             clarity_result = json.loads(json_str)
             return clarity_result
         except json.JSONDecodeError as e:
-            print(f"⚠ JSON parsing error: {e}, defaulting to clear")
+            print(f"⚠ Clarification JSON parsing error at position {e.pos}: {e.msg}")
+            print(f"Raw content (first 300 chars): {content[:300]}")
+            print(f"Defaulting to question_clear=True")
             return {"question_clear": True}
     
     def __call__(self, query: str, clarification_count: int = 0) -> Dict[str, Any]:
@@ -365,26 +378,38 @@ Only return valid JSON, no explanations.
 """
         
         response = self.llm.invoke(planning_prompt)
-        json_str = response.content.strip()
+        content = response.content.strip()
         
-        # Remove markdown code blocks if present
-        if json_str.startswith('```'):
-            # Find the first newline after opening ```
-            first_newline = json_str.find('\n')
-            if first_newline != -1:
-                json_str = json_str[first_newline+1:]
-            # Remove opening ``` marker
-            json_str = json_str.lstrip('`').lstrip('json').lstrip()
+        # Use regex to extract JSON from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            # No code blocks, assume entire content is JSON
+            json_str = content
         
-        if json_str.endswith('```'):
-            json_str = json_str.rstrip('`').rstrip()
+        # Remove any trailing commas before ] or }
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
         
         try:
             plan_result = json.loads(json_str)
             return plan_result
         except json.JSONDecodeError as e:
-            print(f"❌ Planning JSON parsing error: {e}")
-            raise
+            print(f"❌ Planning JSON parsing error at position {e.pos}: {e.msg}")
+            print(f"Raw content (first 500 chars):\n{content[:500]}")
+            print(f"Cleaned JSON (first 500 chars):\n{json_str[:500]}")
+            
+            # Try one more time with even more aggressive cleaning
+            try:
+                # Remove comments
+                json_str_clean = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
+                # Remove trailing commas again
+                json_str_clean = re.sub(r',(\s*[}\]])', r'\1', json_str_clean)
+                plan_result = json.loads(json_str_clean)
+                print("✓ Successfully parsed JSON after aggressive cleaning")
+                return plan_result
+            except:
+                raise e  # Re-raise original error
     
     def __call__(self, query: str) -> Dict[str, Any]:
         """
