@@ -176,6 +176,9 @@ class AgentState(TypedDict):
     execution_result: Optional[Dict[str, Any]]
     execution_error: Optional[str]
     
+    # Summary
+    final_summary: Optional[str]  # Natural language summary of the workflow execution
+    
     # Control flow
     next_agent: Optional[str]
     messages: Annotated[List, operator.add]
@@ -924,6 +927,131 @@ print("✓ SQLExecutionAgent class defined")
 
 # COMMAND ----------
 
+# DBTITLE 1,Result Summarize Agent (OOP Design)
+class ResultSummarizeAgent:
+    """
+    Agent responsible for generating a final summary of the workflow execution.
+    
+    Analyzes the entire workflow state and produces a natural language summary
+    of what was accomplished, whether successful or not.
+    
+    OOP design for clean summarization logic.
+    """
+    
+    def __init__(self, llm_endpoint: str = "databricks-claude-haiku-4-5"):
+        self.name = "ResultSummarize"
+        self.llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=500)
+    
+    def generate_summary(self, state: AgentState) -> str:
+        """
+        Generate a natural language summary of the workflow execution.
+        
+        Args:
+            state: The complete workflow state
+            
+        Returns:
+            String containing natural language summary
+        """
+        # Build context from state
+        summary_prompt = self._build_summary_prompt(state)
+        
+        # Invoke LLM to generate summary
+        response = self.llm.invoke(summary_prompt)
+        summary = response.content.strip()
+        
+        return summary
+    
+    def _build_summary_prompt(self, state: AgentState) -> str:
+        """Build the prompt for summary generation based on state."""
+        
+        original_query = state.get('original_query', 'N/A')
+        question_clear = state.get('question_clear', False)
+        clarification_needed = state.get('clarification_needed')
+        execution_plan = state.get('execution_plan')
+        join_strategy = state.get('join_strategy')
+        sql_query = state.get('sql_query')
+        sql_explanation = state.get('sql_synthesis_explanation')
+        exec_result = state.get('execution_result', {})
+        synthesis_error = state.get('synthesis_error')
+        execution_error = state.get('execution_error')
+        
+        prompt = f"""You are a result summarization agent. Generate a concise, natural language summary of what this multi-agent workflow accomplished.
+
+**Original User Query:** {original_query}
+
+**Workflow Execution Details:**
+
+"""
+        
+        # Add clarification info
+        if not question_clear:
+            prompt += f"""**Status:** Query needs clarification
+**Clarification Needed:** {clarification_needed}
+**Summary:** The query was too vague or ambiguous. Requested user clarification before proceeding.
+"""
+        else:
+            # Add planning info
+            if execution_plan:
+                prompt += f"""**Planning:** {execution_plan}
+**Strategy:** {join_strategy or 'N/A'}
+
+"""
+            
+            # Add SQL synthesis info
+            if sql_query:
+                prompt += f"""**SQL Generation:** ✅ Successful
+**SQL Query:** 
+```sql
+{sql_query[:300]}{'...' if len(sql_query) > 300 else ''}
+```
+
+"""
+                if sql_explanation:
+                    prompt += f"""**SQL Synthesis Explanation:** {sql_explanation[:200]}{'...' if len(sql_explanation) > 200 else ''}
+
+"""
+                
+                # Add execution info
+                if exec_result.get('success'):
+                    row_count = exec_result.get('row_count', 0)
+                    columns = exec_result.get('columns', [])
+                    prompt += f"""**Execution:** ✅ Successful
+**Results:** {row_count} rows returned
+**Columns:** {', '.join(columns[:5])}{'...' if len(columns) > 5 else ''}
+
+"""
+                elif execution_error:
+                    prompt += f"""**Execution:** ❌ Failed
+**Error:** {execution_error}
+
+"""
+            elif synthesis_error:
+                prompt += f"""**SQL Generation:** ❌ Failed
+**Error:** {synthesis_error}
+**Explanation:** {sql_explanation or 'N/A'}
+
+"""
+        
+        prompt += """
+**Task:** Generate a 2-3 sentence summary in natural language that:
+1. Describes what the user asked for
+2. Explains what the system did (planning, SQL generation, execution)
+3. States the outcome (success with X rows, error, needs clarification, etc.)
+
+Keep it concise and user-friendly. Do not include code or technical jargon unless necessary.
+Return ONLY the summary text, no explanations or meta-commentary.
+"""
+        
+        return prompt
+    
+    def __call__(self, state: AgentState) -> str:
+        """Make agent callable."""
+        return self.generate_summary(state)
+
+print("✓ ResultSummarizeAgent class defined")
+
+# COMMAND ----------
+
 # DBTITLE 1,Node Wrappers (Combining OOP Agents with Explicit State)
 def clarification_node(state: AgentState) -> AgentState:
     """
@@ -982,8 +1110,8 @@ def clarification_node(state: AgentState) -> AgentState:
         # Increment clarification count
         state["clarification_count"] = clarification_count + 1
         
-        # Route to end to show clarification request
-        state["next_agent"] = "end"
+        # Route to summarize to show clarification request
+        state["next_agent"] = "summarize"
         
         # Add message prompting user for clarification
         clarification_message = (
@@ -1098,7 +1226,7 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             state["synthesis_error"] = "Cannot generate SQL query"
-            state["next_agent"] = "end"
+            state["next_agent"] = "summarize"
         
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
@@ -1160,7 +1288,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             state["synthesis_error"] = "Cannot generate SQL query from Genie agent fragments"
-            state["next_agent"] = "end"
+            state["next_agent"] = "summarize"
         
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
@@ -1209,11 +1337,43 @@ def sql_execution_node(state: AgentState) -> AgentState:
         )
     
     state["execution_result"] = result
+    state["next_agent"] = "summarize"
+    
+    return state
+
+
+def summarize_node(state: AgentState) -> AgentState:
+    """
+    Result summarize node wrapping ResultSummarizeAgent class.
+    
+    This is the final node that all workflow paths go through.
+    Generates a natural language summary of what happened during execution.
+    """
+    print("\n" + "="*80)
+    print("📝 RESULT SUMMARIZE AGENT")
+    print("="*80)
+    
+    # Use OOP agent to generate summary
+    summarize_agent = ResultSummarizeAgent()
+    summary = summarize_agent(state)
+    
+    print(f"\n✅ Summary Generated:")
+    print(f"{summary}")
+    print("="*80)
+    
+    # Store summary in state
+    state["final_summary"] = summary
+    
+    # Add summary as final message
+    state["messages"].append(
+        AIMessage(content=summary)
+    )
+    
     state["next_agent"] = "end"
     
     return state
 
-print("✓ All node wrappers defined")
+print("✓ All node wrappers defined (including summarize)")
 
 # COMMAND ----------
 
@@ -1239,26 +1399,27 @@ def create_super_agent_hybrid():
     workflow.add_node("sql_synthesis_fast", sql_synthesis_fast_node)
     workflow.add_node("sql_synthesis_slow", sql_synthesis_slow_node)
     workflow.add_node("sql_execution", sql_execution_node)
+    workflow.add_node("summarize", summarize_node)  # Final summarization node
     
     # Define routing logic based on explicit state
     def route_after_clarification(state: AgentState) -> str:
         if state.get("question_clear", False):
             return "planning"
-        return END  # End if clarification needed
+        return "summarize"  # Summarize if clarification needed
     
     def route_after_planning(state: AgentState) -> str:
-        next_agent = state.get("next_agent", "end")
+        next_agent = state.get("next_agent", "summarize")
         if next_agent == "sql_synthesis_fast":
             return "sql_synthesis_fast"
         elif next_agent == "sql_synthesis_slow":
             return "sql_synthesis_slow"
-        return END
+        return "summarize"
     
     def route_after_synthesis(state: AgentState) -> str:
-        next_agent = state.get("next_agent", "end")
+        next_agent = state.get("next_agent", "summarize")
         if next_agent == "sql_execution":
             return "sql_execution"
-        return END  # End if synthesis error
+        return "summarize"  # Summarize if synthesis error
     
     # Add edges with conditional routing
     workflow.set_entry_point("clarification")
@@ -1268,7 +1429,7 @@ def create_super_agent_hybrid():
         route_after_clarification,
         {
             "planning": "planning",
-            END: END
+            "summarize": "summarize"
         }
     )
     
@@ -1278,7 +1439,7 @@ def create_super_agent_hybrid():
         {
             "sql_synthesis_fast": "sql_synthesis_fast",
             "sql_synthesis_slow": "sql_synthesis_slow",
-            END: END
+            "summarize": "summarize"
         }
     )
     
@@ -1287,7 +1448,7 @@ def create_super_agent_hybrid():
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
-            END: END
+            "summarize": "summarize"
         }
     )
     
@@ -1296,12 +1457,15 @@ def create_super_agent_hybrid():
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
-            END: END
+            "summarize": "summarize"
         }
     )
     
-    # SQL execution always ends
-    workflow.add_edge("sql_execution", END)
+    # SQL execution always goes to summarize
+    workflow.add_edge("sql_execution", "summarize")
+    
+    # Summarize is the final node before END
+    workflow.add_edge("summarize", END)
     
     # Compile the graph with memory
     memory = MemorySaver()
@@ -1313,8 +1477,10 @@ def create_super_agent_hybrid():
     print("  3. SQL Synthesis Agent - Fast Route (OOP)")
     print("  4. SQL Synthesis Agent - Slow Route (OOP)")
     print("  5. SQL Execution Agent (OOP)")
+    print("  6. Result Summarize Agent (OOP) - FINAL NODE")
     print("\n✓ Explicit state management enabled")
     print("✓ Conditional routing configured")
+    print("✓ All paths route to summarize node before END")
     print("✓ Memory checkpointer enabled")
     print("\n✅ Hybrid Super Agent workflow compiled successfully!")
     print("="*80)
@@ -1571,6 +1737,12 @@ def display_results(final_state: Dict[str, Any]):
     print("\n" + "="*80)
     print("📊 FINAL RESULTS")
     print("="*80)
+    
+    # Display Summary (if available)
+    if final_state.get('final_summary'):
+        print(f"\n📝 Summary:")
+        print(f"  {final_state.get('final_summary')}")
+        print()
     
     # Display Original Query
     print(f"\n🔍 Original Query:")
