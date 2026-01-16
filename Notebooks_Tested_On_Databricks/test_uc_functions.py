@@ -423,7 +423,7 @@ Break down the question and determine:
 Return your analysis as JSON:
 {{
     "original_query":{query},
-    "vector_search_relevant_spaces_info":{[(sp['space_id'], sp['space_title']) for sp in relevant_spaces]},
+    "vector_search_relevant_spaces_info":{[{sp['space_id']: sp['space_title']} for sp in relevant_spaces]},
     "question_clear": true,
     "sub_questions": ["sub-question 1", "sub-question 2", ...],
     "requires_multiple_spaces": true/false,
@@ -452,15 +452,37 @@ plan_result = json.loads(planning_response.content.strip('```json').strip('\n'))
 
 # COMMAND ----------
 
-print(planning_response.content.strip('```json').strip('\n'))
-
-# COMMAND ----------
-
 plan_result
 
 # COMMAND ----------
 
-# json.loads(planning_response.content.strip('```json'))
+import ast
+ast.literal_eval(planning_response.content.strip('```json').strip('\n'))
+
+# COMMAND ----------
+
+f"{plan_result}"
+
+# COMMAND ----------
+
+print(json.dumps(plan_result, indent=2))
+
+# COMMAND ----------
+
+planning_response.content.strip('```json')
+
+
+# COMMAND ----------
+
+print(planning_response.content.strip('```json').strip('\n'))
+
+# COMMAND ----------
+
+(planning_response.content.strip('```json').strip('\n'))
+
+# COMMAND ----------
+
+json.loads(planning_response.content.strip('```json').strip('\n'))
 
 # COMMAND ----------
 
