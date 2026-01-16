@@ -176,6 +176,9 @@ class AgentState(TypedDict):
     execution_result: Optional[Dict[str, Any]]
     execution_error: Optional[str]
     
+    # Summary
+    final_summary: Optional[str]  # Natural language summary of the workflow execution
+    
     # Control flow
     next_agent: Optional[str]
     messages: Annotated[List, operator.add]
@@ -949,6 +952,131 @@ print("✓ SQLExecutionAgent class defined")
 
 # COMMAND ----------
 
+# DBTITLE 1,Result Summarize Agent (OOP Design)
+class ResultSummarizeAgent:
+    """
+    Agent responsible for generating a final summary of the workflow execution.
+    
+    Analyzes the entire workflow state and produces a natural language summary
+    of what was accomplished, whether successful or not.
+    
+    OOP design for clean summarization logic.
+    """
+    
+    def __init__(self, llm_endpoint: str = "databricks-claude-haiku-4-5"):
+        self.name = "ResultSummarize"
+        self.llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=500)
+    
+    def generate_summary(self, state: AgentState) -> str:
+        """
+        Generate a natural language summary of the workflow execution.
+        
+        Args:
+            state: The complete workflow state
+            
+        Returns:
+            String containing natural language summary
+        """
+        # Build context from state
+        summary_prompt = self._build_summary_prompt(state)
+        
+        # Invoke LLM to generate summary
+        response = self.llm.invoke(summary_prompt)
+        summary = response.content.strip()
+        
+        return summary
+    
+    def _build_summary_prompt(self, state: AgentState) -> str:
+        """Build the prompt for summary generation based on state."""
+        
+        original_query = state.get('original_query', 'N/A')
+        question_clear = state.get('question_clear', False)
+        clarification_needed = state.get('clarification_needed')
+        execution_plan = state.get('execution_plan')
+        join_strategy = state.get('join_strategy')
+        sql_query = state.get('sql_query')
+        sql_explanation = state.get('sql_synthesis_explanation')
+        exec_result = state.get('execution_result', {})
+        synthesis_error = state.get('synthesis_error')
+        execution_error = state.get('execution_error')
+        
+        prompt = f"""You are a result summarization agent. Generate a concise, natural language summary of what this multi-agent workflow accomplished.
+
+**Original User Query:** {original_query}
+
+**Workflow Execution Details:**
+
+"""
+        
+        # Add clarification info
+        if not question_clear:
+            prompt += f"""**Status:** Query needs clarification
+**Clarification Needed:** {clarification_needed}
+**Summary:** The query was too vague or ambiguous. Requested user clarification before proceeding.
+"""
+        else:
+            # Add planning info
+            if execution_plan:
+                prompt += f"""**Planning:** {execution_plan}
+**Strategy:** {join_strategy or 'N/A'}
+
+"""
+            
+            # Add SQL synthesis info
+            if sql_query:
+                prompt += f"""**SQL Generation:** ✅ Successful
+**SQL Query:** 
+```sql
+{sql_query[:300]}{'...' if len(sql_query) > 300 else ''}
+```
+
+"""
+                if sql_explanation:
+                    prompt += f"""**SQL Synthesis Explanation:** {sql_explanation[:200]}{'...' if len(sql_explanation) > 200 else ''}
+
+"""
+                
+                # Add execution info
+                if exec_result.get('success'):
+                    row_count = exec_result.get('row_count', 0)
+                    columns = exec_result.get('columns', [])
+                    prompt += f"""**Execution:** ✅ Successful
+**Results:** {row_count} rows returned
+**Columns:** {', '.join(columns[:5])}{'...' if len(columns) > 5 else ''}
+
+"""
+                elif execution_error:
+                    prompt += f"""**Execution:** ❌ Failed
+**Error:** {execution_error}
+
+"""
+            elif synthesis_error:
+                prompt += f"""**SQL Generation:** ❌ Failed
+**Error:** {synthesis_error}
+**Explanation:** {sql_explanation or 'N/A'}
+
+"""
+        
+        prompt += """
+**Task:** Generate a 2-3 sentence summary in natural language that:
+1. Describes what the user asked for
+2. Explains what the system did (planning, SQL generation, execution)
+3. States the outcome (success with X rows, error, needs clarification, etc.)
+
+Keep it concise and user-friendly. Do not include code or technical jargon unless necessary.
+Return ONLY the summary text, no explanations or meta-commentary.
+"""
+        
+        return prompt
+    
+    def __call__(self, state: AgentState) -> str:
+        """Make agent callable."""
+        return self.generate_summary(state)
+
+print("✓ ResultSummarizeAgent class defined")
+
+# COMMAND ----------
+
 # DBTITLE 1,Node Wrappers (Combining OOP Agents with Explicit State)
 def clarification_node(state: AgentState) -> AgentState:
     """
@@ -1007,8 +1135,8 @@ def clarification_node(state: AgentState) -> AgentState:
         # Increment clarification count
         state["clarification_count"] = clarification_count + 1
         
-        # Route to display to show clarification request
-        state["next_agent"] = "display"
+        # Route to summarize to show clarification request
+        state["next_agent"] = "summarize"
         
         # Add message prompting user for clarification
         clarification_message = (
@@ -1123,13 +1251,13 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             state["synthesis_error"] = "Cannot generate SQL query"
-            state["next_agent"] = "display"
+            state["next_agent"] = "summarize"
         
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
         state["synthesis_error"] = str(e)
         state["sql_synthesis_explanation"] = str(e)
-        state["next_agent"] = "display"
+        state["next_agent"] = "end"
     
     return state
 
@@ -1153,7 +1281,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
     if not genie_route_plan:
         print("❌ No genie_route_plan found in state")
         state["synthesis_error"] = "No routing plan available for slow route"
-        state["next_agent"] = "display"
+        state["next_agent"] = "end"
         return state
     
     try:
@@ -1185,13 +1313,13 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             state["synthesis_error"] = "Cannot generate SQL query from Genie agent fragments"
-            state["next_agent"] = "display"
+            state["next_agent"] = "summarize"
         
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
         state["synthesis_error"] = str(e)
         state["sql_synthesis_explanation"] = str(e)
-        state["next_agent"] = "display"
+        state["next_agent"] = "end"
     
     return state
 
@@ -1210,7 +1338,7 @@ def sql_execution_node(state: AgentState) -> AgentState:
     if not sql_query:
         print("❌ No SQL query to execute")
         state["execution_error"] = "No SQL query provided"
-        state["next_agent"] = "display"
+        state["next_agent"] = "end"
         return state
     
     # Use OOP agent
@@ -1234,118 +1362,43 @@ def sql_execution_node(state: AgentState) -> AgentState:
         )
     
     state["execution_result"] = result
-    state["next_agent"] = "display"
+    state["next_agent"] = "summarize"
     
     return state
 
-def display_node(state: AgentState) -> AgentState:
+
+def summarize_node(state: AgentState) -> AgentState:
     """
-    Final display node that shows all relevant information from the workflow.
-    Handles any scenario robustly.
+    Result summarize node wrapping ResultSummarizeAgent class.
+    
+    This is the final node that all workflow paths go through.
+    Generates a natural language summary of what happened during execution.
     """
     print("\n" + "="*80)
-    print("📊 FINAL RESULTS DISPLAY")
+    print("📝 RESULT SUMMARIZE AGENT")
     print("="*80)
     
-    # 1. Display Original Query
-    print(f"\n🔍 Original Query:")
-    print(f"  {state.get('original_query', 'N/A')}")
+    # Use OOP agent to generate summary
+    summarize_agent = ResultSummarizeAgent()
+    summary = summarize_agent(state)
     
-    # 2. Display Clarification Info (if any)
-    if not state.get('question_clear', True):
-        print(f"\n⚠️  Clarification Needed:")
-        print(f"  Reason: {state.get('clarification_needed', 'N/A')}")
-        if state.get('clarification_options'):
-            print(f"  Options:")
-            for i, opt in enumerate(state.get('clarification_options', []), 1):
-                print(f"    {i}. {opt}")
-    elif state.get('user_clarification_response'):
-        print(f"\n✓ Clarification Provided:")
-        print(f"  {state.get('user_clarification_response')}")
-    
-    # 3. Display Execution Plan (from planning agent)
-    if state.get('execution_plan'):
-        print(f"\n📋 Execution Plan:")
-        print(f"  {state.get('execution_plan')}")
-    
-    # 4. Display Routing Strategy
-    if state.get('join_strategy'):
-        print(f"\n🔀 Routing Strategy:")
-        print(f"  Strategy: {state.get('join_strategy')}")
-        print(f"  Requires Join: {state.get('requires_join', False)}")
-        print(f"  Multiple Spaces: {state.get('requires_multiple_spaces', False)}")
-        
-    # 5. Display Genie Route Plan (for slow route)
-    if state.get('genie_route_plan'):
-        print(f"\n🐢 Genie Route Plan (Slow Route):")
-        for space_id, question in state.get('genie_route_plan', {}).items():
-            print(f"  - {space_id}: {question}")
-    
-    # 6. Display SQL Synthesis Explanation
-    if state.get('sql_synthesis_explanation') or state.get('explanation'):
-        print(f"\n💭 SQL Synthesis Agent Explanation:")
-        explanation = state.get('explanation') or state.get('sql_synthesis_explanation')
-        print(f"  {explanation}")
-    
-    # 7. Display Generated SQL
-    if state.get('sql_query'):
-        print(f"\n💻 Generated SQL:")
-        print("─"*80)
-        print(state.get('sql_query'))
-        print("─"*80)
-    else:
-        if state.get('synthesis_error'):
-            print(f"\n⚠️  No SQL Generated:")
-            print(f"  Error: {state.get('synthesis_error')}")
-    
-    # 8. Display Execution Results
-    exec_result = state.get('execution_result')
-    if exec_result:
-        if exec_result.get('success'):
-            print(f"\n✅ Execution Successful:")
-            print(f"  Rows: {exec_result.get('row_count', 0)}")
-            print(f"  Columns: {', '.join(exec_result.get('columns', []))}")
-            
-            # Display results using Spark DataFrame
-            print(f"\n📊 Query Results:")
-            print("="*80)
-            df = exec_result.get("dataframe")
-            if df is not None:
-                try:
-                    display(df)  # Use Databricks display() for interactive table
-                except:
-                    # Fallback to show() if display() is not available
-                    df.show(n=min(100, exec_result.get('row_count', 0)), truncate=False)
-            else:
-                # Fallback to dict results
-                results = exec_result.get('result', [])
-                if results:
-                    print(f"📄 Sample Results (first 10 rows):")
-                    for i, row in enumerate(results[:10], 1):
-                        print(f"  Row {i}: {row}")
-                else:
-                    print("  No results to display")
-            print("="*80)
-        else:
-            print(f"\n❌ Execution Failed:")
-            print(f"  Error: {exec_result.get('error', 'Unknown error')}")
-    elif state.get('execution_error'):
-        print(f"\n❌ Execution Error:")
-        print(f"  {state.get('execution_error')}")
-    
-    # 9. Display any other errors
-    if state.get('synthesis_error'):
-        print(f"\n❌ Synthesis Error:")
-        print(f"  {state.get('synthesis_error')}")
-    
-    print("\n" + "="*80)
-    print("✅ WORKFLOW COMPLETE")
+    print(f"\n✅ Summary Generated:")
+    print(f"{summary}")
     print("="*80)
+    
+    # Store summary in state
+    state["final_summary"] = summary
+    
+    # Add summary as final message
+    state["messages"].append(
+        AIMessage(content=summary)
+    )
     
     state["next_agent"] = "end"
+    
     return state
 
-print("✓ All node wrappers defined (including display node)")
+print("✓ All node wrappers defined (including summarize)")
 
 # COMMAND ----------
 
@@ -1371,30 +1424,27 @@ def create_super_agent_hybrid():
     workflow.add_node("sql_synthesis_fast", sql_synthesis_fast_node)
     workflow.add_node("sql_synthesis_slow", sql_synthesis_slow_node)
     workflow.add_node("sql_execution", sql_execution_node)
-    workflow.add_node("display", display_node)  # Final display node
+    workflow.add_node("summarize", summarize_node)  # Final summarization node
     
     # Define routing logic based on explicit state
     def route_after_clarification(state: AgentState) -> str:
         if state.get("question_clear", False):
             return "planning"
-        return "display"  # Show clarification request
+        return "summarize"  # Summarize if clarification needed
     
     def route_after_planning(state: AgentState) -> str:
-        next_agent = state.get("next_agent", "display")
+        next_agent = state.get("next_agent", "summarize")
         if next_agent == "sql_synthesis_fast":
             return "sql_synthesis_fast"
         elif next_agent == "sql_synthesis_slow":
             return "sql_synthesis_slow"
-        return "display"
+        return "summarize"
     
     def route_after_synthesis(state: AgentState) -> str:
-        next_agent = state.get("next_agent", "display")
+        next_agent = state.get("next_agent", "summarize")
         if next_agent == "sql_execution":
             return "sql_execution"
-        return "display"  # Show synthesis error
-    
-    def route_after_execution(state: AgentState) -> str:
-        return "display"  # Always go to display after execution
+        return "summarize"  # Summarize if synthesis error
     
     # Add edges with conditional routing
     workflow.set_entry_point("clarification")
@@ -1404,7 +1454,7 @@ def create_super_agent_hybrid():
         route_after_clarification,
         {
             "planning": "planning",
-            "display": "display"
+            "summarize": "summarize"
         }
     )
     
@@ -1414,7 +1464,7 @@ def create_super_agent_hybrid():
         {
             "sql_synthesis_fast": "sql_synthesis_fast",
             "sql_synthesis_slow": "sql_synthesis_slow",
-            "display": "display"
+            "summarize": "summarize"
         }
     )
     
@@ -1423,7 +1473,7 @@ def create_super_agent_hybrid():
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
-            "display": "display"
+            "summarize": "summarize"
         }
     )
     
@@ -1432,20 +1482,15 @@ def create_super_agent_hybrid():
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
-            "display": "display"
+            "summarize": "summarize"
         }
     )
     
-    workflow.add_conditional_edges(
-        "sql_execution",
-        route_after_execution,
-        {
-            "display": "display"
-        }
-    )
+    # SQL execution always goes to summarize
+    workflow.add_edge("sql_execution", "summarize")
     
-    # Display node is the final node before END
-    workflow.add_edge("display", END)
+    # Summarize is the final node before END
+    workflow.add_edge("summarize", END)
     
     # Compile the graph with memory
     memory = MemorySaver()
@@ -1457,11 +1502,11 @@ def create_super_agent_hybrid():
     print("  3. SQL Synthesis Agent - Fast Route (OOP)")
     print("  4. SQL Synthesis Agent - Slow Route (OOP)")
     print("  5. SQL Execution Agent (OOP)")
-    print("  6. Display Node (Final Results)")
+    print("  6. Result Summarize Agent (OOP) - FINAL NODE")
     print("\n✓ Explicit state management enabled")
     print("✓ Conditional routing configured")
+    print("✓ All paths route to summarize node before END")
     print("✓ Memory checkpointer enabled")
-    print("✓ Display node handles all result scenarios")
     print("\n✅ Hybrid Super Agent workflow compiled successfully!")
     print("="*80)
     
@@ -1708,30 +1753,76 @@ def respond_to_clarification(
 
 # COMMAND ----------
 
-# DBTITLE 1,Helper Function: Display Results (Deprecated - Display Node Handles This)
+# DBTITLE 1,Helper Function: Display Results
 def display_results(final_state: Dict[str, Any]):
     """
     Display the results from the Hybrid Super Agent execution.
-    
-    NOTE: This function is now deprecated. The workflow automatically routes
-    to the display_node which handles all result display scenarios robustly.
-    The display_node shows SQL, results, explanations, and routing plans.
-    
-    This function is kept for backward compatibility but just prints a note.
+    Shows SQL query, execution results, plans, and any errors.
     """
     print("\n" + "="*80)
-    print("ℹ️  Results already displayed by the Display Node")
-    print("    The workflow automatically shows:")
-    print("    - Original Query")
-    print("    - Execution Plan & Routing Strategy")
-    print("    - Generated SQL & Agent Explanations")
-    print("    - Query Results (via Databricks display())")
-    print("    - Any errors with detailed explanations")
+    print("📊 FINAL RESULTS")
     print("="*80)
-    print(f"\n💡 To see clarification info, use: final_state.get('clarification_needed')")
-    print(f"💡 To access SQL, use: final_state.get('sql_query')")
-    print(f"💡 To access results, use: final_state.get('execution_result')")
-    print("="*80)
+    
+    # Display Summary (if available)
+    if final_state.get('final_summary'):
+        print(f"\n📝 Summary:")
+        print(f"  {final_state.get('final_summary')}")
+        print()
+    
+    # Display Original Query
+    print(f"\n🔍 Original Query:")
+    print(f"  {final_state.get('original_query', 'N/A')}")
+    
+    # Display Clarification Info (if any)
+    if not final_state.get('question_clear', True):
+        print(f"\n⚠️  Clarification Needed:")
+        print(f"  Reason: {final_state.get('clarification_needed', 'N/A')}")
+        if final_state.get('clarification_options'):
+            print(f"  Options:")
+            for i, opt in enumerate(final_state.get('clarification_options', []), 1):
+                print(f"    {i}. {opt}")
+    
+    # Display Execution Plan
+    if final_state.get('execution_plan'):
+        print(f"\n📋 Execution Plan:")
+        print(f"  {final_state.get('execution_plan')}")
+        print(f"  Strategy: {final_state.get('join_strategy', 'N/A')}")
+    
+    # Display SQL
+    if final_state.get('sql_query'):
+        print(f"\n💻 Generated SQL:")
+        print("─"*80)
+        print(final_state.get('sql_query'))
+        print("─"*80)
+    
+    # Display Execution Results
+    exec_result = final_state.get('execution_result')
+    if exec_result and exec_result.get('success'):
+        print(f"\n✅ Execution Successful:")
+        print(f"  Rows: {exec_result.get('row_count', 0)}")
+        print(f"  Columns: {', '.join(exec_result.get('columns', []))}")
+        
+        # Display results using Spark DataFrame
+        df = exec_result.get("dataframe")
+        if df is not None:
+            print(f"\n📊 Query Results:")
+            try:
+                display(df)  # Use Databricks display()
+            except:
+                df.show(n=min(100, exec_result.get('row_count', 0)), truncate=False)
+    elif exec_result and not exec_result.get('success'):
+        print(f"\n❌ Execution Failed:")
+        print(f"  Error: {exec_result.get('error', 'Unknown error')}")
+    
+    # Display Errors
+    if final_state.get('synthesis_error'):
+        print(f"\n❌ Synthesis Error:")
+        print(f"  {final_state.get('synthesis_error')}")
+    if final_state.get('execution_error'):
+        print(f"\n❌ Execution Error:")
+        print(f"  {final_state.get('execution_error')}")
+    
+    print("\n" + "="*80)
 
 # COMMAND ----------
 
