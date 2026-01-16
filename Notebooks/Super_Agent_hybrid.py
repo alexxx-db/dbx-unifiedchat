@@ -49,6 +49,7 @@ VECTOR_SEARCH_INDEX = f"{CATALOG}.{SCHEMA}.enriched_genie_docs_chunks_vs_index"
 LLM_ENDPOINT_CLARIFICATION = "databricks-claude-haiku-4-5"
 LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
 LLM_ENDPOINT_SQL_SYNTHESIS = "databricks-claude-sonnet-4-5"  # More powerful for SQL synthesis
+LLM_ENDPOINT_SUMMARIZE = "databricks-claude-haiku-4-5"  # Fast and cost-effective for summarization
 
 print("="*80)
 print("SUPER AGENT (HYBRID) CONFIGURATION")
@@ -57,6 +58,11 @@ print(f"Catalog: {CATALOG}")
 print(f"Schema: {SCHEMA}")
 print(f"Table: {TABLE_NAME}")
 print(f"Vector Search Index: {VECTOR_SEARCH_INDEX}")
+print(f"\nLLM Endpoints:")
+print(f"  - Clarification: {LLM_ENDPOINT_CLARIFICATION}")
+print(f"  - Planning: {LLM_ENDPOINT_PLANNING}")
+print(f"  - SQL Synthesis: {LLM_ENDPOINT_SQL_SYNTHESIS}")
+print(f"  - Summarization: {LLM_ENDPOINT_SUMMARIZE}")
 print("="*80)
 
 # COMMAND ----------
@@ -958,9 +964,9 @@ class ResultSummarizeAgent:
     OOP design for clean summarization logic.
     """
     
-    def __init__(self, llm_endpoint: str = "databricks-claude-haiku-4-5"):
+    def __init__(self, llm: Runnable):
         self.name = "ResultSummarize"
-        self.llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=500)
+        self.llm = llm
     
     def generate_summary(self, state: AgentState) -> str:
         """
@@ -1382,8 +1388,11 @@ def summarize_node(state: AgentState) -> AgentState:
     print("📝 RESULT SUMMARIZE AGENT")
     print("="*80)
     
+    # Create LLM for summarization
+    llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SUMMARIZE, temperature=0.1)
+    
     # Use OOP agent to generate summary
-    summarize_agent = ResultSummarizeAgent()
+    summarize_agent = ResultSummarizeAgent(llm)
     summary = summarize_agent(state)
     
     print(f"\n✅ Summary Generated:")
