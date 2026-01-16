@@ -366,7 +366,7 @@ Break down the question and determine:
 Return your analysis as JSON:
 {{
     "original_query": "{query}",
-    "vector_search_relevant_spaces_info": {[(sp['space_id'], sp['space_title']) for sp in relevant_spaces]},
+    "vector_search_relevant_spaces_info":{[{sp['space_id']: sp['space_title']} for sp in relevant_spaces]},
     "question_clear": true,
     "sub_questions": ["sub-question 1", "sub-question 2", ...],
     "requires_multiple_spaces": true/false,
