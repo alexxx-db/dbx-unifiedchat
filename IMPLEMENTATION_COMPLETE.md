@@ -48,11 +48,11 @@ Successfully implemented a comprehensive **Multi-Agent System for Cross-Domain G
 
 **Key Features:**
 - ✅ Single-space query routing
-- ✅ Multi-space queries with JOIN (fast route)
-- ✅ Multi-space queries with JOIN (slow route)
+- ✅ Multi-space queries with JOIN (table route)
+- ✅ Multi-space queries with JOIN (genie route)
 - ✅ Multi-space queries without JOIN (verbal merge)
 - ✅ Question clarification flow
-- ✅ Fast route returns first, slow route in progress notification
+- ✅ Table Route returns first, genie route in progress notification
 - ✅ Full MLflow tracing and logging
 - ✅ Model registry integration
 - ✅ Model serving endpoint deployment
@@ -142,8 +142,8 @@ Successfully implemented a comprehensive **Multi-Agent System for Cross-Domain G
 
 ### Performance
 - **Single-space queries:** 2-3 seconds
-- **Multi-space fast route:** 3-5 seconds
-- **Multi-space slow route:** 5-10 seconds
+- **Multi-space table route:** 3-5 seconds
+- **Multi-space genie route:** 5-10 seconds
 - **Vector search:** < 1 second
 
 ---
@@ -162,9 +162,9 @@ Successfully implemented a comprehensive **Multi-Agent System for Cross-Domain G
 - [x] Calls vector search index for relevant spaces
 - [x] Handles single-genie-agent case
 - [x] Handles multiple-genie-agents case
-- [x] Fast route implementation (direct SQL synthesis)
-- [x] Slow route implementation (parallel Genie queries)
-- [x] Fast route returns first with notification
+- [x] Table Route implementation (direct SQL synthesis)
+- [x] Genie Route implementation (parallel Genie queries)
+- [x] Table Route returns first with notification
 - [x] Verbal merge for queries without JOIN
 - [x] Question clarification flow with choices
 - [x] User can select option or provide custom refinement
@@ -270,7 +270,7 @@ AGENT.predict({
 
 1. ✅ **All agent types implemented** (6 agents)
 2. ✅ **All routing strategies** (single, multi with/without join)
-3. ✅ **Fast & slow routes** (progressive responses)
+3. ✅ **Fast & genie routes** (progressive responses)
 4. ✅ **Clarification flow** (handles unclear queries)
 5. ✅ **Vector search integration** (semantic space discovery)
 
@@ -290,12 +290,12 @@ AGENT.predict({
 
 1. **Intelligent Query Planning**
    - Automatically determines execution strategy
-   - Chooses fast vs slow route based on query complexity
+   - Chooses fast vs genie route based on query complexity
    - Semantic search for relevant data sources
 
 2. **Progressive Responses**
-   - Fast route answers immediately
-   - Slow route provides deeper context
+   - Table Route answers immediately
+   - Genie Route provides deeper context
    - User notified of ongoing background work
 
 3. **Privacy by Design**

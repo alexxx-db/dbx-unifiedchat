@@ -45,7 +45,7 @@ def analyze_query_plan(
         - requires_multiple_spaces: bool
         - relevant_space_ids: list[str]
         - requires_join: bool
-        - join_strategy: str ("fast_route" or "slow_route")
+        - join_strategy: str ("table_route" or "genie_route")
         - execution_plan: str
     """
     from databricks_langchain import ChatDatabricks
@@ -128,8 +128,8 @@ def analyze_query_plan(
     2. How many Genie spaces are needed to answer completely? (List their space_ids)
     3. If multiple spaces are needed, do we need to JOIN data across them?
     4. If JOIN is needed, what's the best strategy:
-       - "fast_route": Directly synthesize SQL across multiple tables
-       - "slow_route": Query each space separately, then combine results
+       - "table_route": Directly synthesize SQL across multiple tables
+       - "genie_route": Query each space separately, then combine results
     5. If no JOIN needed, can answers be verbally merged?
     
     Return your analysis as JSON:
@@ -139,7 +139,7 @@ def analyze_query_plan(
         "requires_multiple_spaces": true/false,
         "relevant_space_ids": ["space_id_1", "space_id_2", ...],
         "requires_join": true/false,
-        "join_strategy": "fast_route" or "slow_route" or null,
+        "join_strategy": "table_route" or "genie_route" or null,
         "execution_plan": "Brief description of execution plan"
     }}
     
@@ -153,15 +153,15 @@ def analyze_query_plan(
 
 
 ########################################
-# UC Function: Synthesize SQL (Fast Route)
+# UC Function: Synthesize SQL (Table Route)
 ########################################
 
-def synthesize_sql_fast_route(
+def synthesize_sql_table_route(
     query: str,
     table_metadata_json: str
 ) -> str:
     """
-    Synthesize SQL query directly across multiple tables (fast route).
+    Synthesize SQL query directly across multiple tables (table route).
     
     Args:
         query: The user's question
@@ -209,15 +209,15 @@ def synthesize_sql_fast_route(
 
 
 ########################################
-# UC Function: Synthesize SQL (Slow Route)
+# UC Function: Synthesize SQL (Genie Route)
 ########################################
 
-def synthesize_sql_slow_route(
+def synthesize_sql_genie_route(
     query: str,
     sub_queries_json: str
 ) -> str:
     """
-    Combine SQL from multiple Genie agents into a unified query (slow route).
+    Combine SQL from multiple Genie agents into a unified query (genie route).
     
     Args:
         query: The original user question

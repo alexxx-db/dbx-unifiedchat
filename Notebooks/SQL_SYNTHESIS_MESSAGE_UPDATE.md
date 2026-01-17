@@ -17,13 +17,13 @@ Both `sql_synthesis_fast_node` and `sql_synthesis_slow_node` were not appending 
 
 Added `AIMessage` appending with the SQL synthesis explanation in both nodes:
 
-#### **Fast Route Node** (Lines 1250-1265)
+#### **Table Route Node** (Lines 1250-1265)
 
 **Added:**
 ```python
 # Add message with SQL synthesis explanation
 state["messages"].append(
-    AIMessage(content=f"SQL Synthesis (Fast Route):\n{explanation}")
+    AIMessage(content=f"SQL Synthesis (Table Route):\n{explanation}")
 )
 ```
 
@@ -31,17 +31,17 @@ state["messages"].append(
 ```python
 # Add message with explanation even if no SQL
 state["messages"].append(
-    AIMessage(content=f"SQL Synthesis Failed (Fast Route):\n{explanation}")
+    AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{explanation}")
 )
 ```
 
-#### **Slow Route Node** (Lines 1320-1335)
+#### **Genie Route Node** (Lines 1320-1335)
 
 **Added:**
 ```python
 # Add message with SQL synthesis explanation
 state["messages"].append(
-    AIMessage(content=f"SQL Synthesis (Slow Route):\n{explanation}")
+    AIMessage(content=f"SQL Synthesis (Genie Route):\n{explanation}")
 )
 ```
 
@@ -49,7 +49,7 @@ state["messages"].append(
 ```python
 # Add message with explanation even if no SQL
 state["messages"].append(
-    AIMessage(content=f"SQL Synthesis Failed (Slow Route):\n{explanation}")
+    AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{explanation}")
 )
 ```
 
@@ -71,7 +71,7 @@ state["explanation"] = explanation  # ❌ Duplicate/inconsistent
 
 Removed all `state["explanation"]` assignments and kept only `state["sql_synthesis_explanation"]` for clarity.
 
-#### **Fast Route Node** (Line 1245 removed)
+#### **Table Route Node** (Line 1245 removed)
 
 **Before:**
 ```python
@@ -92,7 +92,7 @@ if has_sql and sql_query and explanation:
     state["has_sql"] = has_sql  # ✓ Only sql_synthesis_explanation used
 ```
 
-#### **Slow Route Node** (Line 1308 removed)
+#### **Genie Route Node** (Line 1308 removed)
 
 **Before:**
 ```python
@@ -147,7 +147,7 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             
             # ✅ Append message to conversation history
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis (Fast Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis (Table Route):\n{explanation}")
             )
         else:
             state["synthesis_error"] = "Cannot generate SQL query"
@@ -155,7 +155,7 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             
             # ✅ Append failure message too
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Fast Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{explanation}")
             )
             
     except Exception as e:
@@ -202,7 +202,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             
             # ✅ Append message to conversation history
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis (Slow Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis (Genie Route):\n{explanation}")
             )
         else:
             state["synthesis_error"] = "Cannot generate SQL query from Genie agent fragments"
@@ -210,7 +210,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             
             # ✅ Append failure message too
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Slow Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{explanation}")
             )
             
     except Exception as e:
@@ -236,7 +236,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
 - Easier to reference in other nodes (e.g., summarize_node)
 
 ### **✅ Better Observability**
-- Messages distinguish between fast and slow routes
+- Messages distinguish between fast and genie routes
 - Both success and failure cases tracked
 - Helpful for MLflow tracing and debugging
 
@@ -263,7 +263,7 @@ state["messages"] = [
     HumanMessage(content="User query..."),
     AIMessage(content="Clarification check..."),
     AIMessage(content="Planning analysis..."),
-    AIMessage(content="SQL Synthesis (Fast Route):\n[explanation...]"),  # ✅ NEW
+    AIMessage(content="SQL Synthesis (Table Route):\n[explanation...]"),  # ✅ NEW
     AIMessage(content="Execution complete..."),
     AIMessage(content="Final summary...")
 ]
@@ -317,7 +317,7 @@ print("✓ No duplicate explanation field")
 ✅ **No linter errors**  
 ✅ **Consistent field naming** - only `sql_synthesis_explanation` used  
 ✅ **Message history complete** - SQL synthesis tracked in `state["messages"]`  
-✅ **Better observability** - Fast/slow routes distinguished in messages  
+✅ **Better observability** - Fast/genie routes distinguished in messages  
 
 ---
 

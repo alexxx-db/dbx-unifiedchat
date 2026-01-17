@@ -14,7 +14,7 @@ Super Agent - Multi-Agent System Orchestrator
 This notebook implements the Super Agent that orchestrates:
 1. Clarification Agent - Validates query clarity
 2. Planning Agent - Creates execution plan and identifies relevant spaces
-3. SQL Synthesis Agent - Generates SQL (fast or slow route)
+3. SQL Synthesis Agent - Generates SQL (fast or genie route)
 4. SQL Execution Agent - Executes SQL and returns results
 
 The Super Agent uses LangGraph to manage state and agent transitions.
@@ -146,7 +146,7 @@ class AgentState(TypedDict):
     relevant_spaces: Optional[List[Dict[str, Any]]]
     vector_search_relevant_spaces_info: Optional[List[Dict[str, str]]]
     requires_join: Optional[bool]
-    join_strategy: Optional[str]  # "fast_route" or "slow_route"
+    join_strategy: Optional[str]  # "table_route" or "genie_route"
     execution_plan: Optional[str]
     genie_route_plan: Optional[Dict[str, str]]
     
@@ -293,11 +293,11 @@ Break down the question and determine:
     - JOIN needed: E.g., "How many active plan members over 50 are on Lexapro?" requires joining member data with pharmacy claims.
     - No need for JOIN: E.g., "How many active plan members over 50? How much total cost for all Lexapro claims?" - Two independent questions.
 4. If JOIN is needed, what's the best strategy:
-    - "fast_route": Directly synthesize SQL across multiple tables
-    - "slow_route": Query each Genie Space Agent separately, then combine SQL queries
-    - If user explicitly asks for "slow_route", use it; otherwise, use "fast_route"
+    - "table_route": Directly synthesize SQL across multiple tables
+    - "genie_route": Query each Genie Space Agent separately, then combine SQL queries
+    - If user explicitly asks for "genie_route", use it; otherwise, use "table_route"
 5. Execution plan: A brief description of how to execute the plan.
-    - For slow_route: Return {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}}
+    - For genie_route: Return {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}}
     - Each partial_question should be similar to original but scoped to that space
     - Add "Please limit to top 10 rows" to each partial question
 
@@ -310,7 +310,7 @@ Return your analysis as JSON:
     "requires_multiple_spaces": true/false,
     "relevant_space_ids": ["space_id_1", "space_id_2", ...],
     "requires_join": true/false,
-    "join_strategy": "fast_route" or "slow_route" or null,
+    "join_strategy": "table_route" or "genie_route" or null,
     "execution_plan": "Brief description of execution plan",
     "genie_route_plan": {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}} or null
 }}
@@ -338,7 +338,7 @@ Only return valid JSON, no explanations.
         ]
         
         # Determine next agent
-        if state["join_strategy"] == "slow_route":
+        if state["join_strategy"] == "genie_route":
             print("✓ Plan complete - using SLOW ROUTE (Genie agents)")
             state["next_agent"] = "sql_synthesis_slow"
         else:
@@ -358,10 +358,10 @@ Only return valid JSON, no explanations.
 
 # COMMAND ----------
 
-# DBTITLE 1,Agent 3a: SQL Synthesis Agent (Fast Route)
+# DBTITLE 1,Agent 3a: SQL Synthesis Agent (Table Route)
 def sql_synthesis_fast_node(state: AgentState) -> AgentState:
     """
-    Synthesize SQL using UC function tools (fast route).
+    Synthesize SQL using UC function tools (table route).
     Queries metadata intelligently and generates SQL directly.
     """
     print("\n" + "="*80)
@@ -484,10 +484,10 @@ Use your available UC function tools to gather metadata intelligently.
 
 # COMMAND ----------
 
-# DBTITLE 1,Agent 3b: SQL Synthesis Agent (Slow Route)
+# DBTITLE 1,Agent 3b: SQL Synthesis Agent (Genie Route)
 def sql_synthesis_slow_node(state: AgentState) -> AgentState:
     """
-    Synthesize SQL using Genie agents (slow route).
+    Synthesize SQL using Genie agents (genie route).
     Routes partial questions to Genie agents, then combines SQL.
     """
     print("\n" + "="*80)
@@ -525,7 +525,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
     
     if not genie_route_plan:
         print("❌ No genie_route_plan found in state")
-        state["synthesis_error"] = "No routing plan available for slow route"
+        state["synthesis_error"] = "No routing plan available for genie route"
         state["next_agent"] = "end"
         return state
     
@@ -799,8 +799,8 @@ def create_super_agent():
     print("✓ Workflow nodes added:")
     print("  1. Clarification Agent")
     print("  2. Planning Agent")
-    print("  3. SQL Synthesis Agent (Fast Route)")
-    print("  4. SQL Synthesis Agent (Slow Route)")
+    print("  3. SQL Synthesis Agent (Table Route)")
+    print("  4. SQL Synthesis Agent (Genie Route)")
     print("  5. SQL Execution Agent")
     print("\n✓ Workflow edges and routing configured")
     print("✓ Memory checkpointer enabled")
@@ -1067,15 +1067,15 @@ display_results(result_1)
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Case 2: Multi-Space Query with JOIN (Fast Route)
+# DBTITLE 1,Test Case 2: Multi-Space Query with JOIN (Table Route)
 test_query_2 = "What is the average cost of medical claims for patients diagnosed with diabetes?"
 result_2 = invoke_super_agent(test_query_2, thread_id="test_multi_fast")
 display_results(result_2)
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Case 3: Multi-Space Query with JOIN (Slow Route - Explicit)
-test_query_3 = "What is the average cost of medical claims for patients diagnosed with diabetes? Use slow route"
+# DBTITLE 1,Test Case 3: Multi-Space Query with JOIN (Genie Route - Explicit)
+test_query_3 = "What is the average cost of medical claims for patients diagnosed with diabetes? Use genie route"
 result_3 = invoke_super_agent(test_query_3, thread_id="test_multi_slow")
 display_results(result_3)
 
@@ -1190,7 +1190,7 @@ except Exception as e:
 # MAGIC │ 2. PLANNING         │ ← Analyzes query
 # MAGIC │    AGENT            │   Vector search for spaces
 # MAGIC │                     │   Creates execution plan
-# MAGIC │                     │   Determines fast/slow route
+# MAGIC │                     │   Determines fast/genie route
 # MAGIC └──────────┬──────────┘
 # MAGIC            ↓
 # MAGIC       ┌────┴────┐
@@ -1219,7 +1219,7 @@ except Exception as e:
 # MAGIC ══════════════
 # MAGIC
 # MAGIC ✅ LangGraph State Management - Maintains context across agents
-# MAGIC ✅ Conditional Routing - Dynamically chooses fast/slow route
+# MAGIC ✅ Conditional Routing - Dynamically chooses fast/genie route
 # MAGIC ✅ Memory Checkpointing - Supports conversation continuity
 # MAGIC ✅ Error Handling - Graceful degradation at each stage
 # MAGIC ✅ MLflow Tracing - Full observability of agent execution

@@ -52,13 +52,13 @@ rectangle "Single Agent Path" {
     component "Return:\nthinking_result\nsql_result\nanswer_result" as ReturnSingle <<process>>
 }
 
-rectangle "Multiple Agents - Fast Route" {
+rectangle "Multiple Agents - Table Route" {
     component "SQL Synthesis Agent\n(Assembly from Metadata)" as SQLSynthesisFast <<agent>>
     component "SQL Execution Agent\n(Execute on Delta Tables)" as SQLExecFast <<agent>>
     component "Return Fast Result" as ReturnFast <<process>>
 }
 
-rectangle "Multiple Agents - Slow Route" {
+rectangle "Multiple Agents - Genie Route" {
     component "Parallel Async Calls\nto Genie Agents" as ParallelCall <<process>>
     component "Genie Agent A\n(Sub-question 1)" as GenieAgentA1 <<agent>>
     component "Genie Agent B\n(Sub-question 2)" as GenieAgentB1 <<agent>>
@@ -128,14 +128,14 @@ ReturnSingle --> SuperAgent
 ' Multiple Agents Paths
 DecisionSingle --> DecisionJoin : No
 
-' Fast Route
+' Table Route
 DecisionJoin --> SQLSynthesisFast : Yes - Fast
 SQLSynthesisFast --> SQLExecFast
 SQLExecFast --> DeltaTables
 SQLExecFast --> ReturnFast
 ReturnFast --> SuperAgent
 
-' Slow Route
+' Genie Route
 DecisionJoin --> ParallelCall : Yes - Slow
 ParallelCall --> GenieAgentA1
 ParallelCall --> GenieAgentB1

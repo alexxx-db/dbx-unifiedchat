@@ -171,7 +171,7 @@ validation_result = validate_sql_with_agent(
     sql_query=sql_result,
     context={
         "relevant_space_ids": ["space_1", "space_2"],
-        "execution_plan": "fast_route"
+        "execution_plan": "table_route"
     }
 )
 

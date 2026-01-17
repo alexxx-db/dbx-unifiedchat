@@ -153,7 +153,7 @@
 - [ ] **PASS** - Query: "How many patients over 50 are on Voltaren?"
 - [ ] **PASS** - ThinkingPlanningAgent invoked
 - [ ] **PASS** - Identified as multi-space query requiring JOIN
-- [ ] **PASS** - Strategy determined: _________ (fast_route/slow_route)
+- [ ] **PASS** - Strategy determined: _________ (table_route/genie_route)
 - [ ] **PASS** - SQLSynthesisAgent invoked
 - [ ] **PASS** - SQLExecutionAgent invoked
 - [ ] **PASS** - Returned correct result

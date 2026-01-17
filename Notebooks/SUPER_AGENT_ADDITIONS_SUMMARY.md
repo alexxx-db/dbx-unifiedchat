@@ -1,7 +1,7 @@
 # Super Agent Multi-Agent System - Additions Summary
 
 ## Overview
-Successfully added the missing SQL Synthesis Slow Route Agent and SQL Execution Tool to `Super_Agent_langgraph_multiagent_genie.py` based on `test_uc_functions.py`.
+Successfully added the missing SQL Synthesis Genie Route Agent and SQL Execution Tool to `Super_Agent_langgraph_multiagent_genie.py` based on `test_uc_functions.py`.
 
 ## Key Components Added
 
@@ -22,9 +22,9 @@ Successfully added the missing SQL Synthesis Slow Route Agent and SQL Execution 
 - **Purpose**: LangChain tool wrapper for SQL execution
 - **Returns**: JSON string with execution results
 
-### 2. SQL Synthesis Slow Route Agent (Lines 481-548)
+### 2. SQL Synthesis Genie Route Agent (Lines 481-548)
 
-#### Function: `create_slow_route_agent()`
+#### Function: `create_genie_route_agent()`
 - **Location**: Lines 494-544
 - **Purpose**: Creates SQL synthesis agent that routes queries to individual Genie agents
 - **Key Features**:
@@ -40,7 +40,7 @@ Successfully added the missing SQL Synthesis Slow Route Agent and SQL Execution 
 3. **SQL Synthesis Plan**: How to combine results
 4. **Output Requirements**: Complete SQL with JOINs, filters, aggregations
 
-#### Agent Instance: `slow_route_agent`
+#### Agent Instance: `genie_route_agent`
 - **Location**: Line 548
 - **Configuration**: Uses main LLM and all genie_agent_tools
 
@@ -51,8 +51,8 @@ Successfully added the missing SQL Synthesis Slow Route Agent and SQL Execution 
 agent.py
 ├── Clarification Agent (IN_CODE_AGENTS[0])
 ├── Planning Agent (IN_CODE_AGENTS[1])
-├── SQL Synthesis Fast Route (IN_CODE_AGENTS[2])
-├── SQL Synthesis Slow Route (slow_route_agent) - Created but not in supervisor
+├── SQL Synthesis Table Route (IN_CODE_AGENTS[2])
+├── SQL Synthesis Genie Route (genie_route_agent) - Created but not in supervisor
 └── SQL Execution Tool (execute_sql_tool) - Available as standalone function
 ```
 
@@ -64,7 +64,7 @@ Modify `create_langgraph_supervisor()` to accept additional agents:
 supervisor = create_langgraph_supervisor(
     llm, 
     IN_CODE_AGENTS,
-    additional_agents=[slow_route_agent]
+    additional_agents=[genie_route_agent]
 )
 ```
 
@@ -72,12 +72,12 @@ supervisor = create_langgraph_supervisor(
 Register `execute_sql_tool` as a UC function and add to IN_CODE_AGENTS
 
 #### Option 3: Standalone Usage
-Call `slow_route_agent` and `execute_sql_on_delta_tables()` directly in workflow
+Call `genie_route_agent` and `execute_sql_on_delta_tables()` directly in workflow
 
 ## Testing Additions (Lines 786-916)
 
 ### Test Sections Added:
-1. **Test Slow Route Agent** (Lines 786-817)
+1. **Test Genie Route Agent** (Lines 786-817)
    - Tests routing to Genie agents
    - Example plan with genie_route_plan
 
@@ -89,23 +89,23 @@ Call `slow_route_agent` and `execute_sql_on_delta_tables()` directly in workflow
    - Complete flow from query to execution
    - Demonstrates supervisor → SQL generation → execution
 
-4. **Compare Fast vs Slow Route** (Lines 874-908)
+4. **Compare Fast vs Genie Route** (Lines 874-908)
    - Side-by-side comparison
    - Performance and accuracy testing
 
 ## Workflow Comparison
 
-### Fast Route (UC Metadata Functions)
+### Table Route (UC Metadata Functions)
 ```
-User Query → Planning Agent → SQL Synthesis Fast Route → UC Functions → SQL
+User Query → Planning Agent → SQL Synthesis Table Route → UC Functions → SQL
 ```
 - Uses: get_space_summary, get_table_overview, get_column_detail
 - Best for: Complex joins, cross-space queries
 - Speed: Faster (direct metadata access)
 
-### Slow Route (Genie Agents)
+### Genie Route (Genie Agents)
 ```
-User Query → Planning Agent → SQL Synthesis Slow Route → Genie Agents → SQL pieces → Combined SQL
+User Query → Planning Agent → SQL Synthesis Genie Route → Genie Agents → SQL pieces → Combined SQL
 ```
 - Uses: Individual Genie space agents
 - Best for: Complex analytical questions per space
@@ -131,8 +131,8 @@ VECTOR_SEARCH_INDEX = f"{CATALOG}.{SCHEMA}.enriched_genie_docs_chunks_vs_index"
 
 ## Next Steps
 
-1. Test slow route agent with multi-space queries
-2. Compare fast route vs slow route accuracy
+1. Test genie route agent with multi-space queries
+2. Compare table route vs genie route accuracy
 3. Integrate SQL execution into supervisor for end-to-end automation
 4. Monitor MLflow traces for optimization opportunities
 5. Deploy complete system to production

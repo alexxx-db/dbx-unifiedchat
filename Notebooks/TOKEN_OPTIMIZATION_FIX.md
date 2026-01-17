@@ -182,7 +182,7 @@ Vector Search → relevant_spaces (with searchable_content)
                 ↓
                 ├→ Planning: Only space_id + space_title ✓
                 ├→ State: Only space_id + space_title ✓
-                └→ Genie Agents (slow route): Full searchable_content ✓
+                └→ Genie Agents (genie route): Full searchable_content ✓
                    (only when actually needed)
 ```
 
@@ -310,7 +310,7 @@ The user asked for the average cost of medical claims in 2024. The system genera
 ```markdown
 📝 **Summary:**
 The user asked for the average cost of medical claims in 2024. The system 
-generated SQL to query the medical_claims table using a fast route strategy. 
+generated SQL to query the medical_claims table using a table route strategy. 
 The query executed successfully and returned 1 row showing $1,234.56.
 
 🔍 **Original Query:**
@@ -318,7 +318,7 @@ What is the average cost of medical claims per claim in 2024?
 
 📋 **Execution Plan:**
 Query medical_claims table with AVG aggregation
-Strategy: fast_route
+Strategy: table_route
 
 💭 **SQL Synthesis Explanation:**
 Used get_table_overview to identify table structure...

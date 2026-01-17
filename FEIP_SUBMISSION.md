@@ -80,12 +80,12 @@ OneChat is a sophisticated multi-agent orchestration system that enables users t
 2. **Planning Agent**
    - Uses Vector Search to identify relevant Genie spaces across all domains
    - Creates intelligent execution plans for cross-domain queries
-   - Determines optimal query strategy (fast route vs. slow route)
+   - Determines optimal query strategy (table_route vs. genie_route)
    - Automatically identifies when data joins are needed
 
 3. **SQL Synthesis Agent (Dual-Route)**
-   - **Fast Route**: Direct SQL generation using Unity Catalog functions for single-domain or simple join queries
-   - **Slow Route**: Coordinates multiple Genie agents for complex cross-domain analysis, combining partial queries intelligently
+   - **Table Route**: Direct SQL generation using Unity Catalog functions for single-domain or simple join queries
+   - **Genie Route**: Coordinates multiple Genie agents for complex cross-domain analysis, combining partial queries intelligently
    - Extracts metadata, table schemas, and column details dynamically
    - Generates optimized SQL with proper joins and aggregations
 
@@ -150,11 +150,11 @@ OneChat is a sophisticated multi-agent orchestration system that enables users t
 
 **4. Dual-Route Intelligent Query Orchestration**
 - **Innovation**: Automatic detection and routing based on query complexity
-- **Fast Route** (3-5 seconds):
+- **Table Route** (3-5 seconds):
   - Direct SQL generation using UC Function Toolkit
   - For single-domain or simple multi-domain queries
   - Uses: `get_table_overview`, `get_column_detail`, `get_space_summary`
-- **Slow Route** (5-10 seconds):
+- **Genie Route** (5-10 seconds):
   - Coordinates multiple Genie agents in parallel
   - Each Genie agent provides partial SQL + reasoning
   - SQL Synthesis agent intelligently combines with proper JOINs/CTEs
@@ -162,11 +162,11 @@ OneChat is a sophisticated multi-agent orchestration system that enables users t
 - **Decision logic**:
   ```
   If (metadata_sufficient AND requires_simple_join):
-      → Fast Route (UC tools)
+      → Table Route (UC tools)
   Elif (requires_genie_context OR user_requests_slow):
-      → Slow Route (multi-Genie coordination)
+      → Genie Route (multi-Genie coordination)
   ```
-- **Cost optimization**: Fast route uses cheaper models (Haiku), slow route uses Sonnet only when needed
+- **Cost optimization**: Table_route uses cheaper models (Haiku), genie_route uses Sonnet only when needed
 
 **5. Advanced State Management with Full Observability**
 - **Innovation**: Explicit TypedDict with 20+ tracked fields for complete workflow transparency
@@ -272,7 +272,7 @@ Planning Agent: "Analysis requires 3 Genie spaces:
     - Patient demographics (age groups)
     - Medical claims (diagnosis codes, costs)
     - Insurance details (payer types)
-    Strategy: Fast route with 3-way join"
+    Strategy: Table_route with 3-way join"
     ↓
 SQL Synthesis Agent: "Generated optimized SQL:
     [Shows SQL with proper joins, filters, aggregations]
@@ -767,7 +767,7 @@ mlflow.log_metrics({
 mlflow.log_params({
     "user_query": query,
     "spaces_used": ["space_1", "space_2", "space_3"],
-    "route_taken": "fast_route"
+    "route_taken": "table_route"
 })
 ```
 
@@ -902,7 +902,7 @@ Impact: CFO can analyze cost drivers without data analyst support
 Question: "Which providers prescribe the most opioids to patients with back pain?"
 OneChat Action:
   - Discovers 4 relevant spaces (providers + prescriptions + diagnoses + patients)
-  - Slow route: Coordinates 4 Genie agents
+  - Genie_route: Coordinates 4 Genie agents
   - Combines partial queries into comprehensive analysis
   - Includes provider specialties and prescription trends
 Impact: Quality team can identify outlier prescribing patterns
@@ -943,7 +943,7 @@ Impact: Quality team can identify outlier prescribing patterns
 #### **Horizontal Scaling:**
 - ✅ Add new Genie spaces without code changes
   - Automatic discovery through Vector Search
-  - Dynamic agent creation in slow route
+  - Dynamic agent creation in genie_route
 
 - ✅ Support new data domains seamlessly
   - Vector Search indexes new space metadata

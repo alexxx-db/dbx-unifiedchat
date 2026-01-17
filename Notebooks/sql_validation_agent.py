@@ -545,7 +545,7 @@ GROUP BY mc.payer_type, age_group
 # Test with context from planning agent
 test_context = {
     "relevant_space_ids": ["01f0956a387714969edde65458dcc22a", "01f0956a4b0512e2a8aa325ffbac821b"],
-    "execution_plan": "fast_route"
+    "execution_plan": "table_route"
 }
 
 # Validate the SQL

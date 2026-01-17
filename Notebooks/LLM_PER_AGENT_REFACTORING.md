@@ -10,17 +10,17 @@ Refactored the multi-agent system to allow each sub-agent to have its own dedica
 IN_CODE_AGENTS = [
     InCodeSubAgent(tools=[], name="clarification_agent", ...),
     InCodeSubAgent(tools=[], name="planning_agent", ...),
-    InCodeSubAgent(tools=UC_FUNCTION_NAMES, name="sql_synthesis_fast_route", ...),
+    InCodeSubAgent(tools=UC_FUNCTION_NAMES, name="sql_synthesis_table_route", ...),
 ]
 
 # Additional agents created separately
 sql_execution_agent = create_agent(model=llm, ...)
-slow_route_agent = create_slow_route_agent(llm, ...)
+genie_route_agent = create_genie_route_agent(llm, ...)
 
 supervisor = create_langgraph_supervisor(
     llm,
     IN_CODE_AGENTS,
-    additional_agents=[slow_route_agent, sql_execution_agent]
+    additional_agents=[genie_route_agent, sql_execution_agent]
 )
 ```
 
@@ -34,23 +34,23 @@ IN_CODE_AGENTS = []
 # Create dedicated LLMs for each agent
 llm_clarification = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
 llm_planning = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
-llm_fast_route = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME, temperature=0.1)
-llm_slow_route = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
+llm_table_route = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME, temperature=0.1)
+llm_genie_route = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
 llm_execution = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
 
 # Create each agent individually with its own LLM
 clarification_agent = create_agent(model=llm_clarification, ...)
 planning_agent = create_agent(model=llm_planning, ...)
-sql_synthesis_fast_route = create_agent(model=llm_fast_route, ...)
-slow_route_agent = create_slow_route_agent(llm_slow_route, ...)
+sql_synthesis_table_route = create_agent(model=llm_table_route, ...)
+genie_route_agent = create_genie_route_agent(llm_genie_route, ...)
 sql_execution_agent = create_agent(model=llm_execution, ...)
 
 # Collect all agents
 ALL_AGENTS = [
     clarification_agent,
     planning_agent,
-    sql_synthesis_fast_route,
-    slow_route_agent,
+    sql_synthesis_table_route,
+    genie_route_agent,
     sql_execution_agent
 ]
 
@@ -70,8 +70,8 @@ supervisor = create_langgraph_supervisor(
 |-------|-----|----------|-----------|
 | Clarification Agent | `llm_clarification` | Haiku | Simple task, fast response needed |
 | Planning Agent | `llm_planning` | Haiku | Efficient for structured planning |
-| SQL Synthesis Fast Route | `llm_fast_route` | **Sonnet** | Complex SQL generation needs power |
-| SQL Synthesis Slow Route | `llm_slow_route` | Haiku | Coordinates Genie agents |
+| SQL Synthesis Table Route | `llm_table_route` | **Sonnet** | Complex SQL generation needs power |
+| SQL Synthesis Genie Route | `llm_genie_route` | Haiku | Coordinates Genie agents |
 | SQL Execution Agent | `llm_execution` | Haiku | Executes with tool, simple logic |
 
 ### Cost vs Performance Trade-offs
@@ -79,11 +79,11 @@ supervisor = create_langgraph_supervisor(
 **Haiku (cheaper, faster)**:
 - Clarification: Simple yes/no + options
 - Planning: Structured JSON output
-- Slow Route: Coordination/routing logic
+- Genie Route: Coordination/routing logic
 - Execution: Tool invocation wrapper
 
 **Sonnet (expensive, powerful)**:
-- Fast Route: Complex SQL synthesis across multiple tables
+- Table Route: Complex SQL synthesis across multiple tables
 - Requires understanding of table relationships
 - Needs to generate correct JOIN logic
 
@@ -108,7 +108,7 @@ supervisor = create_langgraph_supervisor(
 supervisor = create_langgraph_supervisor(
     llm, 
     IN_CODE_AGENTS,
-    additional_agents=[slow_route_agent, sql_execution_agent]
+    additional_agents=[genie_route_agent, sql_execution_agent]
 )
 ```
 
@@ -165,8 +165,8 @@ llm_clarification = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")
 ```python
 llm_clarification = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 llm_planning = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
-llm_fast_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")  # Only one using Sonnet
-llm_slow_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
+llm_table_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")  # Only one using Sonnet
+llm_genie_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ```
 
@@ -176,8 +176,8 @@ llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ```python
 llm_clarification = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 llm_planning = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")  # Upgrade
-llm_fast_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")
-llm_slow_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")  # Upgrade
+llm_table_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")
+llm_genie_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")  # Upgrade
 llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ```
 
@@ -188,8 +188,8 @@ llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 # All use Haiku for rapid iteration
 llm_clarification = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 llm_planning = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
-llm_fast_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
-llm_slow_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
+llm_table_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
+llm_genie_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ```
 
@@ -198,9 +198,9 @@ llm_execution = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ### Example 4: Hybrid with Fallback
 ```python
 try:
-    llm_fast_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")
+    llm_table_route = ChatDatabricks(endpoint="databricks-claude-sonnet-4-5")
 except:
-    llm_fast_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
+    llm_table_route = ChatDatabricks(endpoint="databricks-claude-haiku-4-5")
 ```
 
 **When to use**: High availability requirements, automatic degradation
@@ -222,8 +222,8 @@ except:
 # Test each agent individually
 response = clarification_agent.invoke({"messages": [...]})
 response = planning_agent.invoke({"messages": [...]})
-response = sql_synthesis_fast_route.invoke({"messages": [...]})
-response = slow_route_agent.invoke({"messages": [...]})
+response = sql_synthesis_table_route.invoke({"messages": [...]})
+response = genie_route_agent.invoke({"messages": [...]})
 response = sql_execution_agent.invoke({"messages": [...]})
 ```
 
@@ -240,13 +240,13 @@ response = AGENT.predict(input_data)
 
 ### 4. Compare Model Performance
 ```python
-# Test with Haiku for fast_route
-llm_fast_route_haiku = ChatDatabricks(endpoint="haiku")
-agent_haiku = create_agent(model=llm_fast_route_haiku, ...)
+# Test with Haiku for table_route
+llm_table_route_haiku = ChatDatabricks(endpoint="haiku")
+agent_haiku = create_agent(model=llm_table_route_haiku, ...)
 
-# Test with Sonnet for fast_route  
-llm_fast_route_sonnet = ChatDatabricks(endpoint="sonnet")
-agent_sonnet = create_agent(model=llm_fast_route_sonnet, ...)
+# Test with Sonnet for table_route  
+llm_table_route_sonnet = ChatDatabricks(endpoint="sonnet")
+agent_sonnet = create_agent(model=llm_table_route_sonnet, ...)
 
 # Compare SQL quality and accuracy
 ```
@@ -256,7 +256,7 @@ agent_sonnet = create_agent(model=llm_fast_route_sonnet, ...)
 ### Temperature Tuning
 ```python
 # More deterministic (SQL generation)
-llm_fast_route = ChatDatabricks(endpoint="...", temperature=0.1)
+llm_table_route = ChatDatabricks(endpoint="...", temperature=0.1)
 
 # More creative (planning, exploration)
 llm_planning = ChatDatabricks(endpoint="...", temperature=0.3)
@@ -264,7 +264,7 @@ llm_planning = ChatDatabricks(endpoint="...", temperature=0.3)
 
 ### Model Parameters
 ```python
-llm_fast_route = ChatDatabricks(
+llm_table_route = ChatDatabricks(
     endpoint="databricks-claude-sonnet-4-5",
     temperature=0.1,
     max_tokens=4096,  # For long SQL queries
@@ -293,7 +293,7 @@ planning_agent = create_planning_agent_with_retry()
 ### Issue: Agent not using correct LLM
 **Check**: Verify LLM assignment in agent creation
 ```python
-print(f"Fast Route LLM: {sql_synthesis_fast_route.model}")
+print(f"Table Route LLM: {sql_synthesis_table_route.model}")
 ```
 
 ### Issue: High costs

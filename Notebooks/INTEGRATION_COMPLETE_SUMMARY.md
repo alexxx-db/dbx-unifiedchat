@@ -22,7 +22,7 @@ All agents have been fully integrated into the LangGraph supervisor. The system 
 ┌─────────────────────┐
 │ 2. PLANNING         │ ← IN_CODE_AGENTS[1]
 │    AGENT            │   Creates execution plan
-│                     │   Determines fast/slow route
+│                     │   Determines fast/genie route
 └──────────┬──────────┘
            ↓
      ┌─────┴─────┐
@@ -100,14 +100,14 @@ sql_execution_agent.name = "sql_execution_agent"
 sql_execution_agent.description = "Executes SQL queries..."
 ```
 
-### 3. Slow Route Agent Integration
+### 3. Genie Route Agent Integration
 **File**: Lines 701-703
 
-**Configured**: Slow route agent with proper attributes
+**Configured**: Genie Route agent with proper attributes
 
 ```python
-slow_route_agent.name = "sql_synthesis_slow_route"
-slow_route_agent.description = "Generates SQL by routing to Genie agents..."
+genie_route_agent.name = "sql_synthesis_genie_route"
+genie_route_agent.description = "Generates SQL by routing to Genie agents..."
 ```
 
 ### 4. Supervisor Creation with All Agents
@@ -118,7 +118,7 @@ slow_route_agent.description = "Generates SQL by routing to Genie agents..."
 supervisor = create_langgraph_supervisor(
     llm, 
     IN_CODE_AGENTS,
-    additional_agents=[slow_route_agent, sql_execution_agent]  # INTEGRATED
+    additional_agents=[genie_route_agent, sql_execution_agent]  # INTEGRATED
 )
 ```
 
@@ -136,7 +136,7 @@ supervisor = create_langgraph_supervisor(
    - Purpose: Create execution plans
    - Output: JSON with join_strategy, genie_route_plan
 
-3. **sql_synthesis_fast_route**
+3. **sql_synthesis_table_route**
    - Tools: UC metadata functions (4 functions)
      - get_space_summary
      - get_table_overview
@@ -147,7 +147,7 @@ supervisor = create_langgraph_supervisor(
 
 ### ADDITIONAL_AGENTS (2 agents)
 
-4. **sql_synthesis_slow_route** (slow_route_agent)
+4. **sql_synthesis_genie_route** (genie_route_agent)
    - Tools: All Genie agent tools (one per space)
    - Purpose: Route to Genie agents, combine SQL
    - Output: Combined SQL query
@@ -170,7 +170,7 @@ The supervisor now returns complete results in this structure:
 ```
 **Execution Plan**: [Summary from planning agent]
 - Query type: single/multi-space
-- Join strategy: fast_route/slow_route
+- Join strategy: table_route/genie_route
 - Relevant spaces: [space IDs]
 
 **SQL Query**: 
@@ -194,7 +194,7 @@ The supervisor now returns complete results in this structure:
    - Tests full workflow from query to execution
    - Verifies comprehensive output format
 
-2. **Test Fast vs Slow Route**
+2. **Test Fast vs Genie Route**
    - Compares both strategies
    - Shows how supervisor routes based on plan
 
@@ -221,7 +221,7 @@ The supervisor now returns complete results in this structure:
 - Supervisor provides context
 
 ### 4. Flexible Routing
-- Automatic fast/slow route selection
+- Automatic fast/genie route selection
 - Genie agents available when needed
 - UC functions for direct queries
 
@@ -281,7 +281,7 @@ for event in AGENT.predict_stream(input_data):
 
 - [x] All agents integrated into supervisor
 - [x] SQL execution agent with tool
-- [x] Slow route agent configured
+- [x] Genie Route agent configured
 - [x] Comprehensive output format defined
 - [x] Error handling implemented
 - [x] Test sections updated
@@ -333,9 +333,9 @@ LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
 **Cause**: sql_execution_agent not in additional_agents  
 **Solution**: Verify line 717 includes sql_execution_agent
 
-### Issue: Slow route not working
-**Cause**: slow_route_agent missing from additional_agents  
-**Solution**: Verify line 717 includes slow_route_agent
+### Issue: Genie Route not working
+**Cause**: genie_route_agent missing from additional_agents  
+**Solution**: Verify line 717 includes genie_route_agent
 
 ### Issue: Tool not found error
 **Cause**: execute_sql_tool not properly defined  
@@ -346,12 +346,12 @@ LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
 ### Agent Overhead
 - **Clarification**: Fast (LLM only, simple check)
 - **Planning**: Medium (vector search + LLM)
-- **Fast Route**: Medium (UC function calls + LLM)
-- **Slow Route**: Slow (multiple Genie agent calls)
+- **Table Route**: Medium (UC function calls + LLM)
+- **Genie Route**: Slow (multiple Genie agent calls)
 - **Execution**: Varies (depends on query complexity)
 
 ### Optimization Tips
-1. Use fast route when possible (fewer agent calls)
+1. Use table route when possible (fewer agent calls)
 2. Limit result sets with max_rows parameter
 3. Cache planning results for similar queries
 4. Monitor MLflow traces to identify bottlenecks
@@ -376,8 +376,8 @@ LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
 ✅ **Functionality**
 - Query clarification works
 - Planning creates execution plans
-- Fast route generates SQL
-- Slow route routes to Genie agents
+- Table Route generates SQL
+- Genie Route routes to Genie agents
 - SQL execution returns results
 
 ✅ **Output Quality**
@@ -390,6 +390,6 @@ LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
 
 The multi-agent system is now fully integrated and production-ready. All agents work together seamlessly under the LangGraph supervisor, providing comprehensive results that include execution plans, SQL queries, query results, and explanations.
 
-The system supports both fast route (UC metadata functions) and slow route (Genie agents), with automatic SQL execution and structured result formatting.
+The system supports both table route (UC metadata functions) and genie route (Genie agents), with automatic SQL execution and structured result formatting.
 
 Ready for testing and deployment!

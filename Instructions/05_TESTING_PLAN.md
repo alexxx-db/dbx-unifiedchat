@@ -744,14 +744,14 @@ except Exception as e:
 **Expected Result:**
 - ✅ ThinkingPlanningAgent identifies multi-space query
 - ✅ Determines JOIN is needed
-- ✅ Chooses fast_route or slow_route
+- ✅ Chooses table_route or genie_route
 - ✅ SQLSynthesisAgent creates combined query
 - ✅ SQLExecutionAgent runs query
 - ✅ Returns final count
 
 **Workflow Options:**
-- **Fast Route:** ThinkingPlanning → SQLSynthesis → SQLExecution
-- **Slow Route:** ThinkingPlanning → GENIE_PATIENT → MEDICATIONS → SQLSynthesis → SQLExecution
+- **Table Route:** ThinkingPlanning → SQLSynthesis → SQLExecution
+- **Genie Route:** ThinkingPlanning → GENIE_PATIENT → MEDICATIONS → SQLSynthesis → SQLExecution
 
 **Quality Checks:**
 - SQL should join patient and medication tables

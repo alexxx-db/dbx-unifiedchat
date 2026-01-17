@@ -24,8 +24,8 @@ Architecture Benefits:
 Components:
 1. Clarification Agent - Validates query clarity (OOP class)
 2. Planning Agent - Creates execution plan and identifies relevant spaces (OOP class)
-3. SQL Synthesis Agent (Fast Route) - Generates SQL using UC tools (OOP class)
-4. SQL Synthesis Agent (Slow Route) - Generates SQL using Genie agents (OOP class)
+3. SQL Synthesis Agent (Table Route) - Generates SQL using UC tools (OOP class)
+4. SQL Synthesis Agent (Genie Route) - Generates SQL using Genie agents (OOP class)
 5. SQL Execution Agent - Executes SQL and returns results (OOP class)
 
 The Super Agent uses LangGraph with explicit state tracking for orchestration.
@@ -169,7 +169,7 @@ class AgentState(TypedDict):
     relevant_spaces: Optional[List[Dict[str, Any]]]
     vector_search_relevant_spaces_info: Optional[List[Dict[str, str]]]
     requires_join: Optional[bool]
-    join_strategy: Optional[str]  # "fast_route" or "slow_route"
+    join_strategy: Optional[str]  # "table_route" or "genie_route"
     execution_plan: Optional[str]
     genie_route_plan: Optional[Dict[str, str]]
     
@@ -362,12 +362,12 @@ Break down the question and determine:
     - JOIN needed: E.g., "How many active plan members over 50 are on Lexapro?" requires joining member data with pharmacy claims.
     - No need for JOIN: E.g., "How many active plan members over 50? How much total cost for all Lexapro claims?" - Two independent questions.
 4. If JOIN is needed, what's the best strategy:
-    - "fast_route": Directly synthesize SQL across multiple tables
-    - "slow_route": Query each Genie Space Agent separately, then combine SQL queries
-    - If user explicitly asks for "slow_route", use it; otherwise, use "fast_route"
+    - "table_route": Directly synthesize SQL across multiple tables
+    - "genie_route": Query each Genie Space Agent separately, then combine SQL queries
+    - If user explicitly asks for "genie_route", use it; otherwise, use "table_route"
 5. Execution plan: A brief description of how to execute the plan.
-    - For slow_route: Return "genie_route_plan": {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}}
-    - For fast_route: Return "genie_route_plan": null
+    - For genie_route: Return "genie_route_plan": {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}}
+    - For table_route: Return "genie_route_plan": null
     - Each partial_question should be similar to original but scoped to that space
     - Add "Please limit to top 10 rows" to each partial question
 
@@ -380,7 +380,7 @@ Return your analysis as JSON:
     "requires_multiple_spaces": true/false,
     "relevant_space_ids": ["space_id_1", "space_id_2", ...],
     "requires_join": true/false,
-    "join_strategy": "fast_route" or "slow_route" or null,
+    "join_strategy": "table_route" or "genie_route" or null,
     "execution_plan": "Brief description of execution plan",
     "genie_route_plan": {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2'}} or null
 }}
@@ -441,8 +441,8 @@ print("✓ PlanningAgent class defined")
 
 # COMMAND ----------
 
-# DBTITLE 1,Agent Class 3a: SQL Synthesis Agent - Fast Route (OOP)
-class SQLSynthesisFastAgent:
+# DBTITLE 1,Agent Class 3a: SQL Synthesis Agent - Table Route (OOP)
+class SQLSynthesisTableAgent:
     """
     Agent responsible for fast SQL synthesis using UC function tools.
     
@@ -595,13 +595,13 @@ Use your available UC function tools to gather metadata intelligently.
         """Make agent callable."""
         return self.synthesize_sql(plan)
 
-print("✓ SQLSynthesisFastAgent class defined")
+print("✓ SQLSynthesisTableAgent class defined")
 
 # COMMAND ----------
 
-# DBTITLE 1,Agent Class 3b: SQL Synthesis Agent - Slow Route (OOP)
+# DBTITLE 1,Agent Class 3b: SQL Synthesis Agent - Genie Route (OOP)
 
-class SQLSynthesisSlowAgent:
+class SQLSynthesisGenieAgent:
     """
     Agent responsible for slow SQL synthesis using Genie agents.
     
@@ -778,7 +778,7 @@ Return ONLY the final SQL query, no explanations or markdown.
         genie_route_plan: Dict[str, str]
     ) -> Dict[str, Any]:
         """
-        Synthesize SQL using Genie agents (slow route).
+        Synthesize SQL using Genie agents (genie route).
         
         Args:
             original_query: Original user question
@@ -819,7 +819,7 @@ Return ONLY the final SQL query, no explanations or markdown.
         """Make agent callable."""
         return self.synthesize_sql(original_query, execution_plan, genie_route_plan)
 
-print("✓ SQLSynthesisSlowAgent class defined")
+print("✓ SQLSynthesisGenieAgent class defined")
 
 # COMMAND ----------
 
@@ -1192,12 +1192,12 @@ def planning_node(state: AgentState) -> AgentState:
     # ]
     
     # Determine next agent
-    if state["join_strategy"] == "slow_route":
-        print("✓ Plan complete - using SLOW ROUTE (Genie agents)")
-        state["next_agent"] = "sql_synthesis_slow"
+    if state["join_strategy"] == "genie_route":
+        print("✓ Plan complete - using GENIE ROUTE (Genie agents)")
+        state["next_agent"] = "sql_synthesis_genie"
     else:
-        print("✓ Plan complete - using FAST ROUTE (direct SQL synthesis)")
-        state["next_agent"] = "sql_synthesis_fast"
+        print("✓ Plan complete - using TABLE ROUTE (direct SQL synthesis)")
+        state["next_agent"] = "sql_synthesis_table"
     
     state["messages"].append(
         SystemMessage(content=f"Execution plan: {json.dumps(plan, indent=2)}")
@@ -1206,19 +1206,19 @@ def planning_node(state: AgentState) -> AgentState:
     return state
 
 
-def sql_synthesis_fast_node(state: AgentState) -> AgentState:
+def sql_synthesis_table_node(state: AgentState) -> AgentState:
     """
-    Fast SQL synthesis node wrapping SQLSynthesisFastAgent class.
+    Fast SQL synthesis node wrapping SQLSynthesisTableAgent class.
     Combines OOP modularity with explicit state management.
     """
     print("\n" + "="*80)
-    print("⚡ SQL SYNTHESIS AGENT - FAST ROUTE")
+    print("⚡ SQL SYNTHESIS AGENT - TABLE ROUTE")
     print("="*80)
     
     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SQL_SYNTHESIS, temperature=0.1)
     
     # Use OOP agent
-    sql_agent = SQLSynthesisFastAgent(llm, CATALOG, SCHEMA)
+    sql_agent = SQLSynthesisTableAgent(llm, CATALOG, SCHEMA)
     
     # Prepare plan for agent
     plan = {
@@ -1252,7 +1252,7 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             
             # Add message with SQL synthesis explanation
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis (Fast Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis (Table Route):\n{explanation}")
             )
         else:
             print("⚠ No SQL generated - agent explanation:")
@@ -1262,7 +1262,7 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
             
             # Add message with explanation even if no SQL
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Fast Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{explanation}")
             )
         
     except Exception as e:
@@ -1271,31 +1271,31 @@ def sql_synthesis_fast_node(state: AgentState) -> AgentState:
         state["sql_synthesis_explanation"] = str(e)
         state["next_agent"] = "end"
         state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Fast Route):\n{state["sql_synthesis_explanation"]}")
+                AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{state["sql_synthesis_explanation"]}")
             )
     
     return state
 
 
-def sql_synthesis_slow_node(state: AgentState) -> AgentState:
+def sql_synthesis_genie_node(state: AgentState) -> AgentState:
     """
-    Slow SQL synthesis node wrapping SQLSynthesisSlowAgent class.
+    Slow SQL synthesis node wrapping SQLSynthesisGenieAgent class.
     Combines OOP modularity with explicit state management.
     """
     print("\n" + "="*80)
-    print("🐢 SQL SYNTHESIS AGENT - SLOW ROUTE")
+    print("🐢 SQL SYNTHESIS AGENT - GENIE ROUTE")
     print("="*80)
     
     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SQL_SYNTHESIS, temperature=0.1)
     
     # Use OOP agent
-    sql_agent = SQLSynthesisSlowAgent(llm, space_summary_df)
+    sql_agent = SQLSynthesisGenieAgent(llm, space_summary_df)
     
     genie_route_plan = state.get("genie_route_plan", {})
     
     if not genie_route_plan:
         print("❌ No genie_route_plan found in state")
-        state["synthesis_error"] = "No routing plan available for slow route"
+        state["synthesis_error"] = "No routing plan available for genie route"
         state["next_agent"] = "end"
         return state
     
@@ -1326,7 +1326,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             
             # Add message with SQL synthesis explanation
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis (Slow Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis (Genie Route):\n{explanation}")
             )
         else:
             print("⚠ No SQL generated - agent explanation:")
@@ -1336,7 +1336,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
             
             # Add message with explanation even if no SQL
             state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Slow Route):\n{explanation}")
+                AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{explanation}")
             )
         
     except Exception as e:
@@ -1345,7 +1345,7 @@ def sql_synthesis_slow_node(state: AgentState) -> AgentState:
         state["sql_synthesis_explanation"] = str(e)
         state["next_agent"] = "end"
         state["messages"].append(
-                AIMessage(content=f"SQL Synthesis Failed (Slow Route):\n{state["sql_synthesis_explanation"]}")
+                AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{state["sql_synthesis_explanation"]}")
             )
     
     return state
@@ -1562,8 +1562,8 @@ def create_super_agent_hybrid():
     # Add nodes (wrapping OOP agents)
     workflow.add_node("clarification", clarification_node)
     workflow.add_node("planning", planning_node)
-    workflow.add_node("sql_synthesis_fast", sql_synthesis_fast_node)
-    workflow.add_node("sql_synthesis_slow", sql_synthesis_slow_node)
+    workflow.add_node("sql_synthesis_table", sql_synthesis_table_node)
+    workflow.add_node("sql_synthesis_genie", sql_synthesis_genie_node)
     workflow.add_node("sql_execution", sql_execution_node)
     workflow.add_node("summarize", summarize_node)  # Final summarization node
     
@@ -1575,10 +1575,10 @@ def create_super_agent_hybrid():
     
     def route_after_planning(state: AgentState) -> str:
         next_agent = state.get("next_agent", "summarize")
-        if next_agent == "sql_synthesis_fast":
-            return "sql_synthesis_fast"
-        elif next_agent == "sql_synthesis_slow":
-            return "sql_synthesis_slow"
+        if next_agent == "sql_synthesis_table":
+            return "sql_synthesis_table"
+        elif next_agent == "sql_synthesis_genie":
+            return "sql_synthesis_genie"
         return "summarize"
     
     def route_after_synthesis(state: AgentState) -> str:
@@ -1603,14 +1603,14 @@ def create_super_agent_hybrid():
         "planning",
         route_after_planning,
         {
-            "sql_synthesis_fast": "sql_synthesis_fast",
-            "sql_synthesis_slow": "sql_synthesis_slow",
+            "sql_synthesis_table": "sql_synthesis_table",
+            "sql_synthesis_genie": "sql_synthesis_genie",
             "summarize": "summarize"
         }
     )
     
     workflow.add_conditional_edges(
-        "sql_synthesis_fast",
+        "sql_synthesis_table",
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
@@ -1619,7 +1619,7 @@ def create_super_agent_hybrid():
     )
     
     workflow.add_conditional_edges(
-        "sql_synthesis_slow",
+        "sql_synthesis_genie",
         route_after_synthesis,
         {
             "sql_execution": "sql_execution",
@@ -1640,8 +1640,8 @@ def create_super_agent_hybrid():
     print("✓ Workflow nodes added:")
     print("  1. Clarification Agent (OOP)")
     print("  2. Planning Agent (OOP)")
-    print("  3. SQL Synthesis Agent - Fast Route (OOP)")
-    print("  4. SQL Synthesis Agent - Slow Route (OOP)")
+    print("  3. SQL Synthesis Agent - Table Route (OOP)")
+    print("  4. SQL Synthesis Agent - Genie Route (OOP)")
     print("  5. SQL Execution Agent (OOP)")
     print("  6. Result Summarize Agent (OOP) - FINAL NODE")
     print("\n✓ Explicit state management enabled")
@@ -2062,15 +2062,15 @@ final_state
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Hybrid Super Agent (quick route)
+# DBTITLE 1,Test Hybrid Super Agent (table route)
 # Display results
 display_results(final_state)
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Hybrid Super Agent (slow route)
+# DBTITLE 1,Test Hybrid Super Agent (genie route)
 # Example test query
-test_query = "What is the average cost of medical claims  per claim in 2024? use slow route"
+test_query = "What is the average cost of medical claims  per claim in 2024? use genie route"
 
 # Invoke Hybrid Super Agent
 final_state = invoke_super_agent_hybrid(test_query, thread_id="test_hybrid_002")
@@ -2092,15 +2092,15 @@ display_results(result_1)
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Case 2: Multi-Space Query with JOIN (Fast Route)
+# DBTITLE 1,Test Case 2: Multi-Space Query with JOIN (Table Route)
 test_query_2 = "What is the average cost of medical claims for patients diagnosed with diabetes?"
 result_2 = invoke_super_agent_hybrid(test_query_2, thread_id="test_hybrid_fast")
 display_results(result_2)
 
 # COMMAND ----------
 
-# DBTITLE 1,Test Case 3: Multi-Space Query with JOIN (Slow Route - Explicit)
-test_query_3 = "What is the average cost of medical claims for patients diagnosed with diabetes? Use slow route"
+# DBTITLE 1,Test Case 3: Multi-Space Query with JOIN (Genie Route - Explicit)
+test_query_3 = "What is the average cost of medical claims for patients diagnosed with diabetes? Use genie route"
 result_3 = invoke_super_agent_hybrid(test_query_3, thread_id="test_hybrid_slow")
 display_results(result_3)
 
@@ -2222,15 +2222,15 @@ else:
 # MAGIC Agent Classes (OOP):
 # MAGIC - ClarificationAgent
 # MAGIC - PlanningAgent
-# MAGIC - SQLSynthesisFastAgent
-# MAGIC - SQLSynthesisSlowAgent
+# MAGIC - SQLSynthesisTableAgent
+# MAGIC - SQLSynthesisGenieAgent
 # MAGIC - SQLExecutionAgent
 # MAGIC
 # MAGIC Node Wrappers:
 # MAGIC - clarification_node(state) → calls ClarificationAgent, updates state
 # MAGIC - planning_node(state) → calls PlanningAgent, updates state
-# MAGIC - sql_synthesis_fast_node(state) → calls SQLSynthesisFastAgent, updates state
-# MAGIC - sql_synthesis_slow_node(state) → calls SQLSynthesisSlowAgent, updates state
+# MAGIC - sql_synthesis_table_node(state) → calls SQLSynthesisTableAgent, updates state
+# MAGIC - sql_synthesis_genie_node(state) → calls SQLSynthesisGenieAgent, updates state
 # MAGIC - sql_execution_node(state) → calls SQLExecutionAgent, updates state
 # MAGIC - summarize_node(state) → calls ResultSummarizeAgent, preserves ALL state fields
 # MAGIC

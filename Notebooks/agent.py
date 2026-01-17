@@ -89,7 +89,7 @@ class QueryPlan(BaseModel):
     requires_multiple_spaces: bool = False
     relevant_space_ids: Optional[List[str]] = None
     requires_join: bool = False
-    join_strategy: Optional[str] = None  # "fast_route" or "slow_route"
+    join_strategy: Optional[str] = None  # "table_route" or "genie_route"
     execution_plan: Optional[str] = None
 
 
@@ -208,8 +208,8 @@ class ThinkingPlanningAgent:
         2. How many Genie spaces are needed to answer completely? (List their space_ids)
         3. If multiple spaces are needed, do we need to JOIN data across them?
         4. If JOIN is needed, what's the best strategy:
-           - "fast_route": Directly synthesize SQL across multiple tables
-           - "slow_route": Query each space separately, then combine results
+           - "table_route": Directly synthesize SQL across multiple tables
+           - "genie_route": Query each space separately, then combine results
         5. If no JOIN needed, can answers be verbally merged?
         
         Return your analysis as JSON:
@@ -219,7 +219,7 @@ class ThinkingPlanningAgent:
             "requires_multiple_spaces": true/false,
             "relevant_space_ids": ["space_id_1", "space_id_2", ...],
             "requires_join": true/false,
-            "join_strategy": "fast_route" or "slow_route" or null,
+            "join_strategy": "table_route" or "genie_route" or null,
             "execution_plan": "Brief description of execution plan"
         }}
         
@@ -261,13 +261,13 @@ class SQLSynthesisAgent:
         self.llm = llm
         self.name = "SQLSynthesis"
     
-    def synthesize_sql_fast_route(
+    def synthesize_sql_table_route(
         self, 
         query: str, 
         table_metadata: List[Dict]
     ) -> str:
         """
-        Fast route: Directly synthesize SQL across multiple tables.
+        Table Route: Directly synthesize SQL across multiple tables.
         
         Args:
             query: Original user question
@@ -297,13 +297,13 @@ class SQLSynthesisAgent:
         response = self.llm.invoke(prompt)
         return response.content.strip()
     
-    def synthesize_sql_slow_route(
+    def synthesize_sql_genie_route(
         self,
         query: str,
         sub_queries_with_sql: List[Dict[str, str]]
     ) -> str:
         """
-        Slow route: Combine SQL from multiple Genie agents into a unified query.
+        Genie Route: Combine SQL from multiple Genie agents into a unified query.
         
         Args:
             query: Original user question
@@ -339,17 +339,17 @@ class SQLSynthesisAgent:
         messages = state.get("messages", [])
         
         # Determine which route to take
-        if query_plan.get("join_strategy") == "fast_route":
+        if query_plan.get("join_strategy") == "table_route":
             # Use metadata to synthesize SQL directly
             table_metadata = state.get("table_metadata", [])
-            sql = self.synthesize_sql_fast_route(
+            sql = self.synthesize_sql_table_route(
                 messages[0].content,
                 table_metadata
             )
         else:
             # Combine SQL from Genie agents
             sub_results = state.get("genie_results", [])
-            sql = self.synthesize_sql_slow_route(
+            sql = self.synthesize_sql_genie_route(
                 messages[0].content,
                 sub_results
             )

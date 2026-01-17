@@ -56,8 +56,8 @@ Significantly enriched the FEIP submission document with **9 major enhancements*
    - Structured Delta table storage
 
 4. **Dual-Route Intelligent Query Orchestration**
-   - Fast route (3-5s): UC functions
-   - Slow route (5-10s): Multi-Genie coordination
+   - Table Route (3-5s): UC functions
+   - Genie Route (5-10s): Multi-Genie coordination
    - Decision logic flowchart
    - Cost optimization
 

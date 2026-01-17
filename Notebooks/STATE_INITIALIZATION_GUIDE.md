@@ -204,12 +204,12 @@ AI: [Agent generates response with system context]
     "question_clear": True,
     "execution_plan": "Query medical_claims with AVG...",
     "relevant_space_ids": ["medical_claims"],
-    "join_strategy": "fast_route",
+    "join_strategy": "table_route",
     "messages": [
         SystemMessage(content="..."),
         HumanMessage(content="What is average cost?"),
         AIMessage(content="Question is clear..."),
-        AIMessage(content="Planning: Using fast route...")  # ← Added
+        AIMessage(content="Planning: Using table route...")  # ← Added
     ],
     "next_agent": "sql_synthesis_fast"
 }
@@ -225,8 +225,8 @@ AI: [Agent generates response with system context]
         SystemMessage(content="..."),
         HumanMessage(content="What is average cost?"),
         AIMessage(content="Question is clear..."),
-        AIMessage(content="Planning: Using fast route..."),
-        AIMessage(content="SQL Synthesis (Fast Route):\n...")  # ← Added
+        AIMessage(content="Planning: Using table route..."),
+        AIMessage(content="SQL Synthesis (Table Route):\n...")  # ← Added
     ],
     "next_agent": "sql_execution"
 }
@@ -242,8 +242,8 @@ AI: [Agent generates response with system context]
         SystemMessage(content="..."),
         HumanMessage(content="What is average cost?"),
         AIMessage(content="Question is clear..."),
-        AIMessage(content="Planning: Using fast route..."),
-        AIMessage(content="SQL Synthesis (Fast Route):\n..."),
+        AIMessage(content="Planning: Using table route..."),
+        AIMessage(content="SQL Synthesis (Table Route):\n..."),
         AIMessage(content="📝 Summary:\n...")  # ← Final comprehensive message
     ],
     "next_agent": "end"

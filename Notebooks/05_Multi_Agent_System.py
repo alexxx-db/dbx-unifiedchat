@@ -661,8 +661,8 @@ except Exception as e:
 # MAGIC     ├─ Single Space → GenieAgent → Response
 # MAGIC     ├─ Multiple Spaces (No Join) → GenieAgents (parallel) → Verbal Merge → Response
 # MAGIC     └─ Multiple Spaces (Join Required)
-# MAGIC         ├─ Fast Route → SQLSynthesisAgent → SQLExecutionAgent → Response
-# MAGIC         └─ Slow Route → GenieAgents (parallel) → SQLSynthesisAgent → SQLExecutionAgent → Response
+# MAGIC         ├─ Table Route → SQLSynthesisAgent → SQLExecutionAgent → Response
+# MAGIC         └─ Genie Route → GenieAgents (parallel) → SQLSynthesisAgent → SQLExecutionAgent → Response
 # MAGIC ```
 # MAGIC 
 # MAGIC #### Query Types Supported
@@ -695,7 +695,7 @@ except Exception as e:
 # MAGIC 
 # MAGIC - Patient counts < 10 are returned as "Count is less than 10"
 # MAGIC - Individual patient IDs are never shown, only aggregates
-# MAGIC - Complex multi-way joins may take longer (slow route)
+# MAGIC - Complex multi-way joins may take longer (genie route)
 # MAGIC - Vector search finds relevant spaces, but planning agent makes final decision
 # MAGIC 
 # MAGIC #### Modernization Updates

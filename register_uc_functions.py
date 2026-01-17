@@ -68,8 +68,8 @@ return analyze_query_plan(query, vector_search_index, num_results)
 """,
     },
     {
-        "name": "synthesize_sql_fast_route",
-        "comment": "Synthesize SQL query directly across multiple tables (fast route).",
+        "name": "synthesize_sql_table_route",
+        "comment": "Synthesize SQL query directly across multiple tables (table route).",
         "parameters": [
             FunctionParameterInfo(
                 name="query",
@@ -90,13 +90,13 @@ return analyze_query_plan(query, vector_search_index, num_results)
         "return_comment": "SQL query string",
         "routine_body": "EXTERNAL",
         "routine_definition": f"""
-from agent_uc_functions import synthesize_sql_fast_route
-return synthesize_sql_fast_route(query, table_metadata_json)
+from agent_uc_functions import synthesize_sql_table_route
+return synthesize_sql_table_route(query, table_metadata_json)
 """,
     },
     {
-        "name": "synthesize_sql_slow_route",
-        "comment": "Combine SQL from multiple Genie agents into a unified query (slow route).",
+        "name": "synthesize_sql_genie_route",
+        "comment": "Combine SQL from multiple Genie agents into a unified query (genie route).",
         "parameters": [
             FunctionParameterInfo(
                 name="query",
@@ -117,8 +117,8 @@ return synthesize_sql_fast_route(query, table_metadata_json)
         "return_comment": "Combined SQL query string",
         "routine_body": "EXTERNAL",
         "routine_definition": f"""
-from agent_uc_functions import synthesize_sql_slow_route
-return synthesize_sql_slow_route(query, sub_queries_json)
+from agent_uc_functions import synthesize_sql_genie_route
+return synthesize_sql_genie_route(query, sub_queries_json)
 """,
     },
     {

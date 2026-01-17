@@ -91,8 +91,8 @@ from agent_uc_functions import analyze_query_plan
 return analyze_query_plan(query, vector_search_index, num_results)
 $$;
 
--- 2. Synthesize SQL (Fast Route) Function
-CREATE OR REPLACE FUNCTION yyang.multi_agent_genie.synthesize_sql_fast_route(
+-- 2. Synthesize SQL (Table Route) Function
+CREATE OR REPLACE FUNCTION yyang.multi_agent_genie.synthesize_sql_table_route(
   query STRING COMMENT 'The user question',
   table_metadata_json STRING COMMENT 'JSON string with table metadata'
 )
@@ -100,12 +100,12 @@ RETURNS STRING
 LANGUAGE PYTHON
 COMMENT 'Synthesize SQL query directly across multiple tables'
 AS $$
-from agent_uc_functions import synthesize_sql_fast_route
-return synthesize_sql_fast_route(query, table_metadata_json)
+from agent_uc_functions import synthesize_sql_table_route
+return synthesize_sql_table_route(query, table_metadata_json)
 $$;
 
--- 3. Synthesize SQL (Slow Route) Function
-CREATE OR REPLACE FUNCTION yyang.multi_agent_genie.synthesize_sql_slow_route(
+-- 3. Synthesize SQL (Genie Route) Function
+CREATE OR REPLACE FUNCTION yyang.multi_agent_genie.synthesize_sql_genie_route(
   query STRING COMMENT 'The original user question',
   sub_queries_json STRING COMMENT 'JSON with sub-queries and their SQL'
 )
@@ -113,8 +113,8 @@ RETURNS STRING
 LANGUAGE PYTHON
 COMMENT 'Combine SQL from multiple Genie agents'
 AS $$
-from agent_uc_functions import synthesize_sql_slow_route
-return synthesize_sql_slow_route(query, sub_queries_json)
+from agent_uc_functions import synthesize_sql_genie_route
+return synthesize_sql_genie_route(query, sub_queries_json)
 $$;
 
 -- 4. Execute SQL Function
@@ -156,8 +156,8 @@ $$;
 
 -- Grant permissions
 GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.analyze_query_plan TO `account users`;
-GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.synthesize_sql_fast_route TO `account users`;
-GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.synthesize_sql_slow_route TO `account users`;
+GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.synthesize_sql_table_route TO `account users`;
+GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.synthesize_sql_genie_route TO `account users`;
 GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.execute_sql_query TO `account users`;
 GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.get_table_metadata TO `account users`;
 GRANT EXECUTE ON FUNCTION yyang.multi_agent_genie.verbal_merge_results TO `account users`;

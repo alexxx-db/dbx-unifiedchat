@@ -30,15 +30,15 @@ graph TB
     %% Multiple Agents Path
     DecisionSingle -->|No| DecisionJoin{Row-wise<br/>Join Needed?}
     
-    %% Join Required - Fast Route
-    DecisionJoin -->|Yes - Fast Route| SQLSynthesisFast[SQL Synthesis Agent<br/>Assembly SQL from Metadata]
+    %% Join Required - Table Route
+    DecisionJoin -->|Yes - Table Route| SQLSynthesisFast[SQL Synthesis Agent<br/>Assembly SQL from Metadata]
     SQLSynthesisFast --> SQLExecFast[SQL Execution Agent<br/>Execute on Delta Tables]
     SQLExecFast --> DeltaTables[(Delta Tables<br/>Behind Genie Agents)]
     SQLExecFast --> ReturnFast[Return Fast Result]
     ReturnFast --> SuperAgent
     
-    %% Join Required - Slow Route
-    DecisionJoin -->|Yes - Slow Route| ParallelCall[Parallel Async Calls<br/>to Multiple Genie Agents]
+    %% Join Required - Genie Route
+    DecisionJoin -->|Yes - Genie Route| ParallelCall[Parallel Async Calls<br/>to Multiple Genie Agents]
     ParallelCall --> GenieAgent2A[Genie Agent A<br/>Sub-question 1]
     ParallelCall --> GenieAgent2B[Genie Agent B<br/>Sub-question 2]
     GenieAgent2A --> CollectSQL[Collect sql_results]

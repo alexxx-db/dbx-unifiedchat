@@ -425,7 +425,7 @@ mock_plan_result = {
         "01f0956a4b0512e2a8aa325ffbac821b"
     ],
     "requires_join": True,
-    "join_strategy": "fast_route",
+    "join_strategy": "table_route",
     "execution_plan": "JOIN medical_claim with diagnosis on claim_id, filter diabetes ICD-10 codes, calculate AVG"
 }
 

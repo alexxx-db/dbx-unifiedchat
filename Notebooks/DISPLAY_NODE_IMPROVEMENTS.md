@@ -122,8 +122,8 @@ Created a **dedicated Display Node** that:
 1. **Original Query** - Always shown
 2. **Clarification Info** - If clarification was needed/provided
 3. **Execution Plan** - From planning agent
-4. **Routing Strategy** - Fast/slow route, join requirements
-5. **Genie Route Plan** - For slow route (which questions to which spaces)
+4. **Routing Strategy** - Fast/genie route, join requirements
+5. **Genie Route Plan** - For genie route (which questions to which spaces)
 6. **SQL Synthesis Explanation** - Agent's reasoning
 7. **Generated SQL** - The actual SQL query
 8. **Query Results** - Using Databricks `display()` for interactive table
@@ -160,7 +160,7 @@ def display_node(state: AgentState) -> AgentState:
         print(f"\n🔀 Routing Strategy:")
         ...
     
-    # 5. Display Genie Route Plan (slow route)
+    # 5. Display Genie Route Plan (genie route)
     if state.get('genie_route_plan'):
         print(f"\n🐢 Genie Route Plan:")
         ...
@@ -217,8 +217,8 @@ User Query
     └─ Unclear? → [Display Node] → END
     ↓
 [Planning Node]
-    ├─ Fast Route → [SQL Synthesis Fast]
-    ├─ Slow Route → [SQL Synthesis Slow]
+    ├─ Table Route → [SQL Synthesis Fast]
+    ├─ Genie Route → [SQL Synthesis Slow]
     └─ Error → [Display Node] → END
     ↓
 [SQL Synthesis Node]
@@ -286,7 +286,7 @@ class AgentState(TypedDict):
   Query medical_claims table filtering by year 2024, calculate average cost
 
 🔀 Routing Strategy:
-  Strategy: fast_route
+  Strategy: table_route
   Requires Join: False
   Multiple Spaces: False
 
@@ -332,7 +332,7 @@ WHERE YEAR(date_service) = 2024
   Query procedure costs from medical claims data
 
 🔀 Routing Strategy:
-  Strategy: fast_route
+  Strategy: table_route
   Requires Join: False
 
 💭 SQL Synthesis Agent Explanation:
@@ -356,7 +356,7 @@ WHERE YEAR(date_service) = 2024
 ================================================================================
 ```
 
-### Scenario 3: Slow Route with Genie Agents
+### Scenario 3: Genie Route with Genie Agents
 
 ```
 ================================================================================
@@ -364,17 +364,17 @@ WHERE YEAR(date_service) = 2024
 ================================================================================
 
 🔍 Original Query:
-  How many patients over 50 have diabetes claims? Use slow route
+  How many patients over 50 have diabetes claims? Use genie route
 
 📋 Execution Plan:
   Query patient demographics and diagnosis data separately, then combine
 
 🔀 Routing Strategy:
-  Strategy: slow_route
+  Strategy: genie_route
   Requires Join: True
   Multiple Spaces: True
 
-🐢 Genie Route Plan (Slow Route):
+🐢 Genie Route Plan (Genie Route):
   - 01f0956a54af123e9cd23907e8167df9: How many patients are over 50 years old?
   - 01f0956a4b0512e2a8aa325ffbac821b: Which patients have diabetes diagnosis?
 
@@ -492,7 +492,7 @@ final_state = invoke_super_agent_hybrid(test_query)
 
 ### What Was Added
 
-1. ✅ **Genie agent thinking extraction** in slow route SQL synthesis
+1. ✅ **Genie agent thinking extraction** in genie route SQL synthesis
 2. ✅ **Display Node** as final workflow stage
 3. ✅ **Comprehensive result display** for all scenarios
 4. ✅ **Databricks display()** integration for interactive tables

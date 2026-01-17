@@ -107,13 +107,13 @@ User → Super Agent → Thinking Agent → Vector Search → Genie Agent → Re
 ```
 *Use when*: One domain can answer completely
 
-### Multi-Agent Fast Route
+### Multi-Agent Table Route
 ```
 User → Super Agent → Thinking Agent → SQL Synthesis (metadata) → SQL Execution → Result
 ```
 *Use when*: Need quick response from multiple domains
 
-### Multi-Agent Slow Route
+### Multi-Agent Genie Route
 ```
 User → Super Agent → Thinking Agent → Genie Agents (parallel) → SQL Synthesis → Result
 ```
@@ -153,9 +153,9 @@ Step 4: Multi-Agent System
    - Insight: Need patient_id join
 4. **Vector Search** finds Patients + Medications agents
 5. **Decision**: Multiple agents + Join required
-6. **Fast Route** (parallel):
+6. **Table Route** (parallel):
    - SQL Synthesis from metadata → Execute → Return count
-7. **Slow Route** (parallel):
+7. **Genie Route** (parallel):
    - Query both agents → Collect SQL → Synthesize → Execute → Return
 8. **Super Agent** returns both results to user
 

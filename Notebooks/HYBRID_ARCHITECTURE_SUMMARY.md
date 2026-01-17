@@ -110,13 +110,13 @@ def planning_node(state: AgentState) -> AgentState:
 - **Resources:** LLM, Vector Search index
 
 ### 3. **SQLSynthesisFastAgent**
-- **Purpose:** Generates SQL using UC tools (fast route)
+- **Purpose:** Generates SQL using UC tools (table route)
 - **Input:** Execution plan
 - **Output:** SQL query
 - **Resources:** LLM, UC Function Toolkit
 
 ### 4. **SQLSynthesisSlowAgent**
-- **Purpose:** Generates SQL using Genie agents (slow route)
+- **Purpose:** Generates SQL using Genie agents (genie route)
 - **Input:** Execution plan, Genie route plan
 - **Output:** Combined SQL query
 - **Resources:** LLM, Genie agents dictionary
@@ -143,11 +143,11 @@ User Query
     └─ Updates: state["execution_plan"], state["join_strategy"]
     ↓
 [Decision Point]
-    ├─ Fast Route → [SQL Synthesis Fast Node]
+    ├─ Table Route → [SQL Synthesis Fast Node]
     │                ├─ Uses: SQLSynthesisFastAgent (OOP)
     │                └─ Updates: state["sql_query"]
     │
-    └─ Slow Route → [SQL Synthesis Slow Node]
+    └─ Genie Route → [SQL Synthesis Slow Node]
                      ├─ Uses: SQLSynthesisSlowAgent (OOP)
                      └─ Updates: state["sql_query"]
     ↓
@@ -413,7 +413,7 @@ def planning_node(state: AgentState) -> AgentState:
 2. **Add retry logic** - Automatic retry on failures
 3. **Add caching** - Cache plans and SQL queries
 4. **Add metrics** - Track performance and success rates
-5. **Add A/B testing** - Compare fast vs slow route performance
+5. **Add A/B testing** - Compare fast vs genie route performance
 
 ---
 

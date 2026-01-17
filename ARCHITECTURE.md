@@ -115,7 +115,7 @@ class QueryPlan:
     requires_multiple_spaces: bool
     relevant_space_ids: List[str]
     requires_join: bool
-    join_strategy: str  # "fast_route" | "slow_route" | None
+    join_strategy: str  # "table_route" | "genie_route" | None
     execution_plan: str
 ```
 
@@ -164,13 +164,13 @@ GenieAgent(
 
 **Two Modes:**
 
-**Fast Route:**
+**Table Route:**
 - Input: Table metadata + original query
 - Output: Direct SQL across multiple tables
 - When: Metadata is sufficient, no need for Genie agents
 - Performance: 3-5 seconds
 
-**Slow Route:**
+**Genie Route:**
 - Input: Multiple SQL queries from Genie agents
 - Output: Combined SQL with JOINs/CTEs
 - When: Need individual Genie context
@@ -178,14 +178,14 @@ GenieAgent(
 
 **SQL Generation Strategy:**
 ```python
-# Fast Route
+# Table Route
 prompt = """
 Generate SQL to answer: {query}
 Using tables: {table_metadata}
 Include JOINs on patient_id
 """
 
-# Slow Route
+# Genie Route
 prompt = """
 Combine these SQL queries:
 Query 1 (Patient): {sql_1}
@@ -276,7 +276,7 @@ SupervisorAgent returns to user:
   • Result ✓
 ```
 
-### Multi-Space Query Flow (Fast Route)
+### Multi-Space Query Flow (Table Route)
 
 ```
 User: "How many patients over 50 are on Voltaren?"
@@ -290,13 +290,13 @@ ThinkingPlanningAgent analyzes:
   • Vector search → GENIE_PATIENT (0.89), MEDICATIONS (0.92)
   • Multiple spaces required ✓
   • JOIN needed (patient_id) ✓
-  • Strategy: fast_route ✓
+  • Strategy: table_route ✓
   • Sub-questions:
     - Patients > 50
     - Patients on Voltaren
     - Intersection via patient_id
     ↓
-Route to SQLSynthesisAgent (fast_route)
+Route to SQLSynthesisAgent (table_route)
     ↓
 SQLSynthesisAgent:
   • Retrieves table metadata
@@ -323,7 +323,7 @@ SupervisorAgent returns to user:
   • Execution time: ~4 seconds
 ```
 
-### Multi-Space Query Flow (Slow Route)
+### Multi-Space Query Flow (Genie Route)
 
 ```
 User: "Patients with lung cancer on chemotherapy?"
@@ -337,7 +337,7 @@ ThinkingPlanningAgent analyzes:
   • Vector search → GENIE_DIAGNOSIS (0.94), MEDICATIONS (0.87)
   • Multiple spaces required ✓
   • JOIN needed ✓
-  • Strategy: slow_route (need Genie context)
+  • Strategy: genie_route (need Genie context)
   • Sub-questions:
     - Patients with lung cancer
     - Patients on chemotherapy
@@ -352,7 +352,7 @@ GENIE_DIAGNOSIS            MEDICATIONS
     │                           │
     └───────────┬───────────────┘
                 ↓
-Route to SQLSynthesisAgent (slow_route)
+Route to SQLSynthesisAgent (genie_route)
     ↓
 SQLSynthesisAgent:
   • Receives both SQL queries
@@ -447,13 +447,13 @@ SupervisorAgent
 ```
 SupervisorAgent
     → ThinkingPlanningAgent
-    → Fast Route (immediate) → Response 1
+    → Table Route (immediate) → Response 1
     ↓
-    → Slow Route (background) → Response 2 (when ready)
+    → Genie Route (background) → Response 2 (when ready)
 ```
 
 **Use Case:** Multi-space queries where user wants quick answer  
-**Latency:** Fast route: 3-5s, Slow route: 5-10s
+**Latency:** Table Route: 3-5s, Genie Route: 5-10s
 
 ### Pattern 4: Clarification Loop
 
@@ -497,12 +497,12 @@ Is JOIN required?
     └─ Yes → Continue
         ↓
 Which route?
-    ├─ Fast Route:
+    ├─ Table Route:
     │   • Metadata sufficient
     │   • Direct SQL synthesis
     │   • SQLExecution
     │   • Return (3-5s)
-    └─ Slow Route:
+    └─ Genie Route:
         • Need Genie context
         • Query each Genie (parallel)
         • Collect SQL results
@@ -511,15 +511,15 @@ Which route?
         • Return (5-10s)
 ```
 
-### Fast vs Slow Route Decision
+### Fast vs Genie Route Decision
 
-**Use Fast Route When:**
+**Use Table Route When:**
 - Table schemas are well-known
 - Metadata includes sample values
 - Query is straightforward
 - No complex business logic needed
 
-**Use Slow Route When:**
+**Use Genie Route When:**
 - Need Genie reasoning/context
 - Complex domain-specific logic
 - Business rules in Genie instructions

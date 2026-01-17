@@ -181,7 +181,7 @@ Returns:
     - requires_multiple_spaces: bool
     - relevant_space_ids: list[str]
     - requires_join: bool
-    - join_strategy: str ("fast_route" or "slow_route")
+    - join_strategy: str ("table_route" or "genie_route")
     - execution_plan: str
 """
 from databricks_langchain import ChatDatabricks
@@ -334,7 +334,7 @@ doc
 
 # COMMAND ----------
 
-query = "What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group? Please use slow route"
+query = "What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group? Please use genie route"
 
 # COMMAND ----------
 
@@ -346,7 +346,7 @@ query = "What is the average cost of medical claims in 2024?"
 
 # COMMAND ----------
 
-query = "What is the average cost of medical claims in 2024? Use slow route"
+query = "What is the average cost of medical claims in 2024? Use genie route"
 
 # COMMAND ----------
 
@@ -354,7 +354,7 @@ query = "What is the average cost of medical claims in 2024? How many patients a
 
 # COMMAND ----------
 
-query = "What is the average cost of medical claims in 2024? How many patients are 65 years old and above in 2024? Use slow route"
+query = "What is the average cost of medical claims in 2024? How many patients are 65 years old and above in 2024? Use genie route"
 
 # COMMAND ----------
 
@@ -370,11 +370,11 @@ query = "How many patients are 65 years old and above in 2024? Among these patie
 
 # COMMAND ----------
 
-query = "How many patients are 65 years old and above in 2024? Among these patients, What is the average cost of all medical claims in 2024? Use slow route"
+query = "How many patients are 65 years old and above in 2024? Among these patients, What is the average cost of all medical claims in 2024? Use genie route"
 
 # COMMAND ----------
 
-query = 'What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group? Use slow route.'
+query = 'What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group? Use genie route.'
 
 # COMMAND ----------
 
@@ -403,23 +403,23 @@ Break down the question and determine:
     - JOIN needed: E.g., "How many active plan members over 50 are on Lexapro?" can be split into "How many active plan member over 50?" and "How many members are taking medicine Lexapro?". THey are related and need JOIN later.
     - No need for JOIN: E.g., "How many active plan members over 50? How much total out of pocket cost for all Lexapro Rx claims submitted in Q4 2024?" could be split into "How many active plan member over 50?" and "How much total out of pocket cost for all Lexapro Rx claims submitted in Q4 2024?". Two sub-questions are totally independent without relying on each other to answer.  
 4. If JOIN is needed, what's the best strategy:
-    - "fast_route": Directly synthesize SQL across multiple tables
-    - "slow_route": Query each Genie Space Agent separately using reframed partial question which fit into a single space to answer, then combine SQL queries (not quantitative result) returned from Genie Agents to synthesize the final SQL query
-    - If user asks explicitly for "slow_route", use the specified strategy in the user query; otherwise, use "fast_route" 
+    - "table_route": Directly synthesize SQL across multiple tables
+    - "genie_route": Query each Genie Space Agent separately using reframed partial question which fit into a single space to answer, then combine SQL queries (not quantitative result) returned from Genie Agents to synthesize the final SQL query
+    - If user asks explicitly for "genie_route", use the specified strategy in the user query; otherwise, use "table_route" 
 5. Execution plan: A brief description of how to execute the plan based on previous steps.
     - Multiple spaces are needed with JOIN   
-        - "fast_route": how to synthesize SQL across multiple tables  
-        - "slow_route": Return a json dictionary of the corresponding Genie space id and the reframed partial question, i.e., {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3'}}. The reframed partial question should be 
+        - "table_route": how to synthesize SQL across multiple tables  
+        - "genie_route": Return a json dictionary of the corresponding Genie space id and the reframed partial question, i.e., {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3'}}. The reframed partial question should be 
             1) to most extent similar to the original question in format and asking style, only removing the extra components like metrics, where filters, group-by dimensions from the original question if they dont exist for that Genie space. For example, if original question is "How many active members older than 50 are on statin and have annual wellness check finished by Dec 2025? Among them, how many we have unclosed HEDIS gaps for them this year?". You should return {{'MemberEnrollment_space':'How many active members are older than 50?', 'MedicalRxClaim_space':'How many members have Rx claims of statin?', 'CareManagement_Space':'How many members have annual wellness check finished by Dec 2025?', 'StarRating_space':'How many members have unclosed HEDIS gaps for them this year?'}}.
             2) to most extent retain the analytical components existed in this Genie space, remove components in the query that do not belong to this Genie space.  
             3) if original question involves SQL aggregation and group by, you should try best in each reframed partial question, also involve SQL aggregation and group by. E.g., "How many active members are older than 50?" is favoured, while "What are the members older than 50?" is not favoured. 
             4) for each partial_question generated, e.g., "How many active members are older than 50?" , add "Please limit to top 10 rows", so the question becomes ""How many active members are older than 50? Please limit to top 10 rows" 
     - Multiple spaces are needed without JOIN
-        - ignore "slow_route" specification in user query since for this scenario we only have one route.  
+        - ignore "genie_route" specification in user query since for this scenario we only have one route.  
         - query each Genie Space Agent separately using sub-questions which fit into a single space to answer. Keep all Genie Agent results returned; Verbally summarize into a merged conclusion if you think necessary.  
         - also return {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3'}} in the {{"genie_route_plan"}} field of the output JSON
     - Single space is needed
-        - ignore "slow_route" specification in user query since for this scenario we only have one route.  
+        - ignore "genie_route" specification in user query since for this scenario we only have one route.  
         - route the question to the specific Genie Space Agent to answer the question
         - also return {{'space_id_1':'Original Question'}} in the {{"genie_route_plan"}} field of the output JSON
 
@@ -433,7 +433,7 @@ Return your analysis as JSON:
     "requires_multiple_spaces": true/false,
     "relevant_space_ids": ["space_id_1", "space_id_2", ...],
     "requires_join": true/false,
-    "join_strategy": "fast_route" or "slow_route" or null,
+    "join_strategy": "table_route" or "genie_route" or null,
     "execution_plan": "Brief description of execution plan",
     "genie_route_plan": {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3', ...}} or null,
 }}
@@ -443,9 +443,9 @@ Only return valid JSON, no explanations.
 
 print(planning_prompt)
 #: backup:
-# slow route plan: how the origial question can be splited into variant questions with each variant question trying to ask part of the original question? For each space, list the new variant question. The purpose is each of the variant questions could fit into a Genie Space to get answered completely without triggering Genie failure to answer due to missing information. Lastly combine SQL queries (not quantitative result) returned from Genie Agents as context to help synthesize the final SQL query
+# genie route plan: how the origial question can be splited into variant questions with each variant question trying to ask part of the original question? For each space, list the new variant question. The purpose is each of the variant questions could fit into a Genie Space to get answered completely without triggering Genie failure to answer due to missing information. Lastly combine SQL queries (not quantitative result) returned from Genie Agents as context to help synthesize the final SQL query
 #---#
-# - "slow_route": give a json dictionary of the corresponding Genie space id and the reframed question (contain partial sub-questions/analytical components within the original question) i.e., {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3'}}
+# - "genie_route": give a json dictionary of the corresponding Genie space id and the reframed question (contain partial sub-questions/analytical components within the original question) i.e., {{'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3'}}
 
 # Enable MLflow autologging for tracing
 mlflow.langchain.autolog()
@@ -503,11 +503,11 @@ plan_result
 
 # DBTITLE 1,no-tool agent failure proof
 # this is no-tool agent version
-def synthesize_sql_fast_route(
+def synthesize_sql_table_route(
     query: str,
 ) -> str:
     """
-    Synthesize SQL query directly across multiple tables (fast route).
+    Synthesize SQL query directly across multiple tables (table route).
     
     Args:
         query: The user's question
@@ -562,7 +562,7 @@ def synthesize_sql_fast_route(
 
 # COMMAND ----------
 
-sql_result = synthesize_sql_fast_route(query)
+sql_result = synthesize_sql_table_route(query)
 
 # COMMAND ----------
 
@@ -578,12 +578,12 @@ print(sql_result)
 # MAGIC     - 2nd test with Claude Haiku 4.5: `AVG(mc.paid_gross_due) AS average_claim_cost`, as you can see we dont have such field in medical claim table; we do have this field in pharmacy claim table, however, our question is not calculating pharmacy claim cost.
 # MAGIC
 # MAGIC __Final Conclusion:__
-# MAGIC Without UC function tools, e.g., SQL tools querying the underlying metadata table, agent with LLM alone are not guranteed to work correctly with enough context/meta info. **Dont use `synthesize_sql_fast_route` without any tools being registered.**
+# MAGIC Without UC function tools, e.g., SQL tools querying the underlying metadata table, agent with LLM alone are not guranteed to work correctly with enough context/meta info. **Dont use `synthesize_sql_table_route` without any tools being registered.**
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create SQL Synthesis Agent (quick route) With UC Tools
+# MAGIC ## Create SQL Synthesis Agent (table route) With UC Tools
 
 # COMMAND ----------
 
@@ -808,7 +808,7 @@ TABLE_NAME
 
 # COMMAND ----------
 
-# DBTITLE 1,Create quick route agent with UC tools
+# DBTITLE 1,Create table route agent with UC tools
 """
 Step 3: Create LangGraph SQL Synthesis Agent with UC Function Toolkit
 
@@ -931,8 +931,8 @@ print("✅ Configured for multi-agent system (expects Planning Agent input)")
 #         "01f0956a4b0512e2a8aa325ffbac821b"
 #     ],
 #     "requires_join": true,
-#     "join_strategy": "fast_route",
-#     "execution_plan": "Use fast_route to JOIN across three spaces: (1) HealthVerityProcedureDiagnosis to filter patients with diabetes diagnosis codes (ICD-10), (2) HealthVerityClaims to get medical claim costs and payer types, and (3) HealthVerityProviderEnrollment to get patient birth year for age calculation. JOIN on patient_id and claim_id, calculate age groups from birth year and service date, then aggregate average costs by payer type and age group."
+#     "join_strategy": "table_route",
+#     "execution_plan": "Use table_route to JOIN across three spaces: (1) HealthVerityProcedureDiagnosis to filter patients with diabetes diagnosis codes (ICD-10), (2) HealthVerityClaims to get medical claim costs and payer types, and (3) HealthVerityProviderEnrollment to get patient birth year for age calculation. JOIN on patient_id and claim_id, calculate age groups from birth year and service date, then aggregate average costs by payer type and age group."
 # }"""
 # plan_result = json.loads(plan_result.strip('```json'))
 
@@ -1209,7 +1209,7 @@ execute_sql_on_delta_tables(sql_query=result)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create SQL Synthesis Agent (slow route)
+# MAGIC ## Create SQL Synthesis Agent (genie route)
 
 # COMMAND ----------
 
@@ -1431,7 +1431,7 @@ The Plan given to you is a JSON:
 "requires_multiple_spaces": true/false,
 "relevant_space_ids": ["space_id_1", "space_id_2", ...],
 "requires_join": true/false,
-"join_strategy": "fast_route" or "slow_route" or null,
+"join_strategy": "table_route" or "genie_route" or null,
 "execution_plan": "Brief description of execution plan",
 "genie_route_plan": {'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3', ...} or null,}
 
@@ -1620,8 +1620,8 @@ plan_result = {'question_clear': True,
   '01f0956a387714969edde65458dcc22a',
   '01f0956a54af123e9cd23907e8167df9'],
  'requires_join': True,
- 'join_strategy': 'slow_route',
- 'execution_plan': 'Using slow_route as requested: Query HealthVerityProcedureDiagnosis space to identify claims with diabetes diagnosis codes. Query HealthVerityClaims space to get medical claim costs and payer types. Query HealthVerityProviderEnrollment space to get patient demographics including birth year for age calculation. Combine the SQL queries from each Genie Agent to synthesize final SQL that joins diagnosis, medical_claim, and enrollment tables on claim_id and patient_id, calculates age groups from birth year, filters for diabetes diagnoses, and computes average costs grouped by payer type and age group.',
+ 'join_strategy': 'genie_route',
+ 'execution_plan': 'Using genie_route as requested: Query HealthVerityProcedureDiagnosis space to identify claims with diabetes diagnosis codes. Query HealthVerityClaims space to get medical claim costs and payer types. Query HealthVerityProviderEnrollment space to get patient demographics including birth year for age calculation. Combine the SQL queries from each Genie Agent to synthesize final SQL that joins diagnosis, medical_claim, and enrollment tables on claim_id and patient_id, calculates age groups from birth year, filters for diabetes diagnoses, and computes average costs grouped by payer type and age group.',
  'genie_route_plan': {'01f0956a4b0512e2a8aa325ffbac821b': 'What are the claim IDs and patient IDs for patients diagnosed with diabetes based on ICD-10 diagnosis codes?',
   '01f0956a387714969edde65458dcc22a': 'What is the cost information and payer type for medical claims?',
   '01f0956a54af123e9cd23907e8167df9': 'What is the birth year and patient demographics from the enrollment table for calculating patient age groups?'}}
@@ -1914,7 +1914,7 @@ for tool in tools:
 # MAGIC    - Has access to UC function tools
 # MAGIC    - Focused on SQL generation only
 # MAGIC
-# MAGIC 3. ✅ Wrapper Function: synthesize_sql_fast_route_with_langgraph()
+# MAGIC 3. ✅ Wrapper Function: synthesize_sql_table_route_with_langgraph()
 # MAGIC    - Receives structured input from Planning Agent
 # MAGIC    - Validates execution plan
 # MAGIC    - Invokes agent with proper context
@@ -2029,7 +2029,7 @@ for tool in tools:
 # MAGIC    - Compatible with Databricks ResponsesAgent pattern
 # MAGIC
 # MAGIC 5. ✅ Production-Ready Function
-# MAGIC    - synthesize_sql_fast_route_with_langgraph() wraps the agent
+# MAGIC    - synthesize_sql_table_route_with_langgraph() wraps the agent
 # MAGIC    - Compatible with existing multi-agent system workflow
 # MAGIC    - Returns clean SQL queries
 # MAGIC
@@ -2051,7 +2051,7 @@ for tool in tools:
 # MAGIC print("\nKey Components Created:")
 # MAGIC print(f"  1. 4 UC Functions in {CATALOG}.{SCHEMA}")
 # MAGIC print("  2. LangGraph ReAct Agent with UC tools")
-# MAGIC print("  3. Production-ready synthesize_sql_fast_route_with_langgraph()")
+# MAGIC print("  3. Production-ready synthesize_sql_table_route_with_langgraph()")
 # MAGIC print("\nReady for integration into the multi-agent system!")
 # MAGIC print("=" * 80)
 # MAGIC

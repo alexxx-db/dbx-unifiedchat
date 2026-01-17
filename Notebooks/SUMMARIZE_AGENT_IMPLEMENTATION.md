@@ -53,7 +53,7 @@ For successful execution:
 ```
 **Original User Query:** What's the avg claim cost?
 **Planning:** Query medical_claims table
-**Strategy:** fast_route
+**Strategy:** table_route
 **SQL Generation:** ✅ Successful
 **SQL Query:** SELECT AVG(total_cost)...
 **Execution:** ✅ Successful
@@ -191,8 +191,8 @@ Updated workflow description:
 print("✓ Workflow nodes added:")
 print("  1. Clarification Agent (OOP)")
 print("  2. Planning Agent (OOP)")
-print("  3. SQL Synthesis Agent - Fast Route (OOP)")
-print("  4. SQL Synthesis Agent - Slow Route (OOP)")
+print("  3. SQL Synthesis Agent - Table Route (OOP)")
+print("  4. SQL Synthesis Agent - Genie Route (OOP)")
 print("  5. SQL Execution Agent (OOP)")
 print("  6. Result Summarize Agent (OOP) - FINAL NODE")  # NEW
 print("\n✓ Explicit state management enabled")
@@ -246,7 +246,7 @@ START
 ```
 The user asked for the average cost of medical claims in 2024. 
 The system generated SQL to query the medical_claims table using 
-a fast route strategy. The query executed successfully and returned 
+a table route strategy. The query executed successfully and returned 
 1 row showing an average cost of $1,234.56.
 ```
 

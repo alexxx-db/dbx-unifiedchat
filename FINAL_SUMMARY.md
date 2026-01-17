@@ -35,7 +35,7 @@
 #### Pipeline 3: Multi-Agent System ✅
 **Files:** `Notebooks/agent.py` + `05_Multi_Agent_System.py`
 - 6 intelligent agents (Supervisor, Planning, 5 Genie, SQL Synthesis, SQL Execution)
-- Fast/slow route execution strategies
+- Fast/genie route execution strategies
 - Question clarification flow
 - MLflow logging and deployment
 
@@ -148,7 +148,7 @@ VS_ENDPOINT_NAME=genie_multi_agent_vs
 - [x] Multi-agent system with LangGraph ✅
 - [x] Thinking and planning agent ✅
 - [x] Vector search integration ✅
-- [x] Fast/slow route execution ✅
+- [x] Fast/genie route execution ✅
 - [x] Question clarification ✅
 - [x] Table metadata pipeline ✅
 - [x] Vector search index pipeline ✅
@@ -289,7 +289,7 @@ Implementation Docs
 ### Feature Completeness
 1. ✅ **All agent types** implemented
 2. ✅ **All routing strategies** working
-3. ✅ **Fast & slow routes** functioning
+3. ✅ **Fast & genie routes** functioning
 4. ✅ **Clarification flow** operational
 5. ✅ **Vector search** integrated
 

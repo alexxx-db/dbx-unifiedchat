@@ -128,9 +128,9 @@ The `summarize_node` preserves **ALL** state fields from the workflow:
 | Field | Type | Description |
 |-------|------|-------------|
 | `original_query` | str | User's original question |
-| `join_strategy` | str | "fast_route" or "slow_route" |
+| `join_strategy` | str | "table_route" or "genie_route" |
 | `relevant_space_ids` | list | IDs of relevant Genie spaces |
-| `genie_route_plan` | dict | Routing plan for slow route |
+| `genie_route_plan` | dict | Routing plan for genie route |
 
 ### **✅ Error Information**
 | Field | Type | Description |
@@ -158,7 +158,7 @@ When the workflow completes, you'll see:
 
 ✅ Summary Generated:
 The user asked for the average cost of medical claims in 2024. The system 
-generated SQL to query the medical_claims table using a fast route strategy. 
+generated SQL to query the medical_claims table using a table route strategy. 
 The query executed successfully and returned 1 row showing an average cost 
 of $1,234.56.
 
@@ -315,7 +315,7 @@ When you call `display_results(final_state)`, you now see:
 
 📝 Summary:
   The user asked for the average cost of medical claims in 2024. The system 
-  generated SQL to query the medical_claims table using a fast route strategy. 
+  generated SQL to query the medical_claims table using a table route strategy. 
   The query executed successfully and returned 1 row showing $1,234.56.
 
 🔍 Original Query:
@@ -323,7 +323,7 @@ When you call `display_results(final_state)`, you now see:
 
 📋 Execution Plan:
   Query medical_claims table with AVG aggregation
-  Strategy: fast_route
+  Strategy: table_route
 
 💭 SQL Synthesis Explanation:
   Used get_table_overview UC function to identify medical_claims table structure. 

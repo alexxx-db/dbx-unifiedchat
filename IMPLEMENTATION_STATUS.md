@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Successfully implemented a comprehensive multi-agent system using LangGraph and Databricks that enables intelligent querying across multiple Genie spaces. The system includes sophisticated query planning, multiple execution strategies (fast/slow routes), and automatic question clarification.
+Successfully implemented a comprehensive multi-agent system using LangGraph and Databricks that enables intelligent querying across multiple Genie spaces. The system includes sophisticated query planning, multiple execution strategies (fast/genie routes), and automatic question clarification.
 
 ## Requirements Completion Status
 
@@ -31,7 +31,7 @@ Successfully implemented a comprehensive multi-agent system using LangGraph and 
    - ✅ Sub-question breakdown logic
    - ✅ Vector search integration for finding relevant Genie spaces
    - ✅ Multi-space detection and join requirement analysis
-   - ✅ Fast route vs slow route decision making
+   - ✅ Table Route vs genie route decision making
 
 3. **Multiple GenieAgents**
    - ✅ GENIE_PATIENT (demographics, age, appointments, insurance)
@@ -42,8 +42,8 @@ Successfully implemented a comprehensive multi-agent system using LangGraph and 
    - ✅ All configured with include_context=True for SQL/reasoning
 
 4. **SQLSynthesisAgent**
-   - ✅ Fast route: Direct SQL synthesis across tables
-   - ✅ Slow route: Combine SQL from multiple Genie agents
+   - ✅ Table Route: Direct SQL synthesis across tables
+   - ✅ Genie Route: Combine SQL from multiple Genie agents
    - ✅ Proper JOIN handling with common columns
    - ✅ CTE and subquery support
 
@@ -55,9 +55,9 @@ Successfully implemented a comprehensive multi-agent system using LangGraph and 
 6. **Query Routing Logic**
    - ✅ Single-genie-agent case: Direct routing
    - ✅ Multiple-genie-agents case with JOIN:
-     - ✅ Fast route: Direct SQL synthesis
-     - ✅ Slow route: Parallel Genie queries → SQL synthesis
-     - ✅ Fast route returns first (slow route in progress notification)
+     - ✅ Table Route: Direct SQL synthesis
+     - ✅ Genie Route: Parallel Genie queries → SQL synthesis
+     - ✅ Table Route returns first (genie route in progress notification)
    - ✅ Multiple-genie-agents case without JOIN:
      - ✅ Verbal merge of separate answers
      - ✅ Include separate SQL results
@@ -145,8 +145,8 @@ Successfully implemented a comprehensive multi-agent system using LangGraph and 
 ### ✅ Unit Tests
 
 - ✅ ThinkingPlanningAgent query analysis
-- ✅ SQLSynthesisAgent fast route
-- ✅ SQLSynthesisAgent slow route
+- ✅ SQLSynthesisAgent table route
+- ✅ SQLSynthesisAgent genie route
 - ✅ SQLExecutionAgent execution
 - ✅ Vector search function
 - ✅ GenieAgent integration
@@ -228,10 +228,10 @@ ThinkingPlanningAgent
 │   └─ Verbal Merge → Response        │
 ├───────────────────────────────────────┤
 │ Multiple Spaces (With Join)          │
-│   ├─ Fast Route:                    │
+│   ├─ Table Route:                    │
 │   │   ├─ SQLSynthesis (metadata)   │
 │   │   └─ SQLExecution → Response   │
-│   └─ Slow Route:                    │
+│   └─ Genie Route:                    │
 │       ├─ GenieAgents (parallel)    │
 │       ├─ SQLSynthesis (combine)    │
 │       └─ SQLExecution → Response   │
@@ -240,8 +240,8 @@ ThinkingPlanningAgent
 
 ### Key Design Decisions
 
-1. **Parallel Execution**: Genie agents query simultaneously in slow route
-2. **Progressive Response**: Fast route returns first, slow route notifies progress
+1. **Parallel Execution**: Genie agents query simultaneously in genie route
+2. **Progressive Response**: Table Route returns first, genie route notifies progress
 3. **Context Preservation**: Full message history maintained across agents
 4. **Privacy Controls**: Built-in data protection (no PII, count thresholds)
 5. **Observability**: Complete MLflow tracing for debugging
@@ -257,7 +257,7 @@ ThinkingPlanningAgent
 
 ## Known Limitations
 
-1. **Complex Multi-Way Joins**: Slow route may take 5-10 seconds
+1. **Complex Multi-Way Joins**: Genie Route may take 5-10 seconds
 2. **Token Limits**: Very large result sets may be truncated
 3. **Genie Space Limits**: Currently supports 5 configured spaces (easily extensible)
 4. **Clarification Options**: Limited to 3 options (can be increased)
@@ -305,8 +305,8 @@ python-dotenv
 ### Latency (P50/P95/P99)
 
 - Single-space queries: 2.1s / 3.2s / 4.5s
-- Multi-space fast route: 3.8s / 5.5s / 7.2s
-- Multi-space slow route: 6.5s / 9.8s / 12.1s
+- Multi-space table route: 3.8s / 5.5s / 7.2s
+- Multi-space genie route: 6.5s / 9.8s / 12.1s
 
 ### Throughput
 

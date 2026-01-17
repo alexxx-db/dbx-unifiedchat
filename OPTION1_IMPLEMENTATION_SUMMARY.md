@@ -11,8 +11,8 @@ Successfully implemented **Option 1: Convert Custom Agents to UC Functions** for
 
 Converted custom agent logic into 6 Unity Catalog functions:
 - `analyze_query_plan` - Query analysis and planning with vector search
-- `synthesize_sql_fast_route` - Direct SQL synthesis across tables
-- `synthesize_sql_slow_route` - Combine SQL from multiple sources
+- `synthesize_sql_table_route` - Direct SQL synthesis across tables
+- `synthesize_sql_genie_route` - Combine SQL from multiple sources
 - `execute_sql_query` - Execute SQL and return formatted results
 - `get_table_metadata` - Retrieve table schemas for Genie spaces
 - `verbal_merge_results` - Merge narrative answers from multiple agents

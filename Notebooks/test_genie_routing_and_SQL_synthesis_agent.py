@@ -9,7 +9,7 @@ plan_result = """
   '01f0956a387714969edde65458dcc22a',
   '01f0956a54af123e9cd23907e8167df9'],
  'requires_join': True,
- 'join_strategy': 'slow_route',
+ 'join_strategy': 'genie_route',
  'execution_plan': 'Query each Genie Space separately: (1) HealthVerityProcedureDiagnosis for diabetes diagnosis claims with costs, (2) HealthVerityClaims for payer type information, (3) HealthVerityProviderEnrollment for patient age groups. Then combine the SQL queries to synthesize a final query that calculates average medical claim costs grouped by payer type and age group for diabetes patients.',
  'genie_route_plan': {'01f0956a4b0512e2a8aa325ffbac821b': 'What is the average cost of medical claims for patients diagnosed with diabetes?',
   '01f0956a387714969edde65458dcc22a': 'What is the average cost of medical claims broken down by insurance payer type?',
@@ -139,7 +139,7 @@ The Plan given to you is a JSON:
 "requires_multiple_spaces": true/false,
 "relevant_space_ids": ["space_id_1", "space_id_2", ...],
 "requires_join": true/false,
-"join_strategy": "fast_route" or "slow_route" or null,
+"join_strategy": "table_route" or "genie_route" or null,
 "execution_plan": "Brief description of execution plan",
 "genie_route_plan": {'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3', ...} or null,}
 

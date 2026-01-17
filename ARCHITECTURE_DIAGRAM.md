@@ -31,12 +31,12 @@ The system consists of three main components:
 - Used when one Genie Agent can completely answer the question
 - Direct call to Genie Agent → Return result
 
-#### Path 2: Multiple Agents with Join (Fast Route)
+#### Path 2: Multiple Agents with Join (Table Route)
 - SQL Synthesis Agent uses metadata directly
 - Generates and executes joined SQL query
 - Returns result first (fast response)
 
-#### Path 3: Multiple Agents with Join (Slow Route)
+#### Path 3: Multiple Agents with Join (Genie Route)
 - Parallel async calls to multiple Genie Agents
 - Collects sql_results from each agent
 - SQL Synthesis Agent combines the results
@@ -103,11 +103,11 @@ Purpose: Exports Genie space configurations for processing
    - Patients Genie Agent (has age information)
    - Medications Genie Agent (has medication information)
 5. **Decision**: Multiple agents + Join required
-6. **Fast Route** (parallel execution):
+6. **Table Route** (parallel execution):
    - SQL Synthesis Agent creates joined query using metadata
    - SQL Execution Agent runs on Delta tables
    - Returns count immediately
-7. **Slow Route** (parallel execution):
+7. **Genie Route** (parallel execution):
    - Patients Agent: Gets patients > 50 years
    - Medications Agent: Gets patients on Voltaren
    - SQL Synthesis Agent: Joins results on patient_id
@@ -243,15 +243,15 @@ graph TB
     %% Multiple Agents Path
     DecisionSingle -->|No| DecisionJoin{Row-wise<br/>Join Needed?}
     
-    %% Join Required - Fast Route
-    DecisionJoin -->|Yes - Fast Route| SQLSynthesisFast[SQL Synthesis Agent<br/>Assembly SQL from Metadata]
+    %% Join Required - Table Route
+    DecisionJoin -->|Yes - Table Route| SQLSynthesisFast[SQL Synthesis Agent<br/>Assembly SQL from Metadata]
     SQLSynthesisFast --> SQLExecFast[SQL Execution Agent<br/>Execute on Delta Tables]
     SQLExecFast --> DeltaTables[(Delta Tables<br/>Behind Genie Agents)]
     SQLExecFast --> ReturnFast[Return Fast Result]
     ReturnFast --> SuperAgent
     
-    %% Join Required - Slow Route
-    DecisionJoin -->|Yes - Slow Route| ParallelCall[Parallel Async Calls<br/>to Multiple Genie Agents]
+    %% Join Required - Genie Route
+    DecisionJoin -->|Yes - Genie Route| ParallelCall[Parallel Async Calls<br/>to Multiple Genie Agents]
     ParallelCall --> GenieAgent2A[Genie Agent A<br/>Sub-question 1]
     ParallelCall --> GenieAgent2B[Genie Agent B<br/>Sub-question 2]
     GenieAgent2A --> CollectSQL[Collect sql_results]
@@ -339,5 +339,5 @@ graph TB
 - All agents are logged via MLflow for tracking and deployment
 - The system follows the LangGraph ResponsesAgent pattern from Super_Agent.ipynb
 - Build order: Pipeline 3 → Pipeline 1 → Pipeline 2 → Multi-Agent System
-- Fast route provides quick responses while slow route ensures accuracy
+- Table Route provides quick responses while genie route ensures accuracy
 

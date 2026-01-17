@@ -7,8 +7,8 @@ Quick reference guide for the UC functions used in the multi-agent system.
 | Function | Purpose | Input | Output |
 |----------|---------|-------|--------|
 | `analyze_query_plan` | Analyze query and create execution plan | Query text | JSON with plan details |
-| `synthesize_sql_fast_route` | Generate SQL directly across tables | Query + table metadata | SQL query |
-| `synthesize_sql_slow_route` | Combine multiple SQL queries | Query + sub-queries | Combined SQL |
+| `synthesize_sql_table_route` | Generate SQL directly across tables | Query + table metadata | SQL query |
+| `synthesize_sql_genie_route` | Combine multiple SQL queries | Query + sub-queries | Combined SQL |
 | `execute_sql_query` | Execute SQL and format results | SQL query | JSON with results/errors |
 | `get_table_metadata` | Get table schemas for spaces | Space IDs (JSON) | Table metadata (JSON) |
 | `verbal_merge_results` | Merge narrative answers | Query + results (JSON) | Merged text response |
@@ -42,7 +42,7 @@ num_results: int               # Optional: Number of relevant spaces to find
   "requires_multiple_spaces": true/false,
   "relevant_space_ids": ["space_id_1", "space_id_2", ...],
   "requires_join": true/false,
-  "join_strategy": "fast_route" | "slow_route" | null,
+  "join_strategy": "table_route" | "genie_route" | null,
   "execution_plan": "description of execution strategy"
 }
 ```
@@ -72,9 +72,9 @@ SELECT yyang.multi_agent_genie.analyze_query_plan(
 
 ---
 
-### 2. synthesize_sql_fast_route
+### 2. synthesize_sql_table_route
 
-**Full Name:** `yyang.multi_agent_genie.synthesize_sql_fast_route`
+**Full Name:** `yyang.multi_agent_genie.synthesize_sql_table_route`
 
 **Purpose:** Directly generate SQL that joins multiple tables to answer a query.
 
@@ -127,9 +127,9 @@ tool.invoke({
 
 ---
 
-### 3. synthesize_sql_slow_route
+### 3. synthesize_sql_genie_route
 
-**Full Name:** `yyang.multi_agent_genie.synthesize_sql_slow_route`
+**Full Name:** `yyang.multi_agent_genie.synthesize_sql_genie_route`
 
 **Purpose:** Combine SQL queries from multiple Genie agents into a unified query.
 
@@ -345,14 +345,14 @@ plan = analyze_query_plan("Show Medicare patients with their claim counts")
 #   "requires_multiple_spaces": true,
 #   "relevant_space_ids": ["01f0956a54af...", "01f0956a387..."],
 #   "requires_join": true,
-#   "join_strategy": "fast_route"
+#   "join_strategy": "table_route"
 # }
 
 # Step 2: Get table metadata
 metadata = get_table_metadata(["01f0956a54af...", "01f0956a387..."])
 
 # Step 3: Synthesize SQL
-sql = synthesize_sql_fast_route(
+sql = synthesize_sql_table_route(
     "Show Medicare patients with their claim counts",
     metadata
 )

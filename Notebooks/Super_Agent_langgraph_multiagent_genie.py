@@ -9,8 +9,8 @@
 # MAGIC The system includes:
 # MAGIC 1. **Clarification Agent**: Validates query clarity and requests clarification if needed
 # MAGIC 2. **Planning Agent**: Analyzes queries, searches vector index, identifies relevant spaces, creates execution plans
-# MAGIC 3. **SQL Synthesis Agent (Fast Route)**: Generates SQL using UC metadata functions
-# MAGIC 4. **SQL Synthesis Agent (Slow Route)**: Routes to Genie agents and combines their SQL outputs
+# MAGIC 3. **SQL Synthesis Agent (Table Route)**: Generates SQL using UC metadata functions
+# MAGIC 4. **SQL Synthesis Agent (Genie Route)**: Routes to Genie agents and combines their SQL outputs
 # MAGIC 5. **SQL Execution Tool**: Executes generated SQL on delta tables
 # MAGIC 
 # MAGIC ## Prerequisites
@@ -281,7 +281,7 @@ def create_langgraph_supervisor(
     Typical Workflow:
     1. Clarification Agent: Validates query clarity first
     2. Planning Agent: Analyzes query and creates execution plan
-    3. SQL Synthesis Agent (Fast or Slow Route): Generates SQL based on the plan
+    3. SQL Synthesis Agent (Fast or Genie Route): Generates SQL based on the plan
     4. SQL Execution Agent: Executes the generated SQL
     5. Return comprehensive results including:
        - Execution Plan (from Planning Agent)
@@ -364,7 +364,7 @@ class LangGraphResponsesAgent(ResponsesAgent):
 llm = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME)
 llm_planning = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING)
 
-# Create Genie agents (for slow route)
+# Create Genie agents (for genie route)
 genie_agents, genie_agent_tools, genie_subagent_configs, space_summary_df = create_genie_agents(TABLE_NAME)
 
 # Build space context for clarification and planning
@@ -515,13 +515,13 @@ def execute_sql_tool(sql_query: str, max_rows: int = 100) -> str:
 
 
 ########################################
-# Create Slow Route Agent with Genie Tools
+# Create Genie Route Agent with Genie Tools
 ########################################
 
-def create_slow_route_agent(llm: Runnable, genie_agent_tools: list) -> Runnable:
-    """Create SQL synthesis agent for slow route using Genie agent tools."""
+def create_genie_route_agent(llm: Runnable, genie_agent_tools: list) -> Runnable:
+    """Create SQL synthesis agent for genie route using Genie agent tools."""
     
-    system_prompt = """You are a SQL synthesis agent for the slow route, which routes queries to Genie Agents.
+    system_prompt = """You are a SQL synthesis agent for the genie route, which routes queries to Genie Agents.
     
     The Plan given to you is a JSON:
     {
@@ -532,7 +532,7 @@ def create_slow_route_agent(llm: Runnable, genie_agent_tools: list) -> Runnable:
     "requires_multiple_spaces": true/false,
     "relevant_space_ids": ["space_id_1", "space_id_2", ...],
     "requires_join": true/false,
-    "join_strategy": "fast_route" or "slow_route" or null,
+    "join_strategy": "table_route" or "genie_route" or null,
     "execution_plan": "Brief description of execution plan",
     "genie_route_plan": {'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', ...} or null,
     }
@@ -566,7 +566,7 @@ def create_slow_route_agent(llm: Runnable, genie_agent_tools: list) -> Runnable:
     return create_agent(
         model=llm,
         tools=genie_agent_tools,
-        name="sql_synthesis_slow_route",
+        name="sql_synthesis_genie_route",
         system_prompt=system_prompt
     )
 
@@ -581,8 +581,8 @@ IN_CODE_AGENTS = []
 # Create LLMs for different agents (can be customized per agent)
 llm_clarification = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)  # Fast model for simple task
 llm_planning = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
-llm_fast_route = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME, temperature=0.1)  # Powerful model for SQL synthesis
-llm_slow_route = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
+llm_table_route = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME, temperature=0.1)  # Powerful model for SQL synthesis
+llm_genie_route = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
 llm_execution = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING, temperature=0.1)
 
 # 1. Clarification Agent
@@ -628,7 +628,7 @@ planning_agent = create_agent(
     1. Sub-questions or analytical components
     2. How many Genie spaces are needed
     3. Whether JOIN is required across spaces
-    4. Best strategy: "fast_route" (direct SQL) or "slow_route" (query Genie agents separately)
+    4. Best strategy: "table_route" (direct SQL) or "genie_route" (query Genie agents separately)
     5. Create genie_route_plan: {{'space_id_1': 'partial_question_1', 'space_id_2': 'partial_question_2'}}
     
     Return JSON:
@@ -640,7 +640,7 @@ planning_agent = create_agent(
         "requires_multiple_spaces": true/false,
         "relevant_space_ids": ["space_id_1", "space_id_2"],
         "requires_join": true/false,
-        "join_strategy": "fast_route" or "slow_route" or null,
+        "join_strategy": "table_route" or "genie_route" or null,
         "execution_plan": "Brief description",
         "genie_route_plan": {{'space_id_1': 'partial_question_1'}} or null
     }}
@@ -649,18 +649,18 @@ planning_agent = create_agent(
     """
 )
 planning_agent.name = "planning_agent"
-planning_agent.description = "Analyzes queries, searches for relevant Genie spaces, identifies join requirements, and creates execution plans (fast_route or slow_route)."
+planning_agent.description = "Analyzes queries, searches for relevant Genie spaces, identifies join requirements, and creates execution plans (table_route or genie_route)."
 
-# 3. SQL Synthesis Fast Route Agent
-uc_toolkit_fast_route = UCFunctionToolkit(function_names=UC_FUNCTION_NAMES)
-TOOLS.extend(uc_toolkit_fast_route.tools)
+# 3. SQL Synthesis Table Route Agent
+uc_toolkit_table_route = UCFunctionToolkit(function_names=UC_FUNCTION_NAMES)
+TOOLS.extend(uc_toolkit_table_route.tools)
 
-sql_synthesis_fast_route = create_agent(
-    model=llm_fast_route,
-    tools=uc_toolkit_fast_route.tools,
-    name="sql_synthesis_fast_route",
+sql_synthesis_table_route = create_agent(
+    model=llm_table_route,
+    tools=uc_toolkit_table_route.tools,
+    name="sql_synthesis_table_route",
     system_prompt="""
-    You are a specialized SQL synthesis agent for the fast route.
+    You are a specialized SQL synthesis agent for the table route.
     
     WORKFLOW:
     1. Review the execution plan from the planning agent
@@ -682,13 +682,13 @@ sql_synthesis_fast_route = create_agent(
     - Return ONLY the SQL query without markdown formatting
     """
 )
-sql_synthesis_fast_route.name = "sql_synthesis_fast_route"
-sql_synthesis_fast_route.description = "Generates SQL queries using UC metadata functions (fast route). Best for queries requiring joins across multiple tables."
+sql_synthesis_table_route.name = "sql_synthesis_table_route"
+sql_synthesis_table_route.description = "Generates SQL queries using UC metadata functions (table route). Best for queries requiring joins across multiple tables."
 
-# 4. SQL Synthesis Slow Route Agent (with Genie tools)
-slow_route_agent = create_slow_route_agent(llm_slow_route, genie_agent_tools)
-slow_route_agent.name = "sql_synthesis_slow_route"
-slow_route_agent.description = "Generates SQL by routing queries to individual Genie agents and combining their SQL outputs. Use when join_strategy is 'slow_route'."
+# 4. SQL Synthesis Genie Route Agent (with Genie tools)
+genie_route_agent = create_genie_route_agent(llm_genie_route, genie_agent_tools)
+genie_route_agent.name = "sql_synthesis_genie_route"
+genie_route_agent.description = "Generates SQL by routing queries to individual Genie agents and combining their SQL outputs. Use when join_strategy is 'genie_route'."
 
 # 5. SQL Execution Agent
 TOOLS.append(execute_sql_tool)
@@ -732,8 +732,8 @@ sql_execution_agent.description = "Executes SQL queries on delta tables and retu
 ALL_AGENTS = [
     clarification_agent,
     planning_agent,
-    sql_synthesis_fast_route,
-    slow_route_agent,
+    sql_synthesis_table_route,
+    genie_route_agent,
     sql_execution_agent
 ]
 
@@ -772,18 +772,18 @@ mlflow.models.set_model(AGENT)
 # MAGIC    - LLM: `llm_planning` (Haiku - efficient for planning)
 # MAGIC    - Analyzes queries and searches vector index
 # MAGIC    - Creates execution plans
-# MAGIC    - Determines fast_route or slow_route strategy
+# MAGIC    - Determines table_route or genie_route strategy
 # MAGIC 
-# MAGIC 3. **SQL Synthesis Fast Route** (ALL_AGENTS[2])
-# MAGIC    - LLM: `llm_fast_route` (Sonnet - powerful for SQL generation)
+# MAGIC 3. **SQL Synthesis Table Route** (ALL_AGENTS[2])
+# MAGIC    - LLM: `llm_table_route` (Sonnet - powerful for SQL generation)
 # MAGIC    - Uses UC metadata functions
 # MAGIC    - Best for complex joins across tables
 # MAGIC 
-# MAGIC 4. **SQL Synthesis Slow Route** (ALL_AGENTS[3])
-# MAGIC    - LLM: `llm_slow_route` (Haiku - coordinates Genie agents)
+# MAGIC 4. **SQL Synthesis Genie Route** (ALL_AGENTS[3])
+# MAGIC    - LLM: `llm_genie_route` (Haiku - coordinates Genie agents)
 # MAGIC    - Routes to individual Genie agents
 # MAGIC    - Combines SQL from multiple sources
-# MAGIC    - Used when join_strategy is "slow_route"
+# MAGIC    - Used when join_strategy is "genie_route"
 # MAGIC 
 # MAGIC 5. **SQL Execution Agent** (ALL_AGENTS[4])
 # MAGIC    - LLM: `llm_execution` (Haiku - executes with tool)
@@ -963,11 +963,11 @@ for query in test_queries:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Test Slow Route Agent
+# MAGIC ## Test Genie Route Agent
 
 # COMMAND ----------
 
-from agent import slow_route_agent, execute_sql_on_delta_tables
+from agent import genie_route_agent, execute_sql_on_delta_tables
 
 # Example plan result (typically comes from planning agent)
 example_plan = {
@@ -976,14 +976,14 @@ example_plan = {
     "requires_multiple_spaces": True,
     "relevant_space_ids": ["space_id_1", "space_id_2"],
     "requires_join": True,
-    "join_strategy": "slow_route",
+    "join_strategy": "genie_route",
     "genie_route_plan": {
         "space_id_1": "What are the medical claims for patients?",
         "space_id_2": "What are the diagnosis codes for diabetes?"
     }
 }
 
-# Test slow route agent with plan
+# Test genie route agent with plan
 agent_message = {
     "messages": [
         {
@@ -996,10 +996,10 @@ Generate a SQL query according to the following Query Plan:
     ]
 }
 
-# Invoke slow route agent
-slow_route_result = slow_route_agent.invoke(agent_message)
-print("Slow Route Agent Result:")
-print(slow_route_result)
+# Invoke genie route agent
+genie_route_result = genie_route_agent.invoke(agent_message)
+print("Genie Route Agent Result:")
+print(genie_route_result)
 
 # COMMAND ----------
 
@@ -1029,7 +1029,7 @@ print(json.dumps(execution_result, indent=2, default=str))
 
 # COMMAND ----------
 
-# Example: Get SQL from fast route agent, then execute it
+# Example: Get SQL from table route agent, then execute it
 query = "How many patients are in the dataset?"
 
 # Step 1: Create input for the agent
@@ -1057,7 +1057,7 @@ print(json.dumps(execution_result, indent=2, default=str))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Compare Fast Route vs Slow Route
+# MAGIC ## Compare Table Route vs Genie Route
 
 # COMMAND ----------
 
@@ -1069,26 +1069,26 @@ print("COMPARING FAST ROUTE VS SLOW ROUTE")
 print("="*80)
 print(f"\nQuery: {test_query}\n")
 
-# Fast Route Test
+# Table Route Test
 print("FAST ROUTE (UC Metadata Functions):")
 print("-"*80)
-fast_route_input = {
+table_route_input = {
     "input": [
-        {"role": "user", "content": f"{test_query}\nPlease use fast_route for SQL synthesis."}
+        {"role": "user", "content": f"{test_query}\nPlease use table_route for SQL synthesis."}
     ]
 }
-fast_route_response = AGENT.predict(fast_route_input)
-print(fast_route_response)
+table_route_response = AGENT.predict(table_route_input)
+print(table_route_response)
 
 print("\n" + "="*80 + "\n")
 
-# Slow Route Test
+# Genie Route Test
 print("SLOW ROUTE (Genie Agents):")
 print("-"*80)
-# Note: For slow route, you would need to route through planning agent first
-# to get the genie_route_plan, then call slow_route_agent
-print("Note: Slow route requires planning agent output with genie_route_plan")
-print("See example above for slow_route_agent usage")
+# Note: For genie route, you would need to route through planning agent first
+# to get the genie_route_plan, then call genie_route_agent
+print("Note: Genie Route requires planning agent output with genie_route_plan")
+print("See example above for genie_route_agent usage")
 
 # COMMAND ----------
 
@@ -1098,7 +1098,7 @@ print("See example above for slow_route_agent usage")
 # MAGIC 1. **Test the multi-agent system** with various queries
 # MAGIC 2. **Monitor MLflow traces** to understand agent routing and execution
 # MAGIC 3. **Fine-tune agent prompts** based on test results
-# MAGIC 4. **Compare Fast Route vs Slow Route** performance and accuracy
+# MAGIC 4. **Compare Table Route vs Genie Route** performance and accuracy
 # MAGIC 5. **Integrate SQL Execution Tool** into the supervisor workflow for end-to-end automation
 # MAGIC 6. **Deploy to production** after validation
 # MAGIC 
@@ -1106,7 +1106,7 @@ print("See example above for slow_route_agent usage")
 # MAGIC 
 # MAGIC - ✅ **Clarification Agent**: Validates query clarity
 # MAGIC - ✅ **Planning Agent**: Creates execution plans with vector search
-# MAGIC - ✅ **SQL Synthesis Fast Route**: Uses UC metadata functions
-# MAGIC - ✅ **SQL Synthesis Slow Route**: Uses Genie agent tools
+# MAGIC - ✅ **SQL Synthesis Table Route**: Uses UC metadata functions
+# MAGIC - ✅ **SQL Synthesis Genie Route**: Uses Genie agent tools
 # MAGIC - ✅ **SQL Execution Tool**: Executes SQL on delta tables
 # MAGIC - ✅ **Genie Agent Tools**: Individual Genie space agents

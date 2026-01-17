@@ -141,7 +141,7 @@ When you invoke the agent, the final message will look like:
 
 ✅ Summary Generated:
 The user asked for the average cost of medical claims in 2024. The system 
-generated SQL to query the medical_claims table using a fast route strategy. 
+generated SQL to query the medical_claims table using a table route strategy. 
 The query executed successfully and returned 1 row showing $1,234.56.
 
 📦 State Fields Being Returned:
@@ -168,7 +168,7 @@ The AI's final message will contain:
 ```markdown
 📝 **Summary:**
 The user asked for the average cost of medical claims in 2024. The system 
-generated SQL to query the medical_claims table using a fast route strategy. 
+generated SQL to query the medical_claims table using a table route strategy. 
 The query executed successfully and returned 1 row showing $1,234.56.
 
 🔍 **Original Query:**
@@ -176,7 +176,7 @@ What is the average cost of medical claims per claim in 2024?
 
 📋 **Execution Plan:**
 Query medical_claims table with AVG aggregation for claims in 2024
-Strategy: fast_route
+Strategy: table_route
 
 💭 **SQL Synthesis Explanation:**
 Used get_table_overview UC function to identify medical_claims table structure. 

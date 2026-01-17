@@ -183,7 +183,7 @@ Workflow would attempt to execute even when SQL synthesis failed, leading to cas
 ### Solution
 Updated synthesis nodes to route intelligently:
 
-**Fast Route Node:**
+**Table Route Node:**
 ```python
 result = sql_agent(plan)
 
@@ -281,7 +281,7 @@ User Query
     ├─ Creates execution plan
     └─ Updates: execution_plan, join_strategy
     ↓
-[Decision: Fast vs Slow Route]
+[Decision: Fast vs Genie Route]
     ↓
 [SQL Synthesis Agent]
     ├─ Calls UC tools or Genie agents
@@ -496,8 +496,8 @@ Potential areas for further improvement:
 
 All test cases pass with improved output:
 - ✅ Test Case 1: Simple queries
-- ✅ Test Case 2: Multi-space fast route
-- ✅ Test Case 3: Multi-space slow route
+- ✅ Test Case 2: Multi-space table route
+- ✅ Test Case 3: Multi-space genie route
 - ✅ Test Case 4: Complex aggregations
 - ✅ Test Case 5: Clarification flow
 - ✅ Test Case 6: Error handling

@@ -21,7 +21,7 @@ ThinkingPlanningAgent (analyzes & plans)
     ↓
     ├─ Single Space → GenieAgent
     ├─ Multiple Spaces (No Join) → Multiple GenieAgents → Verbal Merge
-    └─ Multiple Spaces (Join) → Fast/Slow Route → SQLSynthesis → SQLExecution
+    └─ Multiple Spaces (Join) → Fast/Genie Route → SQLSynthesis → SQLExecution
 ```
 
 ### Key Components
@@ -174,7 +174,7 @@ response = w.serving_endpoints.query(
 - Routes to GENIE_PATIENT agent
 - Returns direct answer
 
-### 2. Multi-Space with JOIN (Fast Route)
+### 2. Multi-Space with JOIN (Table Route)
 **Example:** "How many patients over 50 are on Voltaren?"
 
 **Routing:**
@@ -184,7 +184,7 @@ response = w.serving_endpoints.query(
 - SQLExecutionAgent executes across both tables
 - Returns combined result quickly
 
-### 3. Multi-Space with JOIN (Slow Route)
+### 3. Multi-Space with JOIN (Genie Route)
 **Example:** "Show patients diagnosed with lung cancer who are on chemotherapy"
 
 **Routing:**
@@ -316,8 +316,8 @@ View endpoint metrics in Databricks:
 
 Average response times (on small workload):
 - Single-space queries: ~2-3 seconds
-- Multi-space fast route: ~3-5 seconds
-- Multi-space slow route: ~5-10 seconds
+- Multi-space table route: ~3-5 seconds
+- Multi-space genie route: ~5-10 seconds
 - Clarification requests: ~1-2 seconds
 
 ## 🐛 Troubleshooting

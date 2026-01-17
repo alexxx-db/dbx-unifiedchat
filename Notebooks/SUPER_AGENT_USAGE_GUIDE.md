@@ -24,7 +24,7 @@ This guide explains how to use the complete multi-agent system in `Super_Agent_l
 │    AGENT            │   Searches vector index
 │                     │   Identifies relevant spaces
 │                     │   Creates execution plan
-│                     │   Determines fast vs slow route
+│                     │   Determines fast vs genie route
 └──────────┬──────────┘
            ↓
      ┌─────┴─────┐
@@ -69,7 +69,7 @@ response = AGENT.predict(input_data)
 **Output**: JSON with execution plan including:
 - `relevant_space_ids`: Which Genie spaces to query
 - `requires_join`: Whether JOIN is needed
-- `join_strategy`: "fast_route" or "slow_route"
+- `join_strategy`: "table_route" or "genie_route"
 - `genie_route_plan`: Mapping of space_id to partial questions
 
 **Example**:
@@ -79,8 +79,8 @@ response = AGENT.predict(input_data)
 # Returns execution plan with join strategy
 ```
 
-### 3. SQL Synthesis Fast Route
-**Name**: `sql_synthesis_fast_route`  
+### 3. SQL Synthesis Table Route
+**Name**: `sql_synthesis_table_route`  
 **Purpose**: Generates SQL using UC metadata functions  
 **Tools**: 
 - `get_space_summary`
@@ -100,8 +100,8 @@ input_data = {"input": [{"role": "user", "content": "Average cost by payer type?
 response = AGENT.predict(input_data)
 ```
 
-### 4. SQL Synthesis Slow Route
-**Name**: `slow_route_agent` (not in supervisor by default)  
+### 4. SQL Synthesis Genie Route
+**Name**: `genie_route_agent` (not in supervisor by default)  
 **Purpose**: Routes queries to individual Genie agents, combines their SQL  
 **Tools**: All Genie agent tools (one per Genie space)
 
@@ -112,7 +112,7 @@ response = AGENT.predict(input_data)
 
 **Example**:
 ```python
-from agent import slow_route_agent
+from agent import genie_route_agent
 
 plan = {
     "genie_route_plan": {
@@ -125,7 +125,7 @@ agent_message = {
     "messages": [{"role": "user", "content": f"Generate SQL: {json.dumps(plan)}"}]
 }
 
-result = slow_route_agent.invoke(agent_message)
+result = genie_route_agent.invoke(agent_message)
 ```
 
 ### 5. SQL Execution Tool
@@ -182,28 +182,28 @@ response = AGENT.predict(input_conversation)
 
 ## Advanced Usage
 
-### Using Slow Route Agent Directly
+### Using Genie Route Agent Directly
 ```python
-from agent import slow_route_agent, genie_agent_tools
+from agent import genie_route_agent, genie_agent_tools
 
 # Create plan (normally from planning agent)
 plan = {
     "original_query": "Complex multi-space query",
-    "join_strategy": "slow_route",
+    "join_strategy": "genie_route",
     "genie_route_plan": {
         "01f0956a387714969edde65458dcc22a": "Partial question 1",
         "01f0956a54af123e9cd23907e8167df9": "Partial question 2"
     }
 }
 
-# Invoke slow route agent
+# Invoke genie route agent
 agent_message = {
     "messages": [
         {"role": "user", "content": f"Generate SQL: {json.dumps(plan, indent=2)}"}
     ]
 }
 
-result = slow_route_agent.invoke(agent_message)
+result = genie_route_agent.invoke(agent_message)
 final_sql = result["messages"][-1].content
 ```
 
@@ -234,29 +234,29 @@ else:
     print("Error:", result["error"])
 ```
 
-### Comparing Fast vs Slow Route
+### Comparing Fast vs Genie Route
 ```python
 test_query = "Average medical claim cost by payer type?"
 
-# Fast Route
+# Table Route
 fast_input = {
     "input": [
-        {"role": "user", "content": f"{test_query} Use fast_route."}
+        {"role": "user", "content": f"{test_query} Use table_route."}
     ]
 }
 fast_result = AGENT.predict(fast_input)
 
-# Slow Route (requires planning agent output first)
+# Genie Route (requires planning agent output first)
 slow_input = {
     "input": [
-        {"role": "user", "content": f"{test_query} Use slow_route."}
+        {"role": "user", "content": f"{test_query} Use genie_route."}
     ]
 }
 slow_result = AGENT.predict(slow_input)
 
 # Compare results
-print("Fast Route SQL:", fast_result)
-print("Slow Route SQL:", slow_result)
+print("Table Route SQL:", fast_result)
+print("Genie Route SQL:", slow_result)
 ```
 
 ## Configuration
@@ -303,7 +303,7 @@ IN_CODE_AGENTS.append(
 )
 ```
 
-### Add Slow Route to Supervisor
+### Add Genie Route to Supervisor
 ```python
 # Option 1: Modify create_langgraph_supervisor
 def create_langgraph_supervisor(
@@ -324,7 +324,7 @@ def create_langgraph_supervisor(
 supervisor = create_langgraph_supervisor(
     llm,
     IN_CODE_AGENTS,
-    additional_agents=[slow_route_agent]
+    additional_agents=[genie_route_agent]
 )
 ```
 
@@ -336,7 +336,7 @@ supervisor = create_langgraph_supervisor(
 # 1. Install dependencies
 # 2. Restart Python
 # 3. Test basic agent
-# 4. Test slow route
+# 4. Test genie route
 # 5. Test SQL execution
 # 6. Test end-to-end workflow
 ```
@@ -354,7 +354,7 @@ response = AGENT.predict(input_data)
 
 ## Common Patterns
 
-### Pattern 1: Clarification → Planning → Fast Route → Execution
+### Pattern 1: Clarification → Planning → Table Route → Execution
 ```python
 query = "Average medical claim cost?"
 input_data = {"input": [{"role": "user", "content": query}]}
@@ -367,20 +367,20 @@ sql = extract_sql_from_response(response)
 result = execute_sql_on_delta_tables(sql)
 ```
 
-### Pattern 2: Complex Multi-Space Query with Slow Route
+### Pattern 2: Complex Multi-Space Query with Genie Route
 ```python
 query = "Average cost of medical claims for diabetic patients by age group?"
 input_data = {
     "input": [
-        {"role": "user", "content": f"{query} Use slow_route if needed."}
+        {"role": "user", "content": f"{query} Use genie_route if needed."}
     ]
 }
 
-# Planning agent determines slow route is needed
+# Planning agent determines genie route is needed
 response = AGENT.predict(input_data)
 
-# Supervisor routes to slow_route_agent (if integrated)
-# Or manually call slow_route_agent with plan
+# Supervisor routes to genie_route_agent (if integrated)
+# Or manually call genie_route_agent with plan
 ```
 
 ### Pattern 3: Iterative Refinement
@@ -407,7 +407,7 @@ response3 = AGENT.predict({"input": conversation})
 ### Issue: Agent not routing to correct sub-agent
 **Solution**: Check planning agent output for `join_strategy` field. Update agent descriptions to be more specific.
 
-### Issue: Slow route agent not finding Genie tools
+### Issue: Genie Route agent not finding Genie tools
 **Solution**: Verify `genie_agent_tools` is populated. Check tool descriptions include space_id.
 
 ### Issue: SQL execution fails
@@ -428,15 +428,15 @@ response3 = AGENT.predict({"input": conversation})
 1. **Clear Queries**: Provide specific, well-formed questions
 2. **Use Context**: Maintain conversation history for follow-up questions
 3. **Monitor Traces**: Use MLflow to understand agent routing decisions
-4. **Test Both Routes**: Compare fast vs slow route for your use cases
+4. **Test Both Routes**: Compare fast vs genie route for your use cases
 5. **Error Handling**: Always check `success` field in execution results
 6. **Resource Limits**: Use `max_rows` parameter to prevent large result sets
 7. **Incremental Development**: Start with simple queries, gradually increase complexity
 
 ## Performance Tips
 
-1. **Fast Route**: Generally faster for complex joins, use when you need precise SQL control
-2. **Slow Route**: Better for leveraging Genie's understanding, use for analytical questions
+1. **Table Route**: Generally faster for complex joins, use when you need precise SQL control
+2. **Genie Route**: Better for leveraging Genie's understanding, use for analytical questions
 3. **Caching**: Plan results can be cached if same query is repeated
 4. **Batch Queries**: Group related questions for efficiency
 5. **Limit Results**: Always use LIMIT clauses for large tables
@@ -445,7 +445,7 @@ response3 = AGENT.predict({"input": conversation})
 
 1. Run the complete notebook end-to-end
 2. Test with your specific queries
-3. Compare fast route vs slow route accuracy
+3. Compare table route vs genie route accuracy
 4. Integrate SQL execution into supervisor workflow
 5. Deploy to production
 6. Monitor and optimize based on MLflow traces

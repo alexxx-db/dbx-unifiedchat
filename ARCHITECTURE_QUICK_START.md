@@ -74,8 +74,8 @@ I've generated **11 files** for your multi-agent system architecture:
 
 ### Execution Paths
 1. **Single Agent** - One Genie Agent handles query
-2. **Fast Route** - Quick SQL synthesis from metadata
-3. **Slow Route** - Comprehensive async processing
+2. **Table Route** - Quick SQL synthesis from metadata
+3. **Genie Route** - Comprehensive async processing
 4. **Verbal Merge** - Qualitative integration without joins
 
 ### Data Components
@@ -141,11 +141,11 @@ mmdc -i architecture_diagram.mmd -o architecture_diagram.pdf -b transparent
    - Sub-query 2: Patients on Voltaren
 4. Vector Search → Identifies 2 Genie Agents needed
 5. Decision → Multiple agents + Join required
-6. Fast Route (parallel):
+6. Table Route (parallel):
    - SQL Synthesis → Creates joined query
    - SQL Execution → Runs on Delta Tables
    - Returns count
-7. Slow Route (parallel):
+7. Genie Route (parallel):
    - Patients Agent → Gets patients > 50
    - Medications Agent → Gets patients on Voltaren
    - SQL Synthesis → Joins on patient_id
@@ -202,7 +202,7 @@ mmdc -i architecture_diagram.mmd -o architecture_diagram.pdf -b transparent
 
 - All agents log to **MLflow** for monitoring
 - Build pipelines in order: **3 → 1 → 2** (as specified in requirements)
-- Fast route provides quick response, slow route ensures accuracy
+- Table Route provides quick response, genie route ensures accuracy
 - Future: Three caching layers planned (full-text, SQL, semantic)
 
 ---

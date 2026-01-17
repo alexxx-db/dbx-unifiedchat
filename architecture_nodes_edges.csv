@@ -13,21 +13,21 @@ Single Agent Decision,Single Genie Agent,Yes - One Agent,Flow,Single Path
 Single Genie Agent,Return Single Result,Result,Flow,Single Path
 Return Single Result,Super Agent,Answer,Flow,Single Path
 Single Agent Decision,Join Decision,No - Multiple Agents,Decision,Multiple Path
-Join Decision,SQL Synthesis Agent (Fast),Yes - Fast Route,Flow,Fast Route
-SQL Synthesis Agent (Fast),SQL Execution Agent (Fast),Execute,Flow,Fast Route
-SQL Execution Agent (Fast),Delta Tables,Query,Data,Fast Route
-SQL Execution Agent (Fast),Return Fast Result,Result,Flow,Fast Route
-Return Fast Result,Super Agent,Answer,Flow,Fast Route
-Join Decision,Parallel Async Calls,Yes - Slow Route,Flow,Slow Route
-Parallel Async Calls,Genie Agent A (Slow),Sub-query 1,Flow,Slow Route
-Parallel Async Calls,Genie Agent B (Slow),Sub-query 2,Flow,Slow Route
-Genie Agent A (Slow),Collect SQL Results,SQL 1,Flow,Slow Route
-Genie Agent B (Slow),Collect SQL Results,SQL 2,Flow,Slow Route
-Collect SQL Results,SQL Synthesis Agent (Slow),Combine,Flow,Slow Route
-SQL Synthesis Agent (Slow),SQL Execution Agent (Slow),Execute,Flow,Slow Route
-SQL Execution Agent (Slow),Delta Tables,Query,Data,Slow Route
-SQL Execution Agent (Slow),Return Slow Result,Result,Flow,Slow Route
-Return Slow Result,Super Agent,Answer,Flow,Slow Route
+Join Decision,SQL Synthesis Agent (Fast),Yes - Table Route,Flow,Table Route
+SQL Synthesis Agent (Fast),SQL Execution Agent (Fast),Execute,Flow,Table Route
+SQL Execution Agent (Fast),Delta Tables,Query,Data,Table Route
+SQL Execution Agent (Fast),Return Fast Result,Result,Flow,Table Route
+Return Fast Result,Super Agent,Answer,Flow,Table Route
+Join Decision,Parallel Async Calls,Yes - Genie Route,Flow,Genie Route
+Parallel Async Calls,Genie Agent A (Slow),Sub-query 1,Flow,Genie Route
+Parallel Async Calls,Genie Agent B (Slow),Sub-query 2,Flow,Genie Route
+Genie Agent A (Slow),Collect SQL Results,SQL 1,Flow,Genie Route
+Genie Agent B (Slow),Collect SQL Results,SQL 2,Flow,Genie Route
+Collect SQL Results,SQL Synthesis Agent (Slow),Combine,Flow,Genie Route
+SQL Synthesis Agent (Slow),SQL Execution Agent (Slow),Execute,Flow,Genie Route
+SQL Execution Agent (Slow),Delta Tables,Query,Data,Genie Route
+SQL Execution Agent (Slow),Return Slow Result,Result,Flow,Genie Route
+Return Slow Result,Super Agent,Answer,Flow,Genie Route
 Join Decision,Multiple Agent Calls,No - Verbal Merge,Flow,Verbal Path
 Multiple Agent Calls,Genie Agent A (Verbal),Sub-query 1,Flow,Verbal Path
 Multiple Agent Calls,Genie Agent B (Verbal),Sub-query 2,Flow,Verbal Path
@@ -63,14 +63,14 @@ Single Agent Decision,Single Genie Agent?,Decision,#E94B3C,diamond
 Single Genie Agent,Single Genie Agent,Agent,#4A90E2,rectangle
 Return Single Result,Return Result (thinking/sql/answer),Process,#F5A623,rectangle
 Join Decision,Row-wise Join Needed?,Decision,#E94B3C,diamond
-SQL Synthesis Agent (Fast),SQL Synthesis Agent (Fast Route),Agent,#4A90E2,rectangle
+SQL Synthesis Agent (Fast),SQL Synthesis Agent (Table Route),Agent,#4A90E2,rectangle
 SQL Execution Agent (Fast),SQL Execution Agent (Fast),Agent,#4A90E2,rectangle
 Return Fast Result,Return Fast Result,Process,#F5A623,rectangle
 Parallel Async Calls,Parallel Async Calls to Genie Agents,Process,#F5A623,rectangle
 Genie Agent A (Slow),Genie Agent A (Sub-question 1),Agent,#4A90E2,rectangle
 Genie Agent B (Slow),Genie Agent B (Sub-question 2),Agent,#4A90E2,rectangle
 Collect SQL Results,Collect sql_results,Process,#F5A623,rectangle
-SQL Synthesis Agent (Slow),SQL Synthesis Agent (Slow Route),Agent,#4A90E2,rectangle
+SQL Synthesis Agent (Slow),SQL Synthesis Agent (Genie Route),Agent,#4A90E2,rectangle
 SQL Execution Agent (Slow),SQL Execution Agent (Slow),Agent,#4A90E2,rectangle
 Return Slow Result,Return Slow Result,Process,#F5A623,rectangle
 Multiple Agent Calls,Call Multiple Genie Agents,Process,#F5A623,rectangle

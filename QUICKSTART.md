@@ -248,7 +248,7 @@ mlflow.set_experiment("/Users/{user}/multi_agent_genie")
    - Wait 30 seconds and retry
 
 2. **Want Faster Responses?**
-   - Use fast route for multi-space joins
+   - Use table route for multi-space joins
    - Enable caching (coming soon)
    - Scale endpoint to Medium/Large
 
