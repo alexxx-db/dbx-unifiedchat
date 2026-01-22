@@ -37,6 +37,7 @@ from typing_extensions import TypedDict
 import operator
 from uuid import uuid4
 import re
+from functools import partial
 
 # COMMAND ----------
 
@@ -714,7 +715,7 @@ class SQLSynthesisTableAgent:
         self.llm = llm
         self.catalog = catalog
         self.schema = schema
-        self.name = "SQLSynthesisFast"
+        self.name = "SQLSynthesisTable"
         
         # Initialize UC Function Client
         client = DatabricksFunctionClient()
@@ -762,9 +763,10 @@ class SQLSynthesisTableAgent:
                 "  * Appropriate aggregations\n"
                 "  * Clear column aliases\n"
                 "  * Always use real column names, never make up ones\n"
-                "- Return ONLY the SQL query without explanations or markdown\n"
-                "- If SQL cannot be generated, explain what metadata is missing"
-            ),
+                "- Return your response with:\n"
+                "1. Your explanations; If SQL cannot be generated, explain what metadata is missing\n"
+                "2. The final SQL query in a ```sql code block\n\n"
+            )
         )
     
     def synthesize_sql(self, plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -859,15 +861,18 @@ print("✓ SQLSynthesisTableAgent class defined")
 
 class SQLSynthesisGenieAgent:
     """
-    Agent responsible for slow SQL synthesis using Genie agents.
+    Agent responsible for Genie Route SQL synthesis using Genie agents as tools.
     
-    OOP design with Genie agent integration.
+    Uses LangChain agent pattern where Genie agents are wrapped as tools.
+    The agent orchestrates tool calling, retries, and SQL synthesis autonomously.
+    
+    OOP design with Genie agent-as-tools integration.
     Optimized to only create Genie agents for relevant spaces (not all spaces).
     """
     
     def __init__(self, llm: Runnable, relevant_spaces: List[Dict[str, Any]]):
         """
-        Initialize SQL Synthesis Genie Agent.
+        Initialize SQL Synthesis Genie Agent with tool-calling pattern.
         
         Args:
             llm: Language model for SQL synthesis
@@ -878,21 +883,27 @@ class SQLSynthesisGenieAgent:
         self.relevant_spaces = relevant_spaces
         self.name = "SQLSynthesisSlow"
         
-        # Create Genie agents only for relevant spaces (efficiency optimization)
-        self.genie_agents_dict = self._create_genie_agents()
+        # Create Genie agents and their tool representations
+        self.genie_agents = []
+        self.genie_agent_tools = []
+        self._create_genie_agent_tools()
+        
+        # Create SQL synthesis agent with Genie agent tools
+        self.sql_synthesis_agent = self._create_sql_synthesis_agent()
     
-    def _create_genie_agents(self) -> Dict[str, GenieAgent]:
+    def _create_genie_agent_tools(self):
         """
-        Create Genie agents only for relevant spaces discovered by PlanningAgent.
-        This is more efficient than creating agents for all spaces.
+        Create Genie agents as tools only for relevant spaces.
+        Uses RunnableLambda wrapper pattern to avoid closure issues.
+        
+        Pattern copied from test_uc_functions.py lines 1283-1318
         """
-        def enforce_limit(messages, n=10):
+        def enforce_limit(messages, n=5):
             last = messages[-1] if messages else {"content": ""}
             content = last.get("content", "") if isinstance(last, dict) else last.content
             return f"{content}\n\nPlease limit the result to at most {n} rows."
         
-        genie_agents = {}
-        print(f"  Creating Genie agents for {len(self.relevant_spaces)} relevant spaces...")
+        print(f"  Creating Genie agent tools for {len(self.relevant_spaces)} relevant spaces...")
         
         for space in self.relevant_spaces:
             space_id = space.get("space_id")
@@ -903,195 +914,121 @@ class SQLSynthesisGenieAgent:
                 print(f"  ⚠ Warning: Space missing space_id, skipping: {space}")
                 continue
             
+            genie_agent_name = f"Genie_{space_title}"
+            description = searchable_content
+            
+            # Create Genie agent
             genie_agent = GenieAgent(
                 genie_space_id=space_id,
-                genie_agent_name=f"Genie_{space_title}",
-                description=searchable_content,
+                genie_agent_name=genie_agent_name,
+                description=description,
                 include_context=True,
-                message_processor=lambda msgs: enforce_limit(msgs, n=10)
+                message_processor=lambda msgs: enforce_limit(msgs, n=5)
             )
-            genie_agents[space_id] = genie_agent
-            print(f"  ✓ Created Genie agent for: {space_title} ({space_id})")
-        
-        return genie_agents
+            self.genie_agents.append(genie_agent)
+            
+            # Wrap the agent call in a function that only takes a string argument
+            # This function also returns a function to avoid closure issues
+            def make_agent_invoker(agent):
+                return lambda question: agent.invoke(
+                    {"messages": [{"role": "user", "content": question}]}
+                )
+            
+            runnable = RunnableLambda(make_agent_invoker(genie_agent))
+            runnable.name = genie_agent_name
+            runnable.description = description
+            
+            self.genie_agent_tools.append(
+                runnable.as_tool(
+                    name=genie_agent_name,
+                    description=description,
+                    arg_types={"question": str}
+                )
+            )
+            
+            print(f"  ✓ Created Genie agent tool: {genie_agent_name} ({space_id})")
     
-    def query_genie_agents(self, genie_route_plan: Dict[str, str]) -> Dict[str, Dict[str, str]]:
+    def _create_sql_synthesis_agent(self):
         """
-        Query Genie agents with partial questions.
+        Create LangGraph SQL Synthesis Agent with Genie agent tools.
         
-        Args:
-            genie_route_plan: Mapping of space_id to partial question
-            
-        Returns:
-            Dictionary of space_id to {question, thinking, sql}
+        Uses Databricks LangGraph SDK with create_agent pattern.
+        Pattern copied from test_uc_functions.py lines 1375-1462
         """
-        sql_fragments = {}
+        tools = []
+        tools.extend(self.genie_agent_tools)
         
-        for space_id, partial_question in genie_route_plan.items():
-            if space_id not in self.genie_agents_dict:
-                print(f"⚠ Warning: Space {space_id} not found in Genie agents")
-                continue
-            
-            try:
-                genie_agent = self.genie_agents_dict[space_id]
-                resp = genie_agent.invoke({
-                    "messages": [{"role": "user", "content": partial_question}]
-                })
-                
-                # Extract thinking (reasoning) and SQL from response
-                thinking = None
-                sql = None
-                
-                for msg in resp["messages"]:
-                    if isinstance(msg, AIMessage):
-                        if msg.name == "query_reasoning":
-                            thinking = msg.content
-                        elif msg.name == "query_sql":
-                            sql = msg.content
-                
-                if sql:
-                    sql_fragments[space_id] = {
-                        "success": True,
-                        "question": partial_question,
-                        "thinking": thinking if thinking else "No reasoning provided",
-                        "sql": sql
-                    }
-                    print(f"  ✓ Got SQL {sql} from space {space_id}")
-                    if thinking:
-                        print(f"    Reasoning: {thinking[:100]}...")
-                else:
-                    print(f"  ⚠ No SQL returned from space {space_id}")
-                    sql_fragments[space_id] = {
-                        "success": False,
-                        "question": partial_question,
-                        "thinking": thinking if thinking else "No reasoning provided",
-                        "sql": None,
-                        "error": "No SQL returned from space"
-                    }
-            except Exception as e:
-                print(f"❌ Error querying space {space_id}: {e}")
-                sql_fragments[space_id] = {
-                    "success": False,
-                    "question": partial_question,
-                    "thinking": None,
-                    "sql": None,
-                    "error": str(e)
-                }
+        print(f"✓ Created SQL Synthesis Agent with {len(tools)} Genie agent tools")
         
-        return sql_fragments
-    
-    def combine_sql_fragments(
-        self, 
-        original_query: str,
-        execution_plan: str,
-        sql_fragments: Dict[str, Dict[str, str]]
-    ) -> Dict[str, Any]:
-        """
-        Combine SQL fragments into a single query.
-        
-        Args:
-            original_query: Original user question
-            execution_plan: Execution plan description
-            sql_fragments: SQL fragments from Genie agents (with "success", "sql", "thinking" fields)
-            
-        Returns:
-            Dictionary with:
-            - sql: str - Combined SQL query (None if cannot generate)
-            - explanation: str - Agent's explanation/reasoning
-            - has_sql: bool - Whether SQL was successfully extracted
-        """
-        # Format SQL fragments for better readability in prompt
-        fragments_formatted = []
-        for space_id, fragment in sql_fragments.items():
-            fragment_str = f"""
-Space ID: {space_id}
-Question: {fragment.get('question', 'N/A')}
-Thinking: {fragment.get('thinking', 'N/A')}
-SQL Fragment:
-```sql
-{fragment.get('sql', 'N/A')}
-```
-"""
-            fragments_formatted.append(fragment_str)
-        
-        fragments_text = "\n---\n".join(fragments_formatted)
-        
-        combine_prompt = f"""
-You are an expert SQL developer. Combine the following SQL fragments into a single executable SQL query.
+        # Create SQL Synthesis Agent (specialized for multi-agent system)
+        sql_synthesis_agent = create_agent(
+            model=self.llm,
+            tools=tools,
+            system_prompt=(
+"""You are a SQL synthesis agent, which can take analysis plan, and route queries to the corresponding Genie Agent.
+The Plan given to you is a JSON:
+{
+'original_query': 'The User's Question',
+'vector_search_relevant_spaces_info': [{'space_id': 'space_id_1',
+   'space_title': 'space_title_1'},
+  {'space_id': 'space_id_2',
+   'space_title': 'space_title_2'},
+  {'space_id': 'space_id_3',
+   'space_title': 'space_title_3'}],
+"question_clear": true,
+"sub_questions": ["sub-question 1", "sub-question 2", ...],
+"requires_multiple_spaces": true/false,
+"relevant_space_ids": ["space_id_1", "space_id_2", ...],
+"requires_join": true/false,
+"join_strategy": "table_route" or "genie_route" or null,
+"execution_plan": "Brief description of execution plan",
+"genie_route_plan": {'space_id_1':'partial_question_1', 'space_id_2':'partial_question_2', 'space_id_3':'partial_question_3', ...} or null,}
 
-Original Question: {original_query}
+## Tool Calling Plan:
+1. Under the key of 'genie_route_plan' in the JSON, extracting 'partial_question_1' and feed to the right Genie Agent tool of 'space_id_1' with the input as a string. 
+2. Asynchronously send all other partial_questions to the corresponding Genie Agent tools accordingly.
+3. You have access to all Genie Agents as tools given to you; locate the proper Genie Agent Tool by searching the 'space_id_1' in the tool's description. After each Genie agent returns result, only extract the SQL string from the Genie tool output JSON {"thinking": thinking, "sql": sql, "answer": answer}.
+4. If you find you are still missing necessary analytical components (metrics, filters, dimensions, etc.) to assemble the final SQL, which might be due to some genie agent tool may not have the necessary information being assigned, try to leverage other most likely Genie agents to find the missing pieces.
 
-Execution Plan: {execution_plan}
+## Disaster Recovery (DR) Plan:
+1. If one Genie agent tool fail to generate a SQL query, allow retry AS IS only one time; 
+2. If fail again, try to reframe the partial question 'partial_question_1' according to the error msg returned by the genie tool, e.g., genie tool may say "I dont have information for cost related information", you can remove those components in the 'partial_question_1' which doesn't exist in the genie tool. For example, if the genie tool "Genie_MemberBenefits" doesn't contain benefit cost related information, you can reframe the question by removing the cost-related components in the 'partial_question_1', generate 'partial_question_1_v2' and try again. Only try once;
+3. If fail again, return response as is. 
 
-SQL Fragments from Genie Agents:
-{fragments_text}
 
-Generate a complete SQL query that:
-1. Combines these fragments with proper JOINs based on common columns
-2. Answers the original question completely
-3. Uses real table and column names from the fragments
-4. Includes proper WHERE clauses and aggregations
-5. Ensures the query is executable and returns meaningful results
-
-Return your response with:
+## Overall SQL Synthesis Plan:
+Then, you can combine all the SQL pieces into a single SQL query, and return the final SQL query.
+OUTPUT REQUIREMENTS:
+- Generate complete, executable SQL with:
+  * Proper JOINs based on execution plan strategy
+  * WHERE clauses for filtering
+  * Appropriate aggregations
+  * Clear column aliases
+  * Always use real column name existed in the data, never make up one
+- Return your response with:
 1. Your explanation combining both the individual Genie thinking and your own reasoning
-2. The final SQL query in a ```sql code block
-"""
+2. The final SQL query in a ```sql code block"""
+            )
+        )
         
-        response = self.llm.invoke(combine_prompt)
-        original_content = response.content.strip()
-        combined_sql = original_content
-        
-        sql_query = None
-        has_sql = False
-        
-        # Clean markdown if present and extract SQL
-        if "```sql" in combined_sql.lower():
-            sql_match = re.search(r'```sql\s*(.*?)\s*```', combined_sql, re.IGNORECASE | re.DOTALL)
-            if sql_match:
-                sql_query = sql_match.group(1).strip()
-                has_sql = True
-                # Remove SQL block to get explanation
-                combined_sql = re.sub(r'```sql\s*.*?\s*```', '', combined_sql, flags=re.IGNORECASE | re.DOTALL)
-        elif "```" in combined_sql:
-            sql_match = re.search(r'```\s*(.*?)\s*```', combined_sql, re.DOTALL)
-            if sql_match:
-                potential_sql = sql_match.group(1).strip()
-                if any(keyword in potential_sql.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
-                    sql_query = potential_sql
-                    has_sql = True
-                    # Remove SQL block to get explanation
-                    combined_sql = re.sub(r'```\s*.*?\s*```', '', combined_sql, flags=re.DOTALL)
-        else:
-            # No markdown, check if the entire content is SQL
-            if any(keyword in combined_sql.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
-                sql_query = combined_sql
-                has_sql = True
-                combined_sql = "SQL query combined from Genie agent fragments."
-        
-        explanation = combined_sql.strip()
-        if not explanation:
-            explanation = original_content if not has_sql else "SQL query combined successfully from Genie agent fragments."
-        
-        return {
-            "sql": sql_query,
-            "explanation": explanation,
-            "has_sql": has_sql
-        }
+        return sql_synthesis_agent
     
     def synthesize_sql(
         self, 
-        original_query: str,
-        execution_plan: str,
-        genie_route_plan: Dict[str, str]
+        plan: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Synthesize SQL using Genie agents (genie route).
+        Synthesize SQL using Genie agents (genie route) with autonomous tool calling.
         
         Args:
-            original_query: Original user question
-            execution_plan: Execution plan description
-            genie_route_plan: Mapping of space_id to partial question
+            plan: Complete plan dictionary from PlanningAgent containing:
+                - original_query: Original user question
+                - execution_plan: Execution plan description
+                - genie_route_plan: Mapping of space_id to partial question
+                - vector_search_relevant_spaces_info: List of relevant spaces
+                - relevant_space_ids: List of relevant space IDs
+                - requires_join: Whether join is needed
+                - join_strategy: Join strategy (table_route/genie_route)
             
         Returns:
             Dictionary with:
@@ -1099,51 +1036,105 @@ Return your response with:
             - explanation: str - Agent's explanation/reasoning
             - has_sql: bool - Whether SQL was successfully extracted
         """
-        # Query Genie agents
-        sql_fragments = self.query_genie_agents(genie_route_plan)
+        # Build the plan result JSON for the agent
+        plan_result = plan
         
-        if not sql_fragments:
+        # Create the message for the agent
+        agent_message = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"""
+Generate a SQL query to answer the question according to the Query Plan:
+{json.dumps(plan_result, indent=2)}
+"""
+                }
+            ]
+        }
+        
+        print(f"\n{'='*80}")
+        print("🤖 Invoking SQL Synthesis Agent with Genie Agent Tools...")
+        print(f"{'='*80}")
+        print(f"Plan: {json.dumps(plan_result, indent=2)}")
+        print(f"{'='*80}\n")
+        
+        try:
+            # Enable MLflow autologging for tracing
+            mlflow.langchain.autolog()
+            
+            # Invoke the agent
+            result = self.sql_synthesis_agent.invoke(agent_message)
+            
+            # Extract SQL from agent result
+            # The agent returns {"messages": [...]}
+            # Last message contains the final response
+            final_message = result["messages"][-1]
+            final_content = final_message.content.strip()
+            
+            print(f"\n{'='*80}")
+            print("✅ SQL Synthesis Agent completed")
+            print(f"{'='*80}")
+            print(f"Result: {final_content[:500]}...")
+            print(f"{'='*80}\n")
+            
+            # Extract SQL and explanation from the result
+            sql_query = None
+            has_sql = False
+            explanation = final_content
+            
+            # Clean markdown if present and extract SQL
+            if "```sql" in final_content.lower():
+                sql_match = re.search(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
+                if sql_match:
+                    sql_query = sql_match.group(1).strip()
+                    has_sql = True
+                    # Remove SQL block to get explanation
+                    explanation = re.sub(r'```sql\s*.*?\s*```', '', final_content, flags=re.IGNORECASE | re.DOTALL)
+            elif "```" in final_content:
+                sql_match = re.search(r'```\s*(.*?)\s*```', final_content, re.DOTALL)
+                if sql_match:
+                    potential_sql = sql_match.group(1).strip()
+                    if any(keyword in potential_sql.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
+                        sql_query = potential_sql
+                        has_sql = True
+                        # Remove SQL block to get explanation
+                        explanation = re.sub(r'```\s*.*?\s*```', '', final_content, flags=re.DOTALL)
+            else:
+                # No markdown, check if the entire content is SQL
+                if any(keyword in final_content.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
+                    sql_query = final_content
+                    has_sql = True
+                    explanation = "SQL query generated successfully by Genie agent tools."
+            
+            explanation = explanation.strip()
+            if not explanation:
+                explanation = final_content if not has_sql else "SQL query generated successfully by Genie agent tools."
+            
+            return {
+                "sql": sql_query,
+                "explanation": explanation,
+                "has_sql": has_sql
+            }
+            
+        except Exception as e:
+            print(f"\n{'='*80}")
+            print("❌ SQL Synthesis Agent failed")
+            print(f"{'='*80}")
+            print(f"Error: {str(e)}")
+            print(f"{'='*80}\n")
+            
             return {
                 "sql": None,
-                "explanation": "No SQL fragments collected from Genie agents. Unable to generate query.",
+                "explanation": f"SQL synthesis failed: {str(e)}",
                 "has_sql": False
             }
-        
-        # Validate all Genie agents returned SQL successfully
-        failed_spaces = []
-        for space_id, fragment in sql_fragments.items():
-            if not fragment.get("success", False):
-                error_msg = fragment.get("error", "Unknown error")
-                failed_spaces.append(f"{space_id}: {error_msg}")
-        
-        if failed_spaces:
-            error_details = "\n".join(failed_spaces)
-            return {
-                "sql": None,
-                "explanation": f"Cannot combine SQL fragments - some Genie agents failed:\n{error_details}",
-                "has_sql": False
-            }
-        
-        # All fragments successful - proceed to combine
-        print(f"✓ All {len(sql_fragments)} Genie agents returned SQL successfully")
-        
-        # Combine SQL fragments
-        result = self.combine_sql_fragments(
-            original_query,
-            execution_plan,
-            sql_fragments
-        )
-        
-        return result
     
     def __call__(
         self, 
-        original_query: str,
-        execution_plan: str,
-        genie_route_plan: Dict[str, str]
+        plan: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Make agent callable."""
-        return self.synthesize_sql(original_query, execution_plan, genie_route_plan)
+        """Make agent callable with plan dictionary."""
+        return self.synthesize_sql(plan)
 
 print("✓ SQLSynthesisGenieAgent class defined")
 
@@ -1596,15 +1587,16 @@ def sql_synthesis_table_node(state: AgentState) -> AgentState:
     # Use OOP agent
     sql_agent = SQLSynthesisTableAgent(llm, CATALOG, SCHEMA)
     
-    # Prepare plan for agent
-    plan = {
-        "original_query": state["original_query"],
-        "vector_search_relevant_spaces_info": state.get("vector_search_relevant_spaces_info", []),
-        "relevant_space_ids": state.get("relevant_space_ids", []),
-        "execution_plan": state.get("execution_plan", ""),
-        "requires_join": state.get("requires_join", False),
-        "sub_questions": state.get("sub_questions", [])
-    }
+    # # Prepare plan for agent
+    # plan = {
+    #     "original_query": state["original_query"],
+    #     "vector_search_relevant_spaces_info": state.get("vector_search_relevant_spaces_info", []),
+    #     "relevant_space_ids": state.get("relevant_space_ids", []),
+    #     "execution_plan": state.get("execution_plan", ""),
+    #     "requires_join": state.get("requires_join", False),
+    #     "sub_questions": state.get("sub_questions", [])
+    # }
+    plan = state.get("plan", {})
     
     try:
         print("🤖 Invoking SQL synthesis agent...")
@@ -1678,21 +1670,18 @@ def sql_synthesis_genie_node(state: AgentState) -> AgentState:
     # Use OOP agent - only creates Genie agents for relevant spaces
     sql_agent = SQLSynthesisGenieAgent(llm, relevant_spaces)
     
-    genie_route_plan = state.get("genie_route_plan", {})
+    plan = state.get("plan", {})
+    genie_route_plan = plan.get("genie_route_plan", {})
     
     if not genie_route_plan:
-        print("❌ No genie_route_plan found in state")
+        print("❌ No genie_route_plan found in plan")
         state["synthesis_error"] = "No routing plan available for genie route"
         # Route to summarize via conditional edge (route_after_synthesis)
         return state
     
     try:
         print(f"🤖 Querying {len(genie_route_plan)} Genie agents...")
-        result = sql_agent(
-            state["original_query"],
-            state.get("execution_plan", ""),
-            genie_route_plan
-        )
+        result = sql_agent(plan)
         
         # Extract SQL and explanation
         sql_query = result.get("sql")
