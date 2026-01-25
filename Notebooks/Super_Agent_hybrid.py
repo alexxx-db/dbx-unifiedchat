@@ -1,6 +1,6 @@
 # Databricks notebook source
 # DBTITLE 1,Install Packages
-# MAGIC %pip install databricks-langchain==0.12.1 databricks-vectorsearch==0.63
+# MAGIC %pip install databricks-langchain[memory]==0.12.1 databricks-vectorsearch==0.63 databricks-agents mlflow-skinny[databricks]
 
 # COMMAND ----------
 
@@ -42,29 +42,45 @@ from functools import partial
 # COMMAND ----------
 
 # DBTITLE 1,Configuration
-# Configuration
-CATALOG = "yyang"
-SCHEMA = "multi_agent_genie"
+"""
+Configuration loaded from config.py and .env file.
+To update configuration, edit .env file instead of this notebook.
+"""
+
+# Import centralized configuration
+import sys
+import os
+
+# Add parent directory to path to import config
+notebook_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+parent_dir = os.path.dirname(notebook_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from config import get_config
+
+# Load configuration from .env
+config = get_config()
+
+# Extract configuration values
+CATALOG = config.unity_catalog.catalog_name
+SCHEMA = config.unity_catalog.schema_name
 TABLE_NAME = f"{CATALOG}.{SCHEMA}.enriched_genie_docs_chunks"
 VECTOR_SEARCH_INDEX = f"{CATALOG}.{SCHEMA}.enriched_genie_docs_chunks_vs_index"
-LLM_ENDPOINT_CLARIFICATION = "databricks-claude-haiku-4-5"
-LLM_ENDPOINT_PLANNING = "databricks-claude-haiku-4-5"
-LLM_ENDPOINT_SQL_SYNTHESIS = "databricks-claude-sonnet-4-5"  # More powerful for SQL synthesis
-LLM_ENDPOINT_SUMMARIZE = "databricks-claude-haiku-4-5"  # Fast and cost-effective for summarization
 
-print("="*80)
-print("SUPER AGENT (HYBRID) CONFIGURATION")
-print("="*80)
-print(f"Catalog: {CATALOG}")
-print(f"Schema: {SCHEMA}")
-print(f"Table: {TABLE_NAME}")
-print(f"Vector Search Index: {VECTOR_SEARCH_INDEX}")
-print(f"\nLLM Endpoints:")
-print(f"  - Clarification: {LLM_ENDPOINT_CLARIFICATION}")
-print(f"  - Planning: {LLM_ENDPOINT_PLANNING}")
-print(f"  - SQL Synthesis: {LLM_ENDPOINT_SQL_SYNTHESIS}")
-print(f"  - Summarization: {LLM_ENDPOINT_SUMMARIZE}")
-print("="*80)
+# LLM Endpoints - using same endpoint for now, can be customized in .env later
+LLM_ENDPOINT_CLARIFICATION = config.llm.endpoint_name
+LLM_ENDPOINT_PLANNING = config.llm.endpoint_name
+LLM_ENDPOINT_SQL_SYNTHESIS = config.llm.endpoint_name
+LLM_ENDPOINT_SUMMARIZE = config.llm.endpoint_name
+
+# Lakebase configuration for state management (from .env)
+LAKEBASE_INSTANCE_NAME = config.lakebase.instance_name
+EMBEDDING_ENDPOINT = config.lakebase.embedding_endpoint
+EMBEDDING_DIMS = config.lakebase.embedding_dims
+
+# Print configuration summary
+config.print_summary()
 
 # COMMAND ----------
 
@@ -75,17 +91,20 @@ from databricks_langchain import (
     DatabricksFunctionClient,
     UCFunctionToolkit,
     set_uc_function_client,
+    CheckpointSaver,  # For short-term memory (distributed serving)
+    DatabricksStore,  # For long-term memory (user preferences)
 )
 from databricks_langchain.genie import GenieAgent
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, AIMessageChunk
+from langchain_core.runnables import Runnable, RunnableLambda, RunnableConfig
+from langchain_core.tools import tool
 import mlflow
+import logging
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
 # MLflow ResponsesAgent imports
 from mlflow.pyfunc import ResponsesAgent
@@ -97,7 +116,48 @@ from mlflow.types.responses import (
     to_chat_completions_input,
 )
 
-print("✓ All dependencies imported successfully")
+# Setup logging
+logger = logging.getLogger(__name__)
+
+print("✓ All dependencies imported successfully (including memory support)")
+
+# COMMAND ----------
+
+# DBTITLE 1,ONE-TIME SETUP: Initialize Lakebase Tables for State Management
+"""
+IMPORTANT: Run this cell ONCE to set up Lakebase tables for state management.
+
+This creates:
+1. checkpoints table - For short-term memory (multi-turn conversations)
+2. store table - For long-term memory (user preferences with semantic search)
+
+Prerequisites:
+- Lakebase instance must be created in: SQL Warehouses -> Lakebase Postgres -> Create database instance
+- Update LAKEBASE_INSTANCE_NAME above with your instance name
+"""
+
+# Uncomment and run ONCE to initialize tables
+# from databricks_langchain import CheckpointSaver, DatabricksStore
+#
+# print("Initializing Lakebase tables...")
+# print(f"Instance: {LAKEBASE_INSTANCE_NAME}")
+#
+# # Setup checkpoint table for short-term memory
+# with CheckpointSaver(instance_name=LAKEBASE_INSTANCE_NAME) as saver:
+#     saver.setup()
+#     print("✓ Checkpoint table created/verified")
+#
+# # Setup store table for long-term memory
+# store = DatabricksStore(
+#     instance_name=LAKEBASE_INSTANCE_NAME,
+#     embedding_endpoint=EMBEDDING_ENDPOINT,
+#     embedding_dims=EMBEDDING_DIMS,
+# )
+# store.setup()
+# print("✓ Store table created/verified")
+#
+# print("\n✅ Lakebase tables are ready for state management!")
+# print("="*80)
 
 # COMMAND ----------
 
@@ -411,6 +471,11 @@ class AgentState(TypedDict):
     
     # Summary
     final_summary: Optional[str]  # Natural language summary of the workflow execution
+    
+    # State Management (NEW - for distributed serving and long-term memory)
+    user_id: Optional[str]  # User identifier for long-term memory
+    thread_id: Optional[str]  # Thread identifier for short-term memory
+    user_preferences: Optional[Dict]  # User preferences loaded from long-term memory
     
     # Control flow
     next_agent: Optional[str]
@@ -2011,9 +2076,10 @@ def create_super_agent_hybrid():
     # Summarize is the final node before END
     workflow.add_edge("summarize", END)
     
-    # Compile the graph with memory
-    memory = MemorySaver()
-    app = workflow.compile(checkpointer=memory)
+    # NOTE: Workflow compiled WITHOUT checkpointer here
+    # Checkpointer will be added at runtime in SuperAgentHybridResponsesAgent
+    # This allows distributed Model Serving with CheckpointSaver
+    app_graph = workflow
     
     print("✓ Workflow nodes added:")
     print("  1. Clarification Agent (OOP)")
@@ -2025,11 +2091,11 @@ def create_super_agent_hybrid():
     print("\n✓ Explicit state management enabled")
     print("✓ Conditional routing configured")
     print("✓ All paths route to summarize node before END")
-    print("✓ Memory checkpointer enabled")
-    print("\n✅ Hybrid Super Agent workflow compiled successfully!")
+    print("✓ Checkpointer will be added at runtime (distributed serving)")
+    print("\n✅ Hybrid Super Agent workflow created successfully!")
     print("="*80)
     
-    return app
+    return app_graph
 
 # Create the Hybrid Super Agent
 super_agent_hybrid = create_super_agent_hybrid()
@@ -2039,21 +2105,162 @@ super_agent_hybrid = create_super_agent_hybrid()
 # DBTITLE 1,ResponsesAgent Wrapper for Deployment
 class SuperAgentHybridResponsesAgent(ResponsesAgent):
     """
-    Wrapper class to make the Hybrid Super Agent compatible with Databricks Model Serving.
+    Enhanced ResponsesAgent with both short-term and long-term memory for distributed Model Serving.
     
-    This class implements the ResponsesAgent interface required for deployment
-    to Databricks Model Serving endpoints with proper streaming support.
+    Features:
+    - Short-term memory (CheckpointSaver): Multi-turn conversations within a session
+    - Long-term memory (DatabricksStore): User preferences across sessions with semantic search
+    - Connection pooling and automatic credential rotation
+    - Works seamlessly in distributed Model Serving (multiple instances)
+    
+    Memory Architecture:
+    - Short-term: Stored per thread_id in Lakebase checkpoints table
+    - Long-term: Stored per user_id in Lakebase store table with vector embeddings
     """
     
-    def __init__(self, agent: CompiledStateGraph):
+    def __init__(self, workflow: StateGraph):
         """
         Initialize the ResponsesAgent wrapper.
         
         Args:
-            agent: The compiled LangGraph workflow
+            workflow: The uncompiled LangGraph StateGraph workflow
         """
-        self.agent = agent
-        print("✓ SuperAgentHybridResponsesAgent initialized")
+        self.workflow = workflow
+        self.lakebase_instance_name = LAKEBASE_INSTANCE_NAME
+        self._store = None
+        self._memory_tools = None
+        print("✓ SuperAgentHybridResponsesAgent initialized with memory support")
+    
+    @property
+    def store(self):
+        """Lazy initialization of DatabricksStore for long-term memory."""
+        if self._store is None:
+            logger.info(f"Initializing DatabricksStore with instance: {self.lakebase_instance_name}")
+            self._store = DatabricksStore(
+                instance_name=self.lakebase_instance_name,
+                embedding_endpoint=EMBEDDING_ENDPOINT,
+                embedding_dims=EMBEDDING_DIMS,
+            )
+            self._store.setup()  # Creates store table if not exists
+            logger.info("✓ DatabricksStore initialized")
+        return self._store
+    
+    @property
+    def memory_tools(self):
+        """Create memory tools for long-term memory access."""
+        if self._memory_tools is None:
+            logger.info("Creating memory tools for long-term memory")
+            
+            @tool
+            def get_user_memory(query: str, config: RunnableConfig) -> str:
+                """Search for relevant user information using semantic search.
+                
+                Use this tool to retrieve previously saved information about the user,
+                such as their preferences, facts they've shared, or other personal details.
+                
+                Args:
+                    query: The search query to find relevant memories
+                    config: Runtime configuration containing user_id
+                """
+                user_id = config.get("configurable", {}).get("user_id")
+                if not user_id:
+                    return "Memory not available - no user_id provided."
+                
+                namespace = ("user_memories", user_id.replace(".", "-"))
+                results = self.store.search(namespace, query=query, limit=5)
+                
+                if not results:
+                    return "No memories found for this user."
+                
+                memory_items = [f"- [{item.key}]: {json.dumps(item.value)}" for item in results]
+                return f"Found {len(results)} relevant memories (ranked by similarity):\n" + "\n".join(memory_items)
+            
+            @tool
+            def save_user_memory(memory_key: str, memory_data_json: str, config: RunnableConfig) -> str:
+                """Save information about the user to long-term memory.
+                
+                Use this tool to remember important information the user shares,
+                such as preferences, facts, or other personal details.
+                
+                Args:
+                    memory_key: A descriptive key for this memory (e.g., "preferences", "favorite_visualization")
+                    memory_data_json: JSON string with the information to remember. 
+                        Example: '{"preferred_chart_type": "bar", "default_spaces": ["patient_data"]}'
+                    config: Runtime configuration containing user_id
+                """
+                user_id = config.get("configurable", {}).get("user_id")
+                if not user_id:
+                    return "Cannot save memory - no user_id provided."
+                
+                namespace = ("user_memories", user_id.replace(".", "-"))
+                
+                try:
+                    memory_data = json.loads(memory_data_json)
+                    if not isinstance(memory_data, dict):
+                        return f"Failed: memory_data must be a JSON object, not {type(memory_data).__name__}"
+                    self.store.put(namespace, memory_key, memory_data)
+                    return f"Successfully saved memory with key '{memory_key}' for user"
+                except json.JSONDecodeError as e:
+                    return f"Failed to save memory: Invalid JSON format - {str(e)}"
+            
+            @tool
+            def delete_user_memory(memory_key: str, config: RunnableConfig) -> str:
+                """Delete a specific memory from the user's long-term memory.
+                
+                Use this when the user asks you to forget something or remove
+                a piece of information from their memory.
+                
+                Args:
+                    memory_key: The key of the memory to delete
+                    config: Runtime configuration containing user_id
+                """
+                user_id = config.get("configurable", {}).get("user_id")
+                if not user_id:
+                    return "Cannot delete memory - no user_id provided."
+                
+                namespace = ("user_memories", user_id.replace(".", "-"))
+                self.store.delete(namespace, memory_key)
+                return f"Successfully deleted memory with key '{memory_key}' for user"
+            
+            self._memory_tools = [get_user_memory, save_user_memory, delete_user_memory]
+            logger.info(f"✓ Created {len(self._memory_tools)} memory tools")
+        
+        return self._memory_tools
+    
+    def _get_or_create_thread_id(self, request: ResponsesAgentRequest) -> str:
+        """Get thread_id from request or create a new one.
+        
+        Priority:
+        1. Use thread_id from custom_inputs if present
+        2. Use conversation_id from chat context if available
+        3. Generate a new UUID
+        """
+        ci = dict(request.custom_inputs or {})
+        
+        if "thread_id" in ci:
+            return ci["thread_id"]
+        
+        # Use conversation_id from ChatContext as thread_id
+        if request.context and getattr(request.context, "conversation_id", None):
+            return request.context.conversation_id
+        
+        # Generate new thread_id
+        return str(uuid4())
+    
+    def _get_user_id(self, request: ResponsesAgentRequest) -> Optional[str]:
+        """Extract user_id from request context.
+        
+        Priority:
+        1. Use user_id from chat context (preferred for Model Serving)
+        2. Use user_id from custom_inputs
+        """
+        if request.context and getattr(request.context, "user_id", None):
+            return request.context.user_id
+        
+        if request.custom_inputs and "user_id" in request.custom_inputs:
+            return request.custom_inputs["user_id"]
+        
+        return None
     
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         """
@@ -2077,21 +2284,25 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
         request: ResponsesAgentRequest,
     ) -> Generator[ResponsesAgentStreamEvent, None, None]:
         """
-        Make a streaming prediction.
+        Make a streaming prediction with both short-term and long-term memory.
         
         Handles three scenarios:
         1. New query: Fresh start with new original_query
         2. Clarification response: User answering agent's clarification question
         3. Follow-up query: New query with access to previous conversation context
         
-        The thread-based memory system (MemorySaver) automatically preserves and restores
-        conversation context across all scenarios.
+        Memory Systems:
+        - Short-term (CheckpointSaver): Preserves conversation state across distributed instances
+        - Long-term (DatabricksStore): User preferences accessible via memory tools
         
         Args:
             request: The request containing:
                 - input: List of messages (user query is the last message)
+                - context.conversation_id: Used as thread_id (preferred)
+                - context.user_id: Used for long-term memory (preferred)
                 - custom_inputs: Dict with optional keys:
-                    - thread_id (str): Thread identifier for conversation continuity (default: "default")
+                    - thread_id (str): Thread identifier override
+                    - user_id (str): User identifier override
                     - is_clarification_response (bool): Set to True when user is answering clarification
                     - clarification_count (int): Preserved from previous state
                     - original_query (str): Preserved from previous state for clarification responses
@@ -2101,82 +2312,95 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
             ResponsesAgentStreamEvent for each step in the workflow
             
         Usage in Model Serving:
-            # New query
+            # New query with memory
             POST /invocations
             {
                 "messages": [{"role": "user", "content": "Show me patient data"}],
-                "custom_inputs": {"thread_id": "session_001"}
+                "context": {
+                    "conversation_id": "session_001",
+                    "user_id": "user@example.com"
+                }
             }
             
-            # Clarification response (after agent asked for clarification)
+            # Clarification response
             POST /invocations
             {
                 "messages": [{"role": "user", "content": "Patient count by age group"}],
                 "custom_inputs": {
                     "thread_id": "session_001",  # Must match previous call
                     "is_clarification_response": true,
-                    "original_query": "Show me patient data",  # From previous state
-                    "clarification_message": "...",  # From previous state
-                    "clarification_count": 1  # From previous state
+                    "original_query": "Show me patient data",
+                    "clarification_message": "...",
+                    "clarification_count": 1
                 }
             }
             
-            # Follow-up query
+            # Follow-up query (agent remembers context and user preferences)
             POST /invocations
             {
                 "messages": [{"role": "user", "content": "Now show by gender"}],
-                "custom_inputs": {"thread_id": "session_001"}  # Same thread_id
+                "context": {
+                    "conversation_id": "session_001",
+                    "user_id": "user@example.com"
+                }
             }
         """
+        # Get identifiers
+        thread_id = self._get_or_create_thread_id(request)
+        user_id = self._get_user_id(request)
+        
+        # Update custom_inputs with resolved identifiers
+        ci = dict(request.custom_inputs or {})
+        ci["thread_id"] = thread_id
+        if user_id:
+            ci["user_id"] = user_id
+        request.custom_inputs = ci
+        
+        logger.info(f"Processing request - thread_id: {thread_id}, user_id: {user_id}")
+        
         # Convert request input to chat completions format
         cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
         
         # Get the latest user message
         latest_query = cc_msgs[-1]["content"] if cc_msgs else ""
         
-        # Configure with thread ID for conversation continuity
-        # The MemorySaver checkpoint will restore previous state for this thread
-        thread_id = request.custom_inputs.get("thread_id", "default") if request.custom_inputs else "default"
-        config = {"configurable": {"thread_id": thread_id}}
+        # Configure runtime with thread_id and user_id
+        run_config = {"configurable": {"thread_id": thread_id}}
+        if user_id:
+            run_config["configurable"]["user_id"] = user_id
         
         # Check if this is a clarification response
-        # When True, the user is answering the agent's clarification question
-        is_clarification_response = request.custom_inputs.get("is_clarification_response", False) if request.custom_inputs else False
+        is_clarification_response = ci.get("is_clarification_response", False)
         
         # Initialize state based on scenario
         if is_clarification_response:
             # Scenario 2: Clarification Response
             # User is answering the agent's clarification question
-            # We need to preserve state from previous call and add user's response
+            # Preserve state from previous call and add user's response
             
-            # Get preserved state from custom_inputs (caller must pass these)
-            original_query = request.custom_inputs.get("original_query", latest_query)
-            clarification_message = request.custom_inputs.get("clarification_message", "")
-            clarification_count = request.custom_inputs.get("clarification_count", 1)
+            original_query = ci.get("original_query", latest_query)
+            clarification_message = ci.get("clarification_message", "")
+            clarification_count = ci.get("clarification_count", 1)
             
             initial_state = {
                 # Preserve from previous state
-                "original_query": original_query,  # Keep original unchanged
-                "clarification_message": clarification_message,  # Keep clarification question
-                "clarification_count": clarification_count,  # Keep count
+                "original_query": original_query,
+                "clarification_message": clarification_message,
+                "clarification_count": clarification_count,
                 
                 # Add user's clarification response
                 "user_clarification_response": latest_query,
-                "question_clear": False,  # Will be set to True by clarification_node
+                "question_clear": False,
                 
                 # Messages
                 "messages": [HumanMessage(content=f"Clarification response: {latest_query}")],
                 
-                # Route back to clarification node to process response
+                # Route back to clarification node
                 "next_agent": "clarification"
             }
-            
         else:
             # Scenario 1 & 3: New Query or Follow-Up Query
-            # For both scenarios, we start fresh but thread memory will restore context
-            # The key difference:
-            # - New query (Scenario 1): No previous context in thread memory
-            # - Follow-up query (Scenario 3): Thread memory restores previous conversation
+            # CheckpointSaver will restore context for follow-ups
             
             initial_state = {
                 "original_query": latest_query,
@@ -2197,40 +2421,56 @@ Guidelines:
                 "next_agent": "clarification"
             }
         
+        # Add user_id to state for long-term memory access
+        if user_id:
+            initial_state["user_id"] = user_id
+            initial_state["thread_id"] = thread_id
+        
         first_message = True
         seen_ids = set()
         
-        # Stream the workflow execution
-        # The MemorySaver checkpoint will:
-        # 1. Restore previous state from thread_id (if exists)
-        # 2. Merge with initial_state (initial_state takes precedence for specified fields)
-        # 3. Preserve conversation history across turns
-        for _, events in self.agent.stream(initial_state, config, stream_mode=["updates"]):
-            new_msgs = [
-                msg
-                for v in events.values()
-                for msg in v.get("messages", [])
-                if hasattr(msg, 'id') and msg.id not in seen_ids
-            ]
+        # Execute workflow with CheckpointSaver for distributed serving
+        # CRITICAL: CheckpointSaver as context manager ensures all instances share state
+        with CheckpointSaver(instance_name=self.lakebase_instance_name) as checkpointer:
+            # Compile graph with checkpointer at runtime
+            # This allows distributed Model Serving to access shared state
+            app = self.workflow.compile(checkpointer=checkpointer)
             
-            if first_message:
-                seen_ids.update(msg.id for msg in new_msgs[: len(cc_msgs)])
-                new_msgs = new_msgs[len(cc_msgs) :]
-                first_message = False
-            else:
-                seen_ids.update(msg.id for msg in new_msgs)
-                # Get node name
-                if events:
-                    node_name = tuple(events.keys())[0]
-                    yield ResponsesAgentStreamEvent(
-                        type="response.output_item.done",
-                        item=self.create_text_output_item(
-                            text=f"<name>{node_name}</name>", id=str(uuid4())
-                        ),
-                    )
+            logger.info(f"Executing workflow with checkpointer (thread: {thread_id})")
             
-            if len(new_msgs) > 0:
-                yield from output_to_responses_items_stream(new_msgs)
+            # Stream the workflow execution
+            # CheckpointSaver will:
+            # 1. Restore previous state from thread_id (if exists) from Lakebase
+            # 2. Merge with initial_state (initial_state takes precedence)
+            # 3. Preserve conversation history across distributed instances
+            for _, events in app.stream(initial_state, run_config, stream_mode=["updates"]):
+                new_msgs = [
+                    msg
+                    for v in events.values()
+                    for msg in v.get("messages", [])
+                    if hasattr(msg, 'id') and msg.id not in seen_ids
+                ]
+                
+                if first_message:
+                    seen_ids.update(msg.id for msg in new_msgs[: len(cc_msgs)])
+                    new_msgs = new_msgs[len(cc_msgs) :]
+                    first_message = False
+                else:
+                    seen_ids.update(msg.id for msg in new_msgs)
+                    # Get node name
+                    if events:
+                        node_name = tuple(events.keys())[0]
+                        yield ResponsesAgentStreamEvent(
+                            type="response.output_item.done",
+                            item=self.create_text_output_item(
+                                text=f"<name>{node_name}</name>", id=str(uuid4())
+                            ),
+                        )
+                
+                if len(new_msgs) > 0:
+                    yield from output_to_responses_items_stream(new_msgs)
+        
+        logger.info(f"Workflow execution completed (thread: {thread_id})")
 
 
 # Create the deployable agent
@@ -2248,11 +2488,218 @@ print("\nThis agent is now ready for:")
 print("  1. Local testing with AGENT.predict()")
 print("  2. Logging with mlflow.pyfunc.log_model()")
 print("  3. Deployment to Databricks Model Serving")
+print("\nMemory Features:")
+print("  ✓ Short-term memory: Multi-turn conversations (CheckpointSaver)")
+print("  ✓ Long-term memory: User preferences (DatabricksStore)")
+print("  ✓ Works in distributed Model Serving (shared state via Lakebase)")
 print("="*80)
 
 # Set the agent for MLflow tracking
 mlflow.langchain.autolog()
 mlflow.models.set_model(AGENT)
+
+# COMMAND ----------
+
+# DBTITLE 1,Test Agent with Short-term Memory (Multi-turn Conversation)
+"""
+Test short-term memory: Agent remembers context within a conversation thread.
+This works across distributed Model Serving instances via CheckpointSaver.
+"""
+
+# Example 1: Start a new conversation
+# thread_id = str(uuid4())
+# print(f"Starting conversation with thread_id: {thread_id}")
+# 
+# from mlflow.types.responses import ResponsesAgentRequest
+# 
+# # First message
+# result1 = AGENT.predict(ResponsesAgentRequest(
+#     input=[{"role": "user", "content": "Show me patient demographics"}],
+#     custom_inputs={"thread_id": thread_id}
+# ))
+# print("\n--- Response 1 ---")
+# print(result1.model_dump(exclude_none=True))
+# 
+# # Second message - agent should remember context
+# result2 = AGENT.predict(ResponsesAgentRequest(
+#     input=[{"role": "user", "content": "Filter by age > 50"}],
+#     custom_inputs={"thread_id": thread_id}  # Same thread_id
+# ))
+# print("\n--- Response 2 (with context) ---")
+# print(result2.model_dump(exclude_none=True))
+# 
+# # Third message without thread_id - fresh conversation
+# result3 = AGENT.predict(ResponsesAgentRequest(
+#     input=[{"role": "user", "content": "What was I asking about?"}]
+# ))
+# print("\n--- Response 3 (no context) ---")
+# print(result3.model_dump(exclude_none=True))
+
+# COMMAND ----------
+
+# DBTITLE 1,Test Agent with Long-term Memory (User Preferences)
+"""
+Test long-term memory: Agent can save and recall user preferences across sessions.
+Uses DatabricksStore with semantic search to find relevant memories.
+"""
+
+# Example 2: Using ChatContext for user_id (preferred for Model Serving)
+# from mlflow.types.responses import ResponsesAgentRequest, ChatContext
+# 
+# user_email = "test.user@databricks.com"
+# conversation_id = str(uuid4())
+# 
+# # Agent can save user preferences
+# result1 = AGENT.predict(ResponsesAgentRequest(
+#     input=[{"role": "user", "content": "I prefer viewing data as bar charts, and I usually work with patient demographics and clinical trials data"}],
+#     context=ChatContext(
+#         conversation_id=conversation_id,
+#         user_id=user_email
+#     )
+# ))
+# print("\n--- Saved User Preferences ---")
+# print(result1.model_dump(exclude_none=True))
+# 
+# # In a new session, agent can recall preferences
+# new_conversation_id = str(uuid4())
+# result2 = AGENT.predict(ResponsesAgentRequest(
+#     input=[{"role": "user", "content": "Show me the data I usually work with"}],
+#     context=ChatContext(
+#         conversation_id=new_conversation_id,  # Different conversation
+#         user_id=user_email  # Same user
+#     )
+# ))
+# print("\n--- Recalled User Preferences ---")
+# print(result2.model_dump(exclude_none=True))
+
+# COMMAND ----------
+
+# DBTITLE 1,Deploy Agent to Model Serving with Memory Support
+"""
+Register and deploy the agent with Lakebase resources for automatic authentication.
+This enables the agent to access Lakebase in Model Serving without manual credentials.
+"""
+
+# # Step 1: Log model with resources
+# from mlflow.models.resources import (
+#     DatabricksServingEndpoint,
+#     DatabricksLakebase,
+#     DatabricksFunction,
+#     DatabricksVectorSearchIndex
+# )
+# from pkg_resources import get_distribution
+# 
+# # Declare all resources the agent needs
+# resources = [
+#     # LLM endpoints
+#     DatabricksServingEndpoint(LLM_ENDPOINT_CLARIFICATION),
+#     DatabricksServingEndpoint(LLM_ENDPOINT_PLANNING),
+#     DatabricksServingEndpoint(LLM_ENDPOINT_SQL_SYNTHESIS),
+#     DatabricksServingEndpoint(LLM_ENDPOINT_SUMMARIZE),
+#     DatabricksServingEndpoint(EMBEDDING_ENDPOINT),
+#     
+#     # Lakebase for state management (CRITICAL!)
+#     DatabricksLakebase(database_instance_name=LAKEBASE_INSTANCE_NAME),
+#     
+#     # Vector Search Index
+#     DatabricksVectorSearchIndex(index_name=VECTOR_SEARCH_INDEX),
+#     
+#     # UC Functions
+#     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_summary"),
+#     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_table_overview"),
+#     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_column_detail"),
+#     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_details"),
+# ]
+# 
+# input_example = {
+#     "input": [{"role": "user", "content": "Show me patient data"}],
+#     "custom_inputs": {"thread_id": "example-123"},
+#     "context": {"conversation_id": "sess-001", "user_id": "user@example.com"}
+# }
+# 
+# with mlflow.start_run():
+#     logged_agent_info = mlflow.pyfunc.log_model(
+#         name="super_agent_hybrid_with_memory",
+#         python_model="Super_Agent_hybrid.py",
+#         input_example=input_example,
+#         resources=resources,
+#         pip_requirements=[
+#             f"databricks-langchain[memory]=={get_distribution('databricks-langchain').version}",
+#             f"databricks-agents=={get_distribution('databricks-agents').version}",
+#             f"databricks-vectorsearch=={get_distribution('databricks-vectorsearch').version}",
+#             f"mlflow[databricks]=={mlflow.__version__}",
+#         ]
+#     )
+#     print(f"✓ Model logged: {logged_agent_info.model_uri}")
+# 
+# # Step 2: Register to Unity Catalog
+# mlflow.set_registry_uri("databricks-uc")
+# UC_MODEL_NAME = f"{CATALOG}.{SCHEMA}.super_agent_hybrid"
+# 
+# uc_model_info = mlflow.register_model(
+#     model_uri=logged_agent_info.model_uri,
+#     name=UC_MODEL_NAME
+# )
+# print(f"✓ Model registered: {UC_MODEL_NAME} version {uc_model_info.version}")
+# 
+# # Step 3: Deploy to Model Serving
+# from databricks import agents
+# 
+# deployment_info = agents.deploy(
+#     UC_MODEL_NAME,
+#     uc_model_info.version,
+#     scale_to_zero=True,
+#     workload_size="Small"
+# )
+# print(f"✓ Deployed to Model Serving: {deployment_info.endpoint_name}")
+# print("\n" + "="*80)
+# print("DEPLOYMENT COMPLETE")
+# print("="*80)
+# print(f"Model: {UC_MODEL_NAME} v{uc_model_info.version}")
+# print(f"Endpoint: {deployment_info.endpoint_name}")
+# print("\nMemory Features Enabled:")
+# print("  ✓ Short-term: Multi-turn conversations via CheckpointSaver")
+# print("  ✓ Long-term: User preferences via DatabricksStore")
+# print("  ✓ Distributed serving: State shared across all instances")
+# print("="*80)
+
+# COMMAND ----------
+
+# DBTITLE 1,Query Lakebase State (Monitoring)
+"""
+Query Lakebase to monitor checkpoint and memory usage.
+"""
+
+# # View recent checkpoints
+# query_checkpoints = f"""
+# SELECT 
+#     thread_id,
+#     checkpoint_id,
+#     (checkpoint::json->>'ts')::timestamptz AS timestamp,
+#     parent_checkpoint_id
+# FROM checkpoints
+# ORDER BY timestamp DESC
+# LIMIT 20;
+# """
+# 
+# # View user memories
+# query_memories = f"""
+# SELECT 
+#     namespace,
+#     key,
+#     value,
+#     updated_at
+# FROM public.store
+# WHERE namespace LIKE '%user_memories%'
+# ORDER BY updated_at DESC
+# LIMIT 50;
+# """
+# 
+# print("Use these queries in your Lakebase SQL editor to monitor state:")
+# print("\n1. Recent Checkpoints:")
+# print(query_checkpoints)
+# print("\n2. User Memories:")
+# print(query_memories)
 
 # COMMAND ----------
 

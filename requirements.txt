@@ -7,10 +7,10 @@ langchain-core>=0.1.0
 langchain>=0.1.0
 
 # Databricks Integration
-mlflow[databricks]>=2.9.0
-databricks-langchain>=0.1.0
+mlflow[databricks]>=3.6.0
+databricks-langchain[memory]>=0.12.1  # Includes CheckpointSaver and DatabricksStore
 databricks-agents>=0.1.0
-databricks-vectorsearch>=0.22
+databricks-vectorsearch>=0.63
 databricks-sdk>=0.20.0
 databricks-sql-connector>=3.0.0
 

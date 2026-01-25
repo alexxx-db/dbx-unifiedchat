@@ -137,6 +137,30 @@ class ModelServingConfig:
 
 
 @dataclass
+class LakebaseConfig:
+    """Lakebase database configuration for state management.
+    
+    Lakebase is a fully-managed PostgreSQL OLTP database used for:
+    - Short-term memory: Conversation checkpoints (CheckpointSaver)
+    - Long-term memory: User preferences with semantic search (DatabricksStore)
+    
+    Required for distributed Model Serving to share state across instances.
+    """
+    instance_name: str
+    embedding_endpoint: str
+    embedding_dims: int
+    
+    @classmethod
+    def from_env(cls) -> 'LakebaseConfig':
+        """Load configuration from environment variables."""
+        return cls(
+            instance_name=os.getenv("LAKEBASE_INSTANCE_NAME", "agent-state-db"),
+            embedding_endpoint=os.getenv("LAKEBASE_EMBEDDING_ENDPOINT", "databricks-gte-large-en"),
+            embedding_dims=int(os.getenv("LAKEBASE_EMBEDDING_DIMS", "1024")),
+        )
+
+
+@dataclass
 class AgentConfig:
     """Complete agent system configuration."""
     databricks: DatabricksConfig
@@ -145,6 +169,7 @@ class AgentConfig:
     vector_search: VectorSearchConfig
     table_metadata: TableMetadataConfig
     model_serving: ModelServingConfig
+    lakebase: LakebaseConfig
     
     @classmethod
     def from_env(cls) -> 'AgentConfig':
@@ -155,6 +180,7 @@ class AgentConfig:
         vector_search = VectorSearchConfig.from_env(unity_catalog)
         table_metadata = TableMetadataConfig.from_env(unity_catalog)
         model_serving = ModelServingConfig.from_env()
+        lakebase = LakebaseConfig.from_env()
         
         return cls(
             databricks=databricks,
@@ -163,6 +189,7 @@ class AgentConfig:
             vector_search=vector_search,
             table_metadata=table_metadata,
             model_serving=model_serving,
+            lakebase=lakebase,
         )
     
     def validate(self) -> None:
@@ -185,6 +212,13 @@ class AgentConfig:
         # Check vector search
         if not self.vector_search.endpoint_name:
             raise ValueError("VS_ENDPOINT_NAME cannot be empty")
+        
+        # Check Lakebase (critical for distributed Model Serving)
+        if not self.lakebase.instance_name:
+            raise ValueError("LAKEBASE_INSTANCE_NAME cannot be empty")
+        
+        if self.lakebase.embedding_dims <= 0:
+            raise ValueError("LAKEBASE_EMBEDDING_DIMS must be positive")
         
         print("✓ Configuration validated successfully")
     
@@ -220,6 +254,11 @@ class AgentConfig:
         print(f"  Endpoint Name: {self.model_serving.endpoint_name}")
         print(f"  Workload Size: {self.model_serving.workload_size}")
         print(f"  Scale to Zero: {self.model_serving.scale_to_zero_enabled}")
+        print(f"\nLakebase (State Management):")
+        print(f"  Instance Name: {self.lakebase.instance_name}")
+        print(f"  Embedding Endpoint: {self.lakebase.embedding_endpoint}")
+        print(f"  Embedding Dimensions: {self.lakebase.embedding_dims}")
+        print(f"  Purpose: Short-term (checkpoints) + Long-term (user memories)")
         print("="*80)
 
 
