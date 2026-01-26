@@ -1524,7 +1524,7 @@ print("="*80)
 # MAGIC         return self.generate_summary(state)
 # MAGIC
 # MAGIC print("✓ ResultSummarizeAgent class defined")
-# MAGIC def clarification_node(state: AgentState) -> AgentState:
+# MAGIC def clarification_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Clarification node wrapping ClarificationAgent class.
 # MAGIC     Combines OOP modularity with explicit state management.
@@ -1537,6 +1537,8 @@ print("="*80)
 # MAGIC     - Stores clarification_message separately
 # MAGIC     - Stores user_clarification_response separately
 # MAGIC     - Creates combined_query_context for planning agent
+# MAGIC     
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🔍 CLARIFICATION AGENT")
@@ -1564,20 +1566,20 @@ print("="*80)
 # MAGIC
 # MAGIC **Context**: The user was asked for clarification and provided additional information. Use all three pieces of information together to understand the complete intent."""
 # MAGIC         
-# MAGIC         state["combined_query_context"] = combined_context
-# MAGIC         state["question_clear"] = True
-# MAGIC         state["next_agent"] = "planning"
-# MAGIC         
 # MAGIC         print(f"   Original Query (preserved): {original}")
 # MAGIC         print(f"   Clarification Message: {clarif_msg}")
 # MAGIC         print(f"   User Response: {user_response}")
 # MAGIC         print(f"   ✓ Combined context created for planning agent")
 # MAGIC         
-# MAGIC         state["messages"].append(
-# MAGIC             SystemMessage(content=f"User clarification incorporated: {user_response}\nCombined context created with original query, clarification question, and user answer.")
-# MAGIC         )
-# MAGIC         
-# MAGIC         return state
+# MAGIC         # Return only updates (no in-place modifications)
+# MAGIC         return {
+# MAGIC             "combined_query_context": combined_context,
+# MAGIC             "question_clear": True,
+# MAGIC             "next_agent": "planning",
+# MAGIC             "messages": [
+# MAGIC                 SystemMessage(content=f"User clarification incorporated: {user_response}\nCombined context created with original query, clarification question, and user answer.")
+# MAGIC             ]
+# MAGIC         }
 # MAGIC     
 # MAGIC     query = state["original_query"]
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_CLARIFICATION)
@@ -1587,60 +1589,72 @@ print("="*80)
 # MAGIC     clarification_agent = ClarificationAgent.from_table(llm, TABLE_NAME)
 # MAGIC     clarity_result = clarification_agent(query, clarification_count)
 # MAGIC     
-# MAGIC     # Update explicit state
-# MAGIC     state["question_clear"] = clarity_result.get("question_clear", True)
-# MAGIC     state["clarification_needed"] = clarity_result.get("clarification_needed")
-# MAGIC     state["clarification_options"] = clarity_result.get("clarification_options")
+# MAGIC     # Prepare state updates (don't modify state in-place)
+# MAGIC     question_clear = clarity_result.get("question_clear", True)
+# MAGIC     clarification_needed = clarity_result.get("clarification_needed")
+# MAGIC     clarification_options = clarity_result.get("clarification_options")
 # MAGIC     
-# MAGIC     if state["question_clear"]:
+# MAGIC     # Build updates dictionary
+# MAGIC     updates = {
+# MAGIC         "question_clear": question_clear,
+# MAGIC         "clarification_needed": clarification_needed,
+# MAGIC         "clarification_options": clarification_options,
+# MAGIC         "messages": []  # Will append messages to this list
+# MAGIC     }
+# MAGIC     
+# MAGIC     if question_clear:
 # MAGIC         print("✓ Query is clear - proceeding to planning")
-# MAGIC         state["next_agent"] = "planning"
+# MAGIC         updates["next_agent"] = "planning"
 # MAGIC         # No clarification needed, so combined context is just the original query
-# MAGIC         state["combined_query_context"] = state["original_query"]
+# MAGIC         updates["combined_query_context"] = state["original_query"]
 # MAGIC     else:
 # MAGIC         print("⚠ Query needs clarification (attempt 1 of 1)")
-# MAGIC         print(f"   Reason: {state['clarification_needed']}")
-# MAGIC         if state["clarification_options"]:
+# MAGIC         print(f"   Reason: {clarification_needed}")
+# MAGIC         if clarification_options:
 # MAGIC             print("   Options:")
-# MAGIC             for i, opt in enumerate(state["clarification_options"], 1):
+# MAGIC             for i, opt in enumerate(clarification_options, 1):
 # MAGIC                 print(f"     {i}. {opt}")
 # MAGIC         
 # MAGIC         # Increment clarification count
-# MAGIC         state["clarification_count"] = clarification_count + 1
+# MAGIC         updates["clarification_count"] = clarification_count + 1
 # MAGIC         
 # MAGIC         # Route to END to show clarification request (routing controlled by route_after_clarification)
 # MAGIC         # The actual routing is handled by the conditional edge which checks question_clear flag
 # MAGIC         
 # MAGIC         # Build and store clarification message
 # MAGIC         clarification_message = (
-# MAGIC             f"I need clarification: {state['clarification_needed']}\n\n"
+# MAGIC             f"I need clarification: {clarification_needed}\n\n"
 # MAGIC             f"Please choose one of the following options or provide your own clarification:\n"
 # MAGIC         )
-# MAGIC         if state["clarification_options"]:
-# MAGIC             for i, opt in enumerate(state["clarification_options"], 1):
+# MAGIC         if clarification_options:
+# MAGIC             for i, opt in enumerate(clarification_options, 1):
 # MAGIC                 clarification_message += f"{i}. {opt}\n"
 # MAGIC         
-# MAGIC         # Store the clarification message in state
-# MAGIC         state["clarification_message"] = clarification_message
+# MAGIC         # Store the clarification message
+# MAGIC         updates["clarification_message"] = clarification_message
 # MAGIC         
-# MAGIC         state["messages"].append(
+# MAGIC         # Add AI message
+# MAGIC         updates["messages"].append(
 # MAGIC             AIMessage(content=clarification_message)
 # MAGIC         )
 # MAGIC     
-# MAGIC     state["messages"].append(
+# MAGIC     # Add system message
+# MAGIC     updates["messages"].append(
 # MAGIC         SystemMessage(content=f"Clarification result: {json.dumps(clarity_result, indent=2)}")
 # MAGIC     )
 # MAGIC     
-# MAGIC     return state
+# MAGIC     return updates
 # MAGIC
 # MAGIC
-# MAGIC def planning_node(state: AgentState) -> AgentState:
+# MAGIC def planning_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Planning node wrapping PlanningAgent class.
 # MAGIC     Combines OOP modularity with explicit state management.
 # MAGIC     
 # MAGIC     Uses combined_query_context if available (from clarification flow),
 # MAGIC     otherwise uses original_query.
+# MAGIC     
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("📋 PLANNING AGENT")
@@ -1666,40 +1680,42 @@ print("="*80)
 # MAGIC     # Create execution plan
 # MAGIC     plan = planning_agent.create_execution_plan(query, relevant_spaces_full)
 # MAGIC     
-# MAGIC     # Update explicit state
-# MAGIC     state["plan"] = plan
-# MAGIC     state["sub_questions"] = plan.get("sub_questions", [])
-# MAGIC     state["requires_multiple_spaces"] = plan.get("requires_multiple_spaces", False)
-# MAGIC     state["relevant_space_ids"] = plan.get("relevant_space_ids", [])
-# MAGIC     state["requires_join"] = plan.get("requires_join", False)
-# MAGIC     state["join_strategy"] = plan.get("join_strategy")
-# MAGIC     state["execution_plan"] = plan.get("execution_plan", "")
-# MAGIC     state["genie_route_plan"] = plan.get("genie_route_plan")
-# MAGIC     state["vector_search_relevant_spaces_info"] = plan.get("vector_search_relevant_spaces_info", [])
-# MAGIC     
-# MAGIC     # Store full relevant_spaces for Genie agents (includes searchable_content)
-# MAGIC     # This avoids re-querying and reuses Vector Search results
-# MAGIC     state["relevant_spaces"] = relevant_spaces_full
+# MAGIC     # Extract plan components
+# MAGIC     join_strategy = plan.get("join_strategy")
 # MAGIC     
 # MAGIC     # Determine next agent
-# MAGIC     if state["join_strategy"] == "genie_route":
+# MAGIC     if join_strategy == "genie_route":
 # MAGIC         print("✓ Plan complete - using GENIE ROUTE (Genie agents)")
-# MAGIC         state["next_agent"] = "sql_synthesis_genie"
+# MAGIC         next_agent = "sql_synthesis_genie"
 # MAGIC     else:
 # MAGIC         print("✓ Plan complete - using TABLE ROUTE (direct SQL synthesis)")
-# MAGIC         state["next_agent"] = "sql_synthesis_table"
+# MAGIC         next_agent = "sql_synthesis_table"
 # MAGIC     
-# MAGIC     state["messages"].append(
-# MAGIC         SystemMessage(content=f"Execution plan: {json.dumps(plan, indent=2)}")
-# MAGIC     )
-# MAGIC     
-# MAGIC     return state
+# MAGIC     # Return only updates (no in-place modifications)
+# MAGIC     return {
+# MAGIC         "plan": plan,
+# MAGIC         "sub_questions": plan.get("sub_questions", []),
+# MAGIC         "requires_multiple_spaces": plan.get("requires_multiple_spaces", False),
+# MAGIC         "relevant_space_ids": plan.get("relevant_space_ids", []),
+# MAGIC         "requires_join": plan.get("requires_join", False),
+# MAGIC         "join_strategy": join_strategy,
+# MAGIC         "execution_plan": plan.get("execution_plan", ""),
+# MAGIC         "genie_route_plan": plan.get("genie_route_plan"),
+# MAGIC         "vector_search_relevant_spaces_info": plan.get("vector_search_relevant_spaces_info", []),
+# MAGIC         "relevant_spaces": relevant_spaces_full,
+# MAGIC         "next_agent": next_agent,
+# MAGIC         "messages": [
+# MAGIC             SystemMessage(content=f"Execution plan: {json.dumps(plan, indent=2)}")
+# MAGIC         ]
+# MAGIC     }
 # MAGIC
 # MAGIC
-# MAGIC def sql_synthesis_table_node(state: AgentState) -> AgentState:
+# MAGIC def sql_synthesis_table_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Fast SQL synthesis node wrapping SQLSynthesisTableAgent class.
 # MAGIC     Combines OOP modularity with explicit state management.
+# MAGIC     
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("⚡ SQL SYNTHESIS AGENT - TABLE ROUTE")
@@ -1710,15 +1726,6 @@ print("="*80)
 # MAGIC     # Use OOP agent
 # MAGIC     sql_agent = SQLSynthesisTableAgent(llm, CATALOG, SCHEMA)
 # MAGIC     
-# MAGIC     # # Prepare plan for agent
-# MAGIC     # plan = {
-# MAGIC     #     "original_query": state["original_query"],
-# MAGIC     #     "vector_search_relevant_spaces_info": state.get("vector_search_relevant_spaces_info", []),
-# MAGIC     #     "relevant_space_ids": state.get("relevant_space_ids", []),
-# MAGIC     #     "execution_plan": state.get("execution_plan", ""),
-# MAGIC     #     "requires_join": state.get("requires_join", False),
-# MAGIC     #     "sub_questions": state.get("sub_questions", [])
-# MAGIC     # }
 # MAGIC     plan = state.get("plan", {})
 # MAGIC     print("plan loaded from state is:", plan)
 # MAGIC     print(json.dumps(plan, indent=2))
@@ -1732,50 +1739,57 @@ print("="*80)
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         state["sql_synthesis_explanation"] = explanation
-# MAGIC         
 # MAGIC         if has_sql and sql_query and explanation:
-# MAGIC             state["sql_query"] = sql_query
-# MAGIC             state["has_sql"] = has_sql
-# MAGIC             state["next_agent"] = "sql_execution"
 # MAGIC             print("✓ SQL query synthesized successfully")
 # MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
 # MAGIC             
-# MAGIC             # Add message with SQL synthesis explanation
-# MAGIC             state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis (Table Route):\n{explanation}")
-# MAGIC             )
+# MAGIC             # Return updates for successful synthesis
+# MAGIC             return {
+# MAGIC                 "sql_query": sql_query,
+# MAGIC                 "has_sql": has_sql,
+# MAGIC                 "sql_synthesis_explanation": explanation,
+# MAGIC                 "next_agent": "sql_execution",
+# MAGIC                 "messages": [
+# MAGIC                     AIMessage(content=f"SQL Synthesis (Table Route):\n{explanation}")
+# MAGIC                 ]
+# MAGIC             }
 # MAGIC         else:
 # MAGIC             print("⚠ No SQL generated - agent explanation:")
 # MAGIC             print(f"  {explanation}")
-# MAGIC             state["synthesis_error"] = "Cannot generate SQL query"
-# MAGIC             state["next_agent"] = "summarize"
 # MAGIC             
-# MAGIC             # Add message with explanation even if no SQL
-# MAGIC             state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{explanation}")
-# MAGIC             )
+# MAGIC             # Return updates for failed synthesis
+# MAGIC             return {
+# MAGIC                 "synthesis_error": "Cannot generate SQL query",
+# MAGIC                 "sql_synthesis_explanation": explanation,
+# MAGIC                 "next_agent": "summarize",
+# MAGIC                 "messages": [
+# MAGIC                     AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{explanation}")
+# MAGIC                 ]
+# MAGIC             }
 # MAGIC         
 # MAGIC     except Exception as e:
 # MAGIC         print(f"❌ SQL synthesis failed: {e}")
-# MAGIC         state["synthesis_error"] = str(e)
-# MAGIC         state["sql_synthesis_explanation"] = str(e)
-# MAGIC         # Route to summarize via conditional edge (route_after_synthesis)
-# MAGIC         state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{state['sql_synthesis_explanation']}")
-# MAGIC             )
-# MAGIC     
-# MAGIC     return state
+# MAGIC         error_msg = str(e)
+# MAGIC         # Return updates for exception
+# MAGIC         return {
+# MAGIC             "synthesis_error": error_msg,
+# MAGIC             "sql_synthesis_explanation": error_msg,
+# MAGIC             "messages": [
+# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Table Route):\n{error_msg}")
+# MAGIC             ]
+# MAGIC         }
 # MAGIC
 # MAGIC
-# MAGIC def sql_synthesis_genie_node(state: AgentState) -> AgentState:
+# MAGIC def sql_synthesis_genie_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Slow SQL synthesis node wrapping SQLSynthesisGenieAgent class.
 # MAGIC     Combines OOP modularity with explicit state management.
 # MAGIC     
 # MAGIC     Uses relevant_spaces from PlanningAgent (no need to re-query all spaces).
+# MAGIC     
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🐢 SQL SYNTHESIS AGENT - GENIE ROUTE")
@@ -1788,9 +1802,10 @@ print("="*80)
 # MAGIC     
 # MAGIC     if not relevant_spaces:
 # MAGIC         print("❌ No relevant_spaces found in state")
-# MAGIC         state["synthesis_error"] = "No relevant spaces available for genie route"
-# MAGIC         # Route to summarize via conditional edge (route_after_synthesis)
-# MAGIC         return state
+# MAGIC         # Return error update
+# MAGIC         return {
+# MAGIC             "synthesis_error": "No relevant spaces available for genie route"
+# MAGIC         }
 # MAGIC     
 # MAGIC     # Use OOP agent - only creates Genie agents for relevant spaces
 # MAGIC     sql_agent = SQLSynthesisGenieAgent(llm, relevant_spaces)
@@ -1800,9 +1815,10 @@ print("="*80)
 # MAGIC     
 # MAGIC     if not genie_route_plan:
 # MAGIC         print("❌ No genie_route_plan found in plan")
-# MAGIC         state["synthesis_error"] = "No routing plan available for genie route"
-# MAGIC         # Route to summarize via conditional edge (route_after_synthesis)
-# MAGIC         return state
+# MAGIC         # Return error update
+# MAGIC         return {
+# MAGIC             "synthesis_error": "No routing plan available for genie route"
+# MAGIC         }
 # MAGIC     
 # MAGIC     try:
 # MAGIC         print(f"🤖 Querying {len(genie_route_plan)} Genie agents...")
@@ -1813,49 +1829,56 @@ print("="*80)
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         state["sql_synthesis_explanation"] = explanation
-# MAGIC         
 # MAGIC         # Update explicit state
 # MAGIC         if has_sql and sql_query and explanation:
-# MAGIC             state["sql_query"] = sql_query
-# MAGIC             state["next_agent"] = "sql_execution"
-# MAGIC             state["has_sql"] = has_sql
 # MAGIC             print("✓ SQL fragments combined successfully")
 # MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
 # MAGIC             
-# MAGIC             # Add message with SQL synthesis explanation
-# MAGIC             state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis (Genie Route):\n{explanation}")
-# MAGIC             )
+# MAGIC             # Return updates for successful synthesis
+# MAGIC             return {
+# MAGIC                 "sql_query": sql_query,
+# MAGIC                 "has_sql": has_sql,
+# MAGIC                 "sql_synthesis_explanation": explanation,
+# MAGIC                 "next_agent": "sql_execution",
+# MAGIC                 "messages": [
+# MAGIC                     AIMessage(content=f"SQL Synthesis (Genie Route):\n{explanation}")
+# MAGIC                 ]
+# MAGIC             }
 # MAGIC         else:
 # MAGIC             print("⚠ No SQL generated - agent explanation:")
 # MAGIC             print(f"  {explanation}")
-# MAGIC             state["synthesis_error"] = "Cannot generate SQL query from Genie agent fragments"
-# MAGIC             state["next_agent"] = "summarize"
 # MAGIC             
-# MAGIC             # Add message with explanation even if no SQL
-# MAGIC             state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{explanation}")
-# MAGIC             )
+# MAGIC             # Return updates for failed synthesis
+# MAGIC             return {
+# MAGIC                 "synthesis_error": "Cannot generate SQL query from Genie agent fragments",
+# MAGIC                 "sql_synthesis_explanation": explanation,
+# MAGIC                 "next_agent": "summarize",
+# MAGIC                 "messages": [
+# MAGIC                     AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{explanation}")
+# MAGIC                 ]
+# MAGIC             }
 # MAGIC         
 # MAGIC     except Exception as e:
 # MAGIC         print(f"❌ SQL synthesis failed: {e}")
-# MAGIC         state["synthesis_error"] = str(e)
-# MAGIC         state["sql_synthesis_explanation"] = str(e)
-# MAGIC         # Route to summarize via conditional edge (route_after_synthesis)
-# MAGIC         state["messages"].append(
-# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{state['sql_synthesis_explanation']}")
-# MAGIC             )
-# MAGIC     
-# MAGIC     return state
+# MAGIC         error_msg = str(e)
+# MAGIC         # Return updates for exception
+# MAGIC         return {
+# MAGIC             "synthesis_error": error_msg,
+# MAGIC             "sql_synthesis_explanation": error_msg,
+# MAGIC             "messages": [
+# MAGIC                 AIMessage(content=f"SQL Synthesis Failed (Genie Route):\n{error_msg}")
+# MAGIC             ]
+# MAGIC         }
 # MAGIC
 # MAGIC
-# MAGIC def sql_execution_node(state: AgentState) -> AgentState:
+# MAGIC def sql_execution_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     SQL execution node wrapping SQLExecutionAgent class.
 # MAGIC     Combines OOP modularity with explicit state management.
+# MAGIC     
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🚀 SQL EXECUTION AGENT")
@@ -1865,51 +1888,49 @@ print("="*80)
 # MAGIC     
 # MAGIC     if not sql_query:
 # MAGIC         print("❌ No SQL query to execute")
-# MAGIC         state["execution_error"] = "No SQL query provided"
-# MAGIC         # Route to summarize via fixed edge (sql_execution → summarize)
-# MAGIC         return state
+# MAGIC         # Return error update
+# MAGIC         return {
+# MAGIC             "execution_error": "No SQL query provided"
+# MAGIC         }
 # MAGIC     
 # MAGIC     # Use OOP agent
 # MAGIC     execution_agent = SQLExecutionAgent()
 # MAGIC     result = execution_agent(sql_query)
+# MAGIC     
+# MAGIC     # Prepare updates based on result
+# MAGIC     updates = {
+# MAGIC         "execution_result": result,
+# MAGIC         "next_agent": "summarize",
+# MAGIC         "messages": []
+# MAGIC     }
 # MAGIC     
 # MAGIC     if result["success"]:
 # MAGIC         print(f"✓ Query executed successfully!")
 # MAGIC         print(f"📊 Rows returned: {result['row_count']}")
 # MAGIC         print(f"📋 Columns: {', '.join(result['columns'])}")
 # MAGIC         
-# MAGIC         state["messages"].append(
+# MAGIC         updates["messages"].append(
 # MAGIC             SystemMessage(content=f"Execution successful: {result['row_count']} rows returned")
 # MAGIC         )
 # MAGIC     else:
 # MAGIC         print(f"❌ SQL execution failed: {result.get('error', 'Unknown error')}")
-# MAGIC         state["execution_error"] = result.get("error")
+# MAGIC         updates["execution_error"] = result.get("error")
 # MAGIC         
-# MAGIC         state["messages"].append(
+# MAGIC         updates["messages"].append(
 # MAGIC             SystemMessage(content=f"Execution failed: {result.get('error')}")
 # MAGIC         )
 # MAGIC     
-# MAGIC     state["execution_result"] = result
-# MAGIC     state["next_agent"] = "summarize"
-# MAGIC     
-# MAGIC     return state
+# MAGIC     return updates
 # MAGIC
 # MAGIC
-# MAGIC def summarize_node(state: AgentState) -> AgentState:
+# MAGIC def summarize_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Result summarize node wrapping ResultSummarizeAgent class.
 # MAGIC     
 # MAGIC     This is the final node that all workflow paths go through.
 # MAGIC     Generates a natural language summary AND preserves all workflow data.
 # MAGIC     
-# MAGIC     Returns state with ALL fields preserved including:
-# MAGIC     - sql_query: Generated SQL query
-# MAGIC     - execution_result: Query execution results
-# MAGIC     - sql_synthesis_explanation: SQL generation explanation
-# MAGIC     - synthesis_error: SQL generation errors (if any)
-# MAGIC     - execution_error: Query execution errors (if any)
-# MAGIC     - execution_plan: Planning agent's execution plan
-# MAGIC     - final_summary: Natural language summary (NEW)
+# MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("📝 RESULT SUMMARIZE AGENT")
@@ -1924,9 +1945,6 @@ print("="*80)
 # MAGIC     
 # MAGIC     print(f"\n✅ Summary Generated:")
 # MAGIC     print(f"{summary}")
-# MAGIC     
-# MAGIC     # Store summary in state (all other fields are preserved automatically)
-# MAGIC     state["final_summary"] = summary
 # MAGIC     
 # MAGIC     # Display what's being returned
 # MAGIC     print(f"\n📦 State Fields Being Returned:")
@@ -2028,16 +2046,16 @@ print("="*80)
 # MAGIC     # Combine all parts into final comprehensive message
 # MAGIC     comprehensive_message = "\n".join(final_message_parts)
 # MAGIC     
-# MAGIC     # Add comprehensive message to state messages
-# MAGIC     state["messages"].append(
-# MAGIC         AIMessage(content=comprehensive_message)
-# MAGIC     )
-# MAGIC     
 # MAGIC     print(f"\n✅ Comprehensive final message created ({len(comprehensive_message)} chars)")
 # MAGIC     
 # MAGIC     # Route to END via fixed edge (summarize → END)
-# MAGIC     # Return complete state with ALL fields preserved
-# MAGIC     return state
+# MAGIC     # Return only updates (final_summary and the comprehensive message)
+# MAGIC     return {
+# MAGIC         "final_summary": summary,
+# MAGIC         "messages": [
+# MAGIC             AIMessage(content=comprehensive_message)
+# MAGIC         ]
+# MAGIC     }
 # MAGIC
 # MAGIC print("✓ All node wrappers defined (including summarize)")
 # MAGIC def create_super_agent_hybrid():
