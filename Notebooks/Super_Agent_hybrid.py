@@ -1610,6 +1610,61 @@ print("="*80)
 # MAGIC
 # MAGIC print("✓ ResultSummarizeAgent class defined")
 # MAGIC
+# MAGIC def find_most_recent_clarification_context(messages: List) -> tuple[str | None, str | None]:
+# MAGIC     """
+# MAGIC     Find the most recent clarification context from message history.
+# MAGIC     
+# MAGIC     This helper function extracts the pattern used to find:
+# MAGIC     1. The HumanMessage query that triggered the most recent clarification
+# MAGIC     2. The AI clarification message itself
+# MAGIC     
+# MAGIC     Pattern: Find the last AI clarification message, then find the HumanMessage
+# MAGIC     that came RIGHT BEFORE it. This ensures we get the correct question for
+# MAGIC     the current clarification flow, not an old one from earlier in the thread.
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         messages: List of message objects from state
+# MAGIC     
+# MAGIC     Returns:
+# MAGIC         Tuple of (human_query_content, ai_clarification_content)
+# MAGIC         Returns (None, None) if no clarification context found
+# MAGIC     """
+# MAGIC     from langchain_core.messages import AIMessage, HumanMessage
+# MAGIC     
+# MAGIC     # Find the last AI clarification message (most recent)
+# MAGIC     last_ai_clarification_msg = None
+# MAGIC     for msg in reversed(messages):
+# MAGIC         if isinstance(msg, AIMessage) and (
+# MAGIC             "clarification" in msg.content.lower() or 
+# MAGIC             "I need clarification" in msg.content
+# MAGIC         ):
+# MAGIC             last_ai_clarification_msg = msg
+# MAGIC             break
+# MAGIC     
+# MAGIC     if not last_ai_clarification_msg:
+# MAGIC         return (None, None)
+# MAGIC     
+# MAGIC     # Find the index of the last AI clarification message
+# MAGIC     last_ai_idx = None
+# MAGIC     for i in range(len(messages) - 1, -1, -1):
+# MAGIC         if messages[i] == last_ai_clarification_msg:
+# MAGIC             last_ai_idx = i
+# MAGIC             break
+# MAGIC     
+# MAGIC     if last_ai_idx is None:
+# MAGIC         return (None, None)
+# MAGIC     
+# MAGIC     # Find the last HumanMessage BEFORE that AI message
+# MAGIC     human_query_content = None
+# MAGIC     for i in range(last_ai_idx - 1, -1, -1):
+# MAGIC         if isinstance(messages[i], HumanMessage):
+# MAGIC             human_query_content = messages[i].content
+# MAGIC             break
+# MAGIC     
+# MAGIC     return (human_query_content, last_ai_clarification_msg.content)
+# MAGIC
+# MAGIC print("✓ Helper function for clarification context extraction defined")
+# MAGIC
 # MAGIC def is_new_question(current_query: str, messages: List, llm: Runnable) -> bool:
 # MAGIC     """
 # MAGIC     Detect if current query is a new question vs follow-up/refinement.
@@ -1623,20 +1678,8 @@ print("="*80)
 # MAGIC     Returns:
 # MAGIC         True if new question (reset clarification), False if follow-up (keep count)
 # MAGIC     """
-# MAGIC     # Find the last query that received clarification
-# MAGIC     last_clarified_query = None
-# MAGIC     for i, msg in enumerate(messages):
-# MAGIC         if isinstance(msg, HumanMessage):
-# MAGIC             # Check if there's a clarification request after this human message
-# MAGIC             for subsequent_msg in messages[i+1:]:
-# MAGIC                 if isinstance(subsequent_msg, AIMessage) and (
-# MAGIC                     "clarification" in subsequent_msg.content.lower() or 
-# MAGIC                     "I need clarification" in subsequent_msg.content
-# MAGIC                 ):
-# MAGIC                     last_clarified_query = msg.content
-# MAGIC                     break
-# MAGIC             if last_clarified_query:
-# MAGIC                 break
+# MAGIC     # Find the MOST RECENT query that received clarification using unified helper
+# MAGIC     last_clarified_query, _ = find_most_recent_clarification_context(messages)
 # MAGIC     
 # MAGIC     if not last_clarified_query:
 # MAGIC         return True  # No previous clarification found, treat as new question
@@ -1645,6 +1688,7 @@ print("="*80)
 # MAGIC     prompt = f"""Compare these two user queries and determine if they represent different questions:
 # MAGIC
 # MAGIC Previous Query: {last_clarified_query}
+# MAGIC
 # MAGIC Current Query: {current_query}
 # MAGIC
 # MAGIC Is the current query:
@@ -1718,44 +1762,17 @@ print("="*80)
 # MAGIC             writer({"type": "intent_detection", "result": "follow_up", "reasoning": f"Query is a follow-up or refinement (clarification_count={clarification_count})"})
 # MAGIC     
 # MAGIC     # AUTO-DETECT: Check if this is a user response to a previous clarification request
-# MAGIC     # Look for an AI message that asked for clarification in the message history
+# MAGIC     # Use unified helper function to find most recent clarification context
 # MAGIC     if len(messages) >= 2:
 # MAGIC         # Get the latest user message
 # MAGIC         latest_user_msg = messages[-1].content if messages else ""
 # MAGIC         
-# MAGIC         # Look backwards for the last AI message
-# MAGIC         last_ai_msg = None
-# MAGIC         for msg in reversed(messages[:-1]):
-# MAGIC             if isinstance(msg, AIMessage):
-# MAGIC                 last_ai_msg = msg
-# MAGIC                 break
+# MAGIC         # Use unified helper to find the most recent clarification context
+# MAGIC         original_query, clarification_question = find_most_recent_clarification_context(messages)
 # MAGIC         
-# MAGIC         # Check if the last AI message was asking for clarification
-# MAGIC         if last_ai_msg and ("clarification" in last_ai_msg.content.lower() or 
-# MAGIC                            "I need clarification" in last_ai_msg.content):
+# MAGIC         # Check if we found a clarification context
+# MAGIC         if original_query and clarification_question:
 # MAGIC             print("✓ Auto-detected clarification response from message history")
-# MAGIC             
-# MAGIC             # Extract the original query that triggered this clarification
-# MAGIC             # Find the HumanMessage that came RIGHT BEFORE the last AI clarification message
-# MAGIC             # This ensures we get the correct question, not the first one in the thread
-# MAGIC             original_query = ""
-# MAGIC             last_ai_idx = None
-# MAGIC             
-# MAGIC             # Find the index of the last AI clarification message
-# MAGIC             for i in range(len(messages) - 1, -1, -1):
-# MAGIC                 if messages[i] == last_ai_msg:
-# MAGIC                     last_ai_idx = i
-# MAGIC                     break
-# MAGIC             
-# MAGIC             # Now find the last HumanMessage BEFORE that AI message
-# MAGIC             if last_ai_idx is not None:
-# MAGIC                 for i in range(last_ai_idx - 1, -1, -1):
-# MAGIC                     if isinstance(messages[i], HumanMessage):
-# MAGIC                         original_query = messages[i].content
-# MAGIC                         break
-# MAGIC             
-# MAGIC             # Extract the clarification question from last AI message
-# MAGIC             clarification_question = last_ai_msg.content
 # MAGIC             
 # MAGIC             # Build combined query context with structured format
 # MAGIC             combined_context = f"""**Original Query**: {original_query}
