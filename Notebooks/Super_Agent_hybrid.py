@@ -1683,9 +1683,17 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🔍 CLARIFICATION AGENT")
 # MAGIC     print("="*80)
+# MAGIC     
+# MAGIC     # Emit agent start event
+# MAGIC     query = state["original_query"]
+# MAGIC     writer({"type": "agent_start", "agent": "clarification", "query": query})
 # MAGIC     
 # MAGIC     # Get messages array from state
 # MAGIC     messages = state.get("messages", [])
@@ -1696,15 +1704,18 @@ print("="*80)
 # MAGIC     # INTENT DETECTION: Reset clarification count if this is a new question
 # MAGIC     # This allows each new question to receive clarification while preventing
 # MAGIC     # re-clarification for follow-ups or refinements
-# MAGIC     query = state["original_query"]
 # MAGIC     if clarification_count > 0 and len(messages) > 2:
 # MAGIC         print("🔄 Checking if query is new question or follow-up...")
+# MAGIC         writer({"type": "agent_thinking", "agent": "clarification", "content": "Checking if query is new question or follow-up..."})
 # MAGIC         llm = ChatDatabricks(endpoint=LLM_ENDPOINT_CLARIFICATION)
-# MAGIC         if is_new_question(query, messages, llm):
+# MAGIC         is_new = is_new_question(query, messages, llm)
+# MAGIC         if is_new:
 # MAGIC             print("✓ New question detected - resetting clarification count to 0")
+# MAGIC             writer({"type": "intent_detection", "result": "new_question", "reasoning": "Query is substantially different from previous clarification"})
 # MAGIC             clarification_count = 0
 # MAGIC         else:
 # MAGIC             print(f"✓ Follow-up detected - keeping clarification count at {clarification_count}")
+# MAGIC             writer({"type": "intent_detection", "result": "follow_up", "reasoning": f"Query is a follow-up or refinement (clarification_count={clarification_count})"})
 # MAGIC     
 # MAGIC     # AUTO-DETECT: Check if this is a user response to a previous clarification request
 # MAGIC     # Look for an AI message that asked for clarification in the message history
@@ -1759,11 +1770,11 @@ print("="*80)
 # MAGIC             }
 # MAGIC     
 # MAGIC     # FIRST-TIME: No clarification response detected, check if query needs clarification
-# MAGIC     query = state["original_query"]
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_CLARIFICATION)
 # MAGIC     
 # MAGIC     # Use OOP agent with clarification count
 # MAGIC     # Load context fresh from table (no redeployment needed for updates)
+# MAGIC     writer({"type": "agent_thinking", "agent": "clarification", "content": "Analyzing query clarity..."})
 # MAGIC     clarification_agent = ClarificationAgent.from_table(llm, TABLE_NAME)
 # MAGIC     clarity_result = clarification_agent(query, clarification_count)
 # MAGIC     
@@ -1771,6 +1782,9 @@ print("="*80)
 # MAGIC     question_clear = clarity_result.get("question_clear", True)
 # MAGIC     clarification_needed = clarity_result.get("clarification_needed")
 # MAGIC     clarification_options = clarity_result.get("clarification_options")
+# MAGIC     
+# MAGIC     # Emit clarity analysis result
+# MAGIC     writer({"type": "clarity_analysis", "clear": question_clear, "reasoning": clarification_needed or "Query is clear and answerable"})
 # MAGIC     
 # MAGIC     # Build updates dictionary
 # MAGIC     updates = {
@@ -1835,6 +1849,10 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("📋 PLANNING AGENT")
 # MAGIC     print("="*80)
@@ -1842,6 +1860,9 @@ print("="*80)
 # MAGIC     # Use combined_query_context if available (includes clarification context)
 # MAGIC     # Otherwise fall back to original_query
 # MAGIC     query = state.get("combined_query_context") or state["original_query"]
+# MAGIC     
+# MAGIC     # Emit agent start event
+# MAGIC     writer({"type": "agent_start", "agent": "planning", "query": query[:100]})
 # MAGIC     
 # MAGIC     if state.get("combined_query_context"):
 # MAGIC         print("✓ Using combined query context (includes clarification)")
@@ -1853,14 +1874,26 @@ print("="*80)
 # MAGIC     # Use OOP agent
 # MAGIC     planning_agent = PlanningAgent(llm, VECTOR_SEARCH_INDEX)
 # MAGIC     
+# MAGIC     # Emit vector search start event
+# MAGIC     writer({"type": "vector_search_start", "index": VECTOR_SEARCH_INDEX})
+# MAGIC     
 # MAGIC     # Get relevant spaces with full metadata (for Genie agents)
 # MAGIC     relevant_spaces_full = planning_agent.search_relevant_spaces(query)
+# MAGIC     
+# MAGIC     # Emit vector search results
+# MAGIC     writer({"type": "vector_search_results", "spaces": relevant_spaces_full, "count": len(relevant_spaces_full)})
+# MAGIC     
+# MAGIC     # Emit plan formulation start
+# MAGIC     writer({"type": "agent_thinking", "agent": "planning", "content": "Creating execution plan..."})
 # MAGIC     
 # MAGIC     # Create execution plan
 # MAGIC     plan = planning_agent.create_execution_plan(query, relevant_spaces_full)
 # MAGIC     
 # MAGIC     # Extract plan components
 # MAGIC     join_strategy = plan.get("join_strategy")
+# MAGIC     
+# MAGIC     # Emit plan formulation result
+# MAGIC     writer({"type": "plan_formulation", "strategy": join_strategy, "requires_join": plan.get("requires_join", False)})
 # MAGIC     
 # MAGIC     # Determine next agent
 # MAGIC     if join_strategy == "genie_route":
@@ -1896,21 +1929,32 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("⚡ SQL SYNTHESIS AGENT - TABLE ROUTE")
 # MAGIC     print("="*80)
+# MAGIC     
+# MAGIC     plan = state.get("plan", {})
+# MAGIC     relevant_space_ids = state.get("relevant_space_ids", [])
+# MAGIC     
+# MAGIC     # Emit synthesis start event
+# MAGIC     writer({"type": "sql_synthesis_start", "route": "table", "spaces": relevant_space_ids})
 # MAGIC     
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SQL_SYNTHESIS, temperature=0.1)
 # MAGIC     
 # MAGIC     # Use OOP agent
 # MAGIC     sql_agent = SQLSynthesisTableAgent(llm, CATALOG, SCHEMA)
 # MAGIC     
-# MAGIC     plan = state.get("plan", {})
 # MAGIC     print("plan loaded from state is:", plan)
 # MAGIC     print(json.dumps(plan, indent=2))
 # MAGIC     
 # MAGIC     try:
 # MAGIC         print("🤖 Invoking SQL synthesis agent...")
+# MAGIC         writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": "Generating SQL query using table schemas..."})
+# MAGIC         writer({"type": "uc_function_call", "function": "get_table_schemas", "params": {"space_ids": relevant_space_ids}})
 # MAGIC         result = sql_agent(plan)
 # MAGIC         
 # MAGIC         # Extract SQL and explanation
@@ -1923,6 +1967,9 @@ print("="*80)
 # MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
+# MAGIC             
+# MAGIC             # Emit SQL generated event
+# MAGIC             writer({"type": "sql_generated", "query_preview": sql_query[:200]})
 # MAGIC             
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
@@ -1970,14 +2017,22 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🐢 SQL SYNTHESIS AGENT - GENIE ROUTE")
 # MAGIC     print("="*80)
 # MAGIC     
-# MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SQL_SYNTHESIS, temperature=0.1)
-# MAGIC     
 # MAGIC     # Get relevant spaces from state (already discovered by PlanningAgent)
 # MAGIC     relevant_spaces = state.get("relevant_spaces", [])
+# MAGIC     relevant_space_ids = [s.get("space_id") for s in relevant_spaces if s.get("space_id")]
+# MAGIC     
+# MAGIC     # Emit synthesis start event
+# MAGIC     writer({"type": "sql_synthesis_start", "route": "genie", "spaces": relevant_space_ids})
+# MAGIC     
+# MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SQL_SYNTHESIS, temperature=0.1)
 # MAGIC     
 # MAGIC     if not relevant_spaces:
 # MAGIC         print("❌ No relevant_spaces found in state")
@@ -2001,6 +2056,12 @@ print("="*80)
 # MAGIC     
 # MAGIC     try:
 # MAGIC         print(f"🤖 Querying {len(genie_route_plan)} Genie agents...")
+# MAGIC         writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"Calling {len(genie_route_plan)} Genie agents for SQL generation..."})
+# MAGIC         
+# MAGIC         # Emit events for each Genie agent call
+# MAGIC         for space_id in genie_route_plan.keys():
+# MAGIC             writer({"type": "genie_agent_call", "space_id": space_id, "query": genie_route_plan[space_id][:100]})
+# MAGIC         
 # MAGIC         result = sql_agent(plan)
 # MAGIC         
 # MAGIC         # Extract SQL and explanation
@@ -2014,6 +2075,9 @@ print("="*80)
 # MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
+# MAGIC             
+# MAGIC             # Emit SQL generated event
+# MAGIC             writer({"type": "sql_generated", "query_preview": sql_query[:200]})
 # MAGIC             
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
@@ -2059,6 +2123,10 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🚀 SQL EXECUTION AGENT")
 # MAGIC     print("="*80)
@@ -2071,6 +2139,12 @@ print("="*80)
 # MAGIC         return {
 # MAGIC             "execution_error": "No SQL query provided"
 # MAGIC         }
+# MAGIC     
+# MAGIC     # Emit validation start event
+# MAGIC     writer({"type": "sql_validation_start", "query": sql_query[:200]})
+# MAGIC     
+# MAGIC     # Emit execution start event
+# MAGIC     writer({"type": "sql_execution_start", "estimated_complexity": "standard"})
 # MAGIC     
 # MAGIC     # Use OOP agent
 # MAGIC     execution_agent = SQLExecutionAgent()
@@ -2087,6 +2161,9 @@ print("="*80)
 # MAGIC         print(f"✓ Query executed successfully!")
 # MAGIC         print(f"📊 Rows returned: {result['row_count']}")
 # MAGIC         print(f"📋 Columns: {', '.join(result['columns'])}")
+# MAGIC         
+# MAGIC         # Emit execution complete event
+# MAGIC         writer({"type": "sql_execution_complete", "rows": result['row_count'], "columns": result['columns']})
 # MAGIC         
 # MAGIC         updates["messages"].append(
 # MAGIC             SystemMessage(content=f"Execution successful: {result['row_count']} rows returned")
@@ -2111,9 +2188,16 @@ print("="*80)
 # MAGIC     
 # MAGIC     Returns: Dictionary with only the state updates (for clean MLflow traces)
 # MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("📝 RESULT SUMMARIZE AGENT")
 # MAGIC     print("="*80)
+# MAGIC     
+# MAGIC     # Emit summary start event
+# MAGIC     writer({"type": "summary_start", "content": "Generating comprehensive summary..."})
 # MAGIC     
 # MAGIC     # Create LLM for summarization (no max_tokens limit for comprehensive output)
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SUMMARIZE, temperature=0.1, max_tokens=2000)
@@ -2508,6 +2592,43 @@ print("="*80)
 # MAGIC         
 # MAGIC         return None
 # MAGIC     
+# MAGIC     def format_custom_event(self, custom_data: dict) -> str:
+# MAGIC         """
+# MAGIC         Format custom streaming events for user-friendly display.
+# MAGIC         
+# MAGIC         Args:
+# MAGIC             custom_data: Dictionary containing custom event data with 'type' key
+# MAGIC             
+# MAGIC         Returns:
+# MAGIC             Formatted string with emoji and readable event description
+# MAGIC         """
+# MAGIC         event_type = custom_data.get("type", "unknown")
+# MAGIC         
+# MAGIC         formatters = {
+# MAGIC             "agent_thinking": lambda d: f"💭 {d['agent'].upper()}: {d['content']}",
+# MAGIC             "agent_start": lambda d: f"🚀 Starting {d['agent']} agent for: {d.get('query', '')[:50]}...",
+# MAGIC             "intent_detection": lambda d: f"🎯 Intent: {d['result']} - {d.get('reasoning', '')}",
+# MAGIC             "clarity_analysis": lambda d: f"✓ Query {'clear' if d['clear'] else 'unclear'}: {d.get('reasoning', '')}",
+# MAGIC             "vector_search_start": lambda d: f"🔍 Searching vector index: {d['index']}",
+# MAGIC             "vector_search_results": lambda d: f"📊 Found {d['count']} relevant spaces: {[s.get('space_id', 'unknown') for s in d.get('spaces', [])]}",
+# MAGIC             "plan_formulation": lambda d: f"📋 Execution plan: {d.get('strategy', 'unknown')} strategy",
+# MAGIC             "uc_function_call": lambda d: f"🔧 Calling UC function: {d['function']}",
+# MAGIC             "sql_generated": lambda d: f"📝 SQL generated: {d.get('query_preview', '')}...",
+# MAGIC             "sql_validation_start": lambda d: f"✅ Validating SQL query...",
+# MAGIC             "sql_execution_start": lambda d: f"⚡ Executing SQL query...",
+# MAGIC             "sql_execution_complete": lambda d: f"✓ Query complete: {d.get('rows', 0)} rows, {len(d.get('columns', []))} columns",
+# MAGIC             "summary_start": lambda d: f"📄 Generating summary...",
+# MAGIC             "genie_agent_call": lambda d: f"🤖 Calling Genie agent for space: {d.get('space_id', 'unknown')}",
+# MAGIC         }
+# MAGIC         
+# MAGIC         formatter = formatters.get(event_type, lambda d: f"ℹ️ {event_type}: {json.dumps(d, indent=2)}")
+# MAGIC         
+# MAGIC         try:
+# MAGIC             return formatter(custom_data)
+# MAGIC         except Exception as e:
+# MAGIC             logger.warning(f"Error formatting custom event {event_type}: {e}")
+# MAGIC             return f"ℹ️ {event_type}: {str(custom_data)}"
+# MAGIC     
 # MAGIC     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
 # MAGIC         """
 # MAGIC         Make a prediction (non-streaming).
@@ -2647,12 +2768,17 @@ print("="*80)
 # MAGIC             
 # MAGIC             logger.info(f"Executing workflow with checkpointer (thread: {thread_id})")
 # MAGIC             
-# MAGIC             # Stream the workflow execution with both updates and messages modes
+# MAGIC             # Stream the workflow execution with enhanced visibility modes
 # MAGIC             # CheckpointSaver will:
 # MAGIC             # 1. Restore previous state from thread_id (if exists) from Lakebase
 # MAGIC             # 2. Merge with initial_state (initial_state takes precedence)
 # MAGIC             # 3. Preserve conversation history across distributed instances
-# MAGIC             for event in app.stream(initial_state, run_config, stream_mode=["updates", "messages"]):
+# MAGIC             # Stream modes:
+# MAGIC             # - updates: State changes after each node
+# MAGIC             # - messages: LLM token-by-token streaming
+# MAGIC             # - custom: Agent-specific events (thinking, decisions, progress)
+# MAGIC             # - debug: Maximum execution detail
+# MAGIC             for event in app.stream(initial_state, run_config, stream_mode=["updates", "messages", "custom", "debug"]):
 # MAGIC                 event_type = event[0]
 # MAGIC                 event_data = event[1]
 # MAGIC                 
@@ -2686,17 +2812,36 @@ print("="*80)
 # MAGIC                         first_message = False
 # MAGIC                     else:
 # MAGIC                         seen_ids.update(msg.id for msg in new_msgs)
-# MAGIC                         # Emit node name as a step indicator
+# MAGIC                         # Emit node name as a step indicator with enhanced details
 # MAGIC                         if events:
 # MAGIC                             node_name = tuple(events.keys())[0]
+# MAGIC                             node_update = events[node_name]
+# MAGIC                             updated_keys = [k for k in node_update.keys() if k != "messages"]
+# MAGIC                             
+# MAGIC                             # Enhanced step indicator with state keys
+# MAGIC                             step_text = f"🔹 Step: {node_name}"
+# MAGIC                             if updated_keys:
+# MAGIC                                 step_text += f" | Keys updated: {', '.join(updated_keys)}"
+# MAGIC                             
 # MAGIC                             yield ResponsesAgentStreamEvent(
 # MAGIC                                 type="response.output_item.done",
 # MAGIC                                 item=self.create_text_output_item(
-# MAGIC                                     text=f"🔹 Step: {node_name}", id=str(uuid4())
+# MAGIC                                     text=step_text, id=str(uuid4())
 # MAGIC                                 ),
 # MAGIC                             )
+# MAGIC                             
+# MAGIC                             # Emit routing decision if next_agent changed
+# MAGIC                             if "next_agent" in node_update:
+# MAGIC                                 next_agent = node_update["next_agent"]
+# MAGIC                                 yield ResponsesAgentStreamEvent(
+# MAGIC                                     type="response.output_item.done",
+# MAGIC                                     item=self.create_text_output_item(
+# MAGIC                                         text=f"🔀 Routing decision: Next agent = {next_agent}",
+# MAGIC                                         id=str(uuid4())
+# MAGIC                                     ),
+# MAGIC                                 )
 # MAGIC                     
-# MAGIC                     # Process messages for tool calls and final text
+# MAGIC                     # Process messages for tool calls, tool results, and final text
 # MAGIC                     for msg in new_msgs:
 # MAGIC                         # Check if message has tool calls
 # MAGIC                         if hasattr(msg, 'tool_calls') and msg.tool_calls:
@@ -2714,9 +2859,56 @@ print("="*80)
 # MAGIC                                     )
 # MAGIC                                 except Exception as e:
 # MAGIC                                     logger.warning(f"Error emitting tool call: {e}")
+# MAGIC                         # Handle ToolMessage for tool results
+# MAGIC                         elif hasattr(msg, '__class__') and msg.__class__.__name__ == 'ToolMessage':
+# MAGIC                             try:
+# MAGIC                                 tool_name = getattr(msg, 'name', 'unknown')
+# MAGIC                                 tool_content = str(msg.content)[:200] if msg.content else "No content"
+# MAGIC                                 yield ResponsesAgentStreamEvent(
+# MAGIC                                     type="response.output_item.done",
+# MAGIC                                     item=self.create_text_output_item(
+# MAGIC                                         text=f"🔨 Tool result ({tool_name}): {tool_content}...",
+# MAGIC                                         id=str(uuid4())
+# MAGIC                                     ),
+# MAGIC                                 )
+# MAGIC                             except Exception as e:
+# MAGIC                                 logger.warning(f"Error emitting tool result: {e}")
 # MAGIC                         else:
 # MAGIC                             # Emit regular message content
 # MAGIC                             yield from output_to_responses_items_stream([msg])
+# MAGIC                 
+# MAGIC                 # Handle custom mode (agent-specific events)
+# MAGIC                 elif event_type == "custom":
+# MAGIC                     try:
+# MAGIC                         custom_data = event_data
+# MAGIC                         formatted_text = self.format_custom_event(custom_data)
+# MAGIC                         yield ResponsesAgentStreamEvent(
+# MAGIC                             type="response.output_item.done",
+# MAGIC                             item=self.create_text_output_item(
+# MAGIC                                 text=formatted_text,
+# MAGIC                                 id=str(uuid4())
+# MAGIC                             ),
+# MAGIC                         )
+# MAGIC                     except Exception as e:
+# MAGIC                         logger.warning(f"Error processing custom event: {e}")
+# MAGIC                 
+# MAGIC                 # Handle debug mode (maximum detail)
+# MAGIC                 elif event_type == "debug":
+# MAGIC                     try:
+# MAGIC                         debug_data = event_data
+# MAGIC                         # Emit detailed debug information (truncated for readability)
+# MAGIC                         debug_str = json.dumps(debug_data, indent=2)
+# MAGIC                         if len(debug_str) > 500:
+# MAGIC                             debug_str = debug_str[:500] + "..."
+# MAGIC                         yield ResponsesAgentStreamEvent(
+# MAGIC                             type="response.output_item.done",
+# MAGIC                             item=self.create_text_output_item(
+# MAGIC                                 text=f"🔍 Debug: {debug_str}",
+# MAGIC                                 id=str(uuid4())
+# MAGIC                             ),
+# MAGIC                         )
+# MAGIC                     except Exception as e:
+# MAGIC                         logger.warning(f"Error processing debug event: {e}")
 # MAGIC         
 # MAGIC         logger.info(f"Workflow execution completed (thread: {thread_id})")
 # MAGIC
@@ -2741,10 +2933,93 @@ print("="*80)
 # MAGIC print("  ✓ Long-term memory: User preferences (DatabricksStore)")
 # MAGIC print("  ✓ Works in distributed Model Serving (shared state via Lakebase)")
 # MAGIC print("="*80)
+# MAGIC print("\n🎉 Enhanced Granular Streaming Features:")
+# MAGIC print("  ✓ Agent thinking and reasoning visibility")
+# MAGIC print("  ✓ Intent detection (new question vs follow-up)")
+# MAGIC print("  ✓ Clarity analysis with reasoning")
+# MAGIC print("  ✓ Vector search progress and results")
+# MAGIC print("  ✓ Execution plan formulation")
+# MAGIC print("  ✓ UC function calls and Genie agent invocations")
+# MAGIC print("  ✓ SQL generation progress")
+# MAGIC print("  ✓ SQL validation and execution progress")
+# MAGIC print("  ✓ Tool calls and tool results")
+# MAGIC print("  ✓ Routing decisions between agents")
+# MAGIC print("  ✓ Summary generation progress")
+# MAGIC print("  ✓ Debug mode for maximum detail")
+# MAGIC print("="*80)
 # MAGIC
 # MAGIC # Set the agent for MLflow tracking
 # MAGIC mlflow.langchain.autolog()
 # MAGIC mlflow.models.set_model(AGENT)
+
+# COMMAND ----------
+
+# DBTITLE 1,Test Enhanced Granular Streaming
+"""
+Test the enhanced granular streaming to verify all execution steps are visible.
+This will show agent thinking, tool calls, intermediate results, and routing decisions.
+"""
+
+# Uncomment to test enhanced streaming:
+# from mlflow.types.responses import ResponsesAgentRequest
+# 
+# test_query = "Show me the top 10 active plan members over 50 years old"
+# 
+# print(f"\n{'='*80}")
+# print(f"Testing Enhanced Granular Streaming")
+# print(f"{'='*80}")
+# print(f"Query: {test_query}\n")
+# 
+# # Create streaming request
+# request = ResponsesAgentRequest(
+#     input=[{"role": "user", "content": test_query}],
+#     custom_inputs={"thread_id": f"test-streaming-{str(uuid4())[:8]}"}
+# )
+# 
+# # Stream all events and count them by type
+# event_counts = {"custom": 0, "updates": 0, "messages": 0, "debug": 0, "tool_calls": 0, "tool_results": 0, "routing": 0}
+# 
+# print("Streaming events:")
+# print("-" * 80)
+# 
+# for event in AGENT.predict_stream(request):
+#     if event.type == "response.output_item.done":
+#         item = event.item
+#         if hasattr(item, 'text') and item.text:
+#             text = item.text
+#             
+#             # Categorize event types
+#             if text.startswith("💭") or text.startswith("🚀") or text.startswith("🎯") or text.startswith("✓") or text.startswith("🔍") or text.startswith("📊") or text.startswith("📋") or text.startswith("🔧") or text.startswith("📝") or text.startswith("✅") or text.startswith("⚡") or text.startswith("📄"):
+#                 event_counts["custom"] += 1
+#             elif text.startswith("🔹 Step:"):
+#                 event_counts["updates"] += 1
+#             elif text.startswith("🔀 Routing"):
+#                 event_counts["routing"] += 1
+#             elif text.startswith("🔨 Tool result"):
+#                 event_counts["tool_results"] += 1
+#             elif text.startswith("🔍 Debug:"):
+#                 event_counts["debug"] += 1
+#             
+#             # Print event (truncate long events)
+#             display_text = text if len(text) <= 150 else text[:150] + "..."
+#             print(f"  {display_text}")
+#         elif hasattr(item, 'function_call'):
+#             event_counts["tool_calls"] += 1
+#             print(f"  🛠️ Function call: {item.function_call.name}")
+# 
+# print("-" * 80)
+# print("\nEvent Summary:")
+# print(f"  Custom events (agent thinking/progress): {event_counts['custom']}")
+# print(f"  Node updates (state changes): {event_counts['updates']}")
+# print(f"  Routing decisions: {event_counts['routing']}")
+# print(f"  Tool calls: {event_counts['tool_calls']}")
+# print(f"  Tool results: {event_counts['tool_results']}")
+# print(f"  Debug events: {event_counts['debug']}")
+# print(f"  Total events: {sum(event_counts.values())}")
+# print(f"\n{'='*80}")
+# print("✅ Enhanced streaming test complete!")
+# print("All agent execution steps are now visible to users in real-time.")
+# print(f"{'='*80}\n")
 
 # COMMAND ----------
 
