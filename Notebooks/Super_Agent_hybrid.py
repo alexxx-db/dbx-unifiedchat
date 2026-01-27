@@ -1735,12 +1735,24 @@ print("="*80)
 # MAGIC                            "I need clarification" in last_ai_msg.content):
 # MAGIC             print("✓ Auto-detected clarification response from message history")
 # MAGIC             
-# MAGIC             # Extract the original query (first human message in thread)
+# MAGIC             # Extract the original query that triggered this clarification
+# MAGIC             # Find the HumanMessage that came RIGHT BEFORE the last AI clarification message
+# MAGIC             # This ensures we get the correct question, not the first one in the thread
 # MAGIC             original_query = ""
-# MAGIC             for msg in messages:
-# MAGIC                 if isinstance(msg, HumanMessage):
-# MAGIC                     original_query = msg.content
+# MAGIC             last_ai_idx = None
+# MAGIC             
+# MAGIC             # Find the index of the last AI clarification message
+# MAGIC             for i in range(len(messages) - 1, -1, -1):
+# MAGIC                 if messages[i] == last_ai_msg:
+# MAGIC                     last_ai_idx = i
 # MAGIC                     break
+# MAGIC             
+# MAGIC             # Now find the last HumanMessage BEFORE that AI message
+# MAGIC             if last_ai_idx is not None:
+# MAGIC                 for i in range(last_ai_idx - 1, -1, -1):
+# MAGIC                     if isinstance(messages[i], HumanMessage):
+# MAGIC                         original_query = messages[i].content
+# MAGIC                         break
 # MAGIC             
 # MAGIC             # Extract the clarification question from last AI message
 # MAGIC             clarification_question = last_ai_msg.content
