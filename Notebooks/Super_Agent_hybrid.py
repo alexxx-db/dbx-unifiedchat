@@ -57,7 +57,7 @@ EMBEDDING_DIMS = config.lakebase.embedding_dims
 
 # Table Metadata configuration (from .env)
 SQL_WAREHOUSE_ID = config.table_metadata.sql_warehouse_id
-
+GENIE_SPACE_ID = config.table_metadata.genie_space_ids
 # Print configuration summary
 config.print_summary()
 
@@ -2954,72 +2954,83 @@ print("="*80)
 
 # COMMAND ----------
 
+# DBTITLE 1,Load Back the AGENT
+from agent import AGENT
+
+# COMMAND ----------
+
+# # or load the notebook with magic run
+# %run ./agent.py
+
+# COMMAND ----------
+
 # DBTITLE 1,Test Enhanced Granular Streaming
 """
 Test the enhanced granular streaming to verify all execution steps are visible.
 This will show agent thinking, tool calls, intermediate results, and routing decisions.
 """
 
-# Uncomment to test enhanced streaming:
-# from mlflow.types.responses import ResponsesAgentRequest
-# 
-# test_query = "Show me the top 10 active plan members over 50 years old"
-# 
-# print(f"\n{'='*80}")
-# print(f"Testing Enhanced Granular Streaming")
-# print(f"{'='*80}")
-# print(f"Query: {test_query}\n")
-# 
-# # Create streaming request
-# request = ResponsesAgentRequest(
-#     input=[{"role": "user", "content": test_query}],
-#     custom_inputs={"thread_id": f"test-streaming-{str(uuid4())[:8]}"}
-# )
-# 
-# # Stream all events and count them by type
-# event_counts = {"custom": 0, "updates": 0, "messages": 0, "debug": 0, "tool_calls": 0, "tool_results": 0, "routing": 0}
-# 
-# print("Streaming events:")
-# print("-" * 80)
-# 
-# for event in AGENT.predict_stream(request):
-#     if event.type == "response.output_item.done":
-#         item = event.item
-#         if hasattr(item, 'text') and item.text:
-#             text = item.text
-#             
-#             # Categorize event types
-#             if text.startswith("💭") or text.startswith("🚀") or text.startswith("🎯") or text.startswith("✓") or text.startswith("🔍") or text.startswith("📊") or text.startswith("📋") or text.startswith("🔧") or text.startswith("📝") or text.startswith("✅") or text.startswith("⚡") or text.startswith("📄"):
-#                 event_counts["custom"] += 1
-#             elif text.startswith("🔹 Step:"):
-#                 event_counts["updates"] += 1
-#             elif text.startswith("🔀 Routing"):
-#                 event_counts["routing"] += 1
-#             elif text.startswith("🔨 Tool result"):
-#                 event_counts["tool_results"] += 1
-#             elif text.startswith("🔍 Debug:"):
-#                 event_counts["debug"] += 1
-#             
-#             # Print event (truncate long events)
-#             display_text = text if len(text) <= 150 else text[:150] + "..."
-#             print(f"  {display_text}")
-#         elif hasattr(item, 'function_call'):
-#             event_counts["tool_calls"] += 1
-#             print(f"  🛠️ Function call: {item.function_call.name}")
-# 
-# print("-" * 80)
-# print("\nEvent Summary:")
-# print(f"  Custom events (agent thinking/progress): {event_counts['custom']}")
-# print(f"  Node updates (state changes): {event_counts['updates']}")
-# print(f"  Routing decisions: {event_counts['routing']}")
-# print(f"  Tool calls: {event_counts['tool_calls']}")
-# print(f"  Tool results: {event_counts['tool_results']}")
-# print(f"  Debug events: {event_counts['debug']}")
-# print(f"  Total events: {sum(event_counts.values())}")
-# print(f"\n{'='*80}")
-# print("✅ Enhanced streaming test complete!")
-# print("All agent execution steps are now visible to users in real-time.")
-# print(f"{'='*80}\n")
+#: Uncomment to test enhanced streaming:
+from mlflow.types.responses import ResponsesAgentRequest
+from uuid import uuid4
+
+test_query = "Show me the top 10 active plan members over 50 years old"
+
+print(f"\n{'='*80}")
+print(f"Testing Enhanced Granular Streaming")
+print(f"{'='*80}")
+print(f"Query: {test_query}\n")
+
+# Create streaming request
+request = ResponsesAgentRequest(
+    input=[{"role": "user", "content": test_query}],
+    custom_inputs={"thread_id": f"test-streaming-{str(uuid4())[:8]}"}
+)
+
+# Stream all events and count them by type
+event_counts = {"custom": 0, "updates": 0, "messages": 0, "debug": 0, "tool_calls": 0, "tool_results": 0, "routing": 0}
+
+print("Streaming events:")
+print("-" * 80)
+
+for event in AGENT.predict_stream(request):
+    if event.type == "response.output_item.done":
+        item = event.item
+        if hasattr(item, 'text') and item.text:
+            text = item.text
+            
+            # Categorize event types
+            if text.startswith("💭") or text.startswith("🚀") or text.startswith("🎯") or text.startswith("✓") or text.startswith("🔍") or text.startswith("📊") or text.startswith("📋") or text.startswith("🔧") or text.startswith("📝") or text.startswith("✅") or text.startswith("⚡") or text.startswith("📄"):
+                event_counts["custom"] += 1
+            elif text.startswith("🔹 Step:"):
+                event_counts["updates"] += 1
+            elif text.startswith("🔀 Routing"):
+                event_counts["routing"] += 1
+            elif text.startswith("🔨 Tool result"):
+                event_counts["tool_results"] += 1
+            elif text.startswith("🔍 Debug:"):
+                event_counts["debug"] += 1
+            
+            # Print event (truncate long events)
+            display_text = text if len(text) <= 150 else text[:150] + "..."
+            print(f"  {display_text}")
+        elif hasattr(item, 'function_call'):
+            event_counts["tool_calls"] += 1
+            print(f"  🛠️ Function call: {item.function_call.name}")
+
+print("-" * 80)
+print("\nEvent Summary:")
+print(f"  Custom events (agent thinking/progress): {event_counts['custom']}")
+print(f"  Node updates (state changes): {event_counts['updates']}")
+print(f"  Routing decisions: {event_counts['routing']}")
+print(f"  Tool calls: {event_counts['tool_calls']}")
+print(f"  Tool results: {event_counts['tool_results']}")
+print(f"  Debug events: {event_counts['debug']}")
+print(f"  Total events: {sum(event_counts.values())}")
+print(f"\n{'='*80}")
+print("✅ Enhanced streaming test complete!")
+print("All agent execution steps are now visible to users in real-time.")
+print(f"{'='*80}\n")
 
 
 # COMMAND ----------
@@ -3061,7 +3072,7 @@ print(result3.model_dump(exclude_none=True))
 
 # COMMAND ----------
 
-# Second message - agent should remember context
+# Second message to follow-up/refine - agent should remember context
 result2 = AGENT.predict(ResponsesAgentRequest(
     input=[{"role": "user", "content": "Filter patients where current age (as of today) is greater than 50"}],
     custom_inputs={"thread_id": thread_id}  # Same thread_id
@@ -3071,13 +3082,30 @@ print(result2.model_dump(exclude_none=True))
 
 # COMMAND ----------
 
-# Second message - agent should remember context
+# third message - agent should know this is a totally new question in the same thread
 result2 = AGENT.predict(ResponsesAgentRequest(
     input=[{"role": "user", "content": "What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group?"}],
     custom_inputs={"thread_id": thread_id}  # Same thread_id
 ))
 print("\n--- Response 2 (with context) ---")
 print(result2.model_dump(exclude_none=True))
+
+# COMMAND ----------
+
+# cause agent may need us to clarify the previous question as agent knows the previous question is a totally new question, we need to follow up here.
+follow_up_msg = """
+1. line allowed
+2. aggregate by medical claim
+3. age thing your call
+"""
+# clarify message -
+result2 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": thread_id}
+))
+print("\n--- Response 2 (with context) ---")
+print(result2.model_dump(exclude_none=True))
+
 
 # COMMAND ----------
 
@@ -3089,26 +3117,6 @@ result2 = AGENT.predict(ResponsesAgentRequest(
 ))
 print("\n--- Response 2 (with context) ---")
 print(result2.model_dump(exclude_none=True))
-
-# COMMAND ----------
-
-    # "clarification_options": [
-    #     "Use procedure-level charges (line_charge or line_allowed from procedure table) linked to medical claims with diabetes diagnoses, joined with enrollment data for age calculation",
-    #     "Use total claim costs by aggregating all procedure line items per claim for diabetes patients, broken down by pay_type from medical_claim and age groups from enrollment",
-    #     "Clarify which cost metric you need: line charges, allowed amounts, or paid amounts, and confirm if you want medical claims only or include pharmacy costs"
-    # ]
-follow_up_msg = """
-1. line allowed
-2. by medical claim
-"""
-# clarify message -
-result2 = AGENT.predict(ResponsesAgentRequest(
-    input=[{"role": "user", "content": f"{follow_up_msg}"}],
-    custom_inputs={"thread_id": thread_id}  # new thread_id
-))
-print("\n--- Response 2 (with context) ---")
-print(result2.model_dump(exclude_none=True))
-
 
 # COMMAND ----------
 
