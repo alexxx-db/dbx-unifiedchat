@@ -1826,10 +1826,19 @@ print("="*80)
 # MAGIC     # Get current turn and intent from state (set by intent_detection_node)
 # MAGIC     current_turn = state.get("current_turn")
 # MAGIC     if not current_turn:
-# MAGIC         # Fallback for backward compatibility
+# MAGIC         # Fallback for backward compatibility - create a proper ConversationTurn
 # MAGIC         print("⚠ No current_turn found, falling back to legacy behavior")
-# MAGIC         query = state.get("original_query", "")
-# MAGIC         current_turn = {"query": query, "intent_type": "new_question"}
+# MAGIC         # Try to get query from messages first, fallback to original_query
+# MAGIC         messages = state.get("messages", [])
+# MAGIC         query = messages[-1].content if messages else state.get("original_query", "")
+# MAGIC         current_turn = create_conversation_turn(
+# MAGIC             query=query,
+# MAGIC             intent_type="new_question",
+# MAGIC             parent_turn_id=None,
+# MAGIC             context_summary=None,
+# MAGIC             triggered_clarification=False,
+# MAGIC             metadata={}
+# MAGIC         )
 # MAGIC     
 # MAGIC     query = current_turn["query"]
 # MAGIC     intent_type = current_turn.get("intent_type", "new_question")
