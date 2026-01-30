@@ -2518,7 +2518,7 @@ def summarize_node(state: AgentState) -> AgentState:
     print("="*80)
     
     # Create LLM for summarization (no max_tokens limit for comprehensive output)
-    llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SUMMARIZE, temperature=0.1, max_tokens=2000)
+    llm = ChatDatabricks(endpoint=LLM_ENDPOINT_SUMMARIZE, temperature=0.1, max_tokens=8000)
     
     # Use OOP agent to generate summary
     summarize_agent = ResultSummarizeAgent(llm)
