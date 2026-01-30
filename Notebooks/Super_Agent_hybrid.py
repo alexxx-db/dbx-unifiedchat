@@ -1667,8 +1667,10 @@ print("="*80)
 # MAGIC     print("="*80)
 # MAGIC     
 # MAGIC     # Get current query and conversation context
+# MAGIC     # IMPORTANT: Extract only from HumanMessage to avoid capturing SystemMessage or AIMessage
 # MAGIC     messages = state.get("messages", [])
-# MAGIC     current_query = messages[-1].content if messages else ""
+# MAGIC     human_messages = [m for m in messages if isinstance(m, HumanMessage)]
+# MAGIC     current_query = human_messages[-1].content if human_messages else ""
 # MAGIC     turn_history = state.get("turn_history", [])
 # MAGIC     
 # MAGIC     writer({"type": "agent_start", "agent": "intent_detection", "query": current_query})
@@ -1828,9 +1830,10 @@ print("="*80)
 # MAGIC     if not current_turn:
 # MAGIC         # Fallback for backward compatibility - create a proper ConversationTurn
 # MAGIC         print("⚠ No current_turn found, falling back to legacy behavior")
-# MAGIC         # Try to get query from messages first, fallback to original_query
+# MAGIC         # IMPORTANT: Extract only from HumanMessage to avoid capturing SystemMessage or AIMessage
 # MAGIC         messages = state.get("messages", [])
-# MAGIC         query = messages[-1].content if messages else state.get("original_query", "")
+# MAGIC         human_messages = [m for m in messages if isinstance(m, HumanMessage)]
+# MAGIC         query = human_messages[-1].content if human_messages else state.get("original_query", "")
 # MAGIC         current_turn = create_conversation_turn(
 # MAGIC             query=query,
 # MAGIC             intent_type="new_question",
