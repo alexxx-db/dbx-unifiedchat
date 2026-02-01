@@ -1293,9 +1293,6 @@ class SQLSynthesisGenieAgent:
         
         print(f"  Creating Genie agent tools for {len(self.relevant_spaces)} relevant spaces...")
         
-        # Dictionary to hold parallel executors: space_id -> runnable
-        parallel_executors = {}
-        
         for space in self.relevant_spaces:
             space_id = space.get("space_id")
             space_title = space.get("space_title", space_id)
@@ -1326,11 +1323,15 @@ class SQLSynthesisGenieAgent:
             # Create tool function using factory pattern to capture agent
             def make_genie_tool_call(agent):
                 """Factory function to capture agent in closure properly"""
-                def _genie_tool_call(args: GenieToolInput):
+                def _genie_tool_call(question: str, conversation_id: Optional[str] = None):
+                    """
+                    StructuredTool with args_schema expects individual field arguments,
+                    not a single Pydantic object.
+                    """
                     # GenieAgent expects a LangChain-style message list
                     result = agent.invoke({
-                        "messages": [{"role": "user", "content": args.question}],
-                        "conversation_id": args.conversation_id,
+                        "messages": [{"role": "user", "content": question}],
+                        "conversation_id": conversation_id,
                     })
                     # Extract final output + optional context
                     out = {"conversation_id": result.get("conversation_id")}
@@ -1358,17 +1359,7 @@ class SQLSynthesisGenieAgent:
             )
             self.genie_agent_tools.append(genie_tool)
             
-
-            
-            agent_runnable = RunnableLambda(make_genie_tool_call(genie_agent))
-            agent_runnable.name = genie_agent_name
-            agent_runnable.description = description
-            parallel_executors[space_id] = agent_runnable
-            
             print(f"  ✓ Created Genie agent tool: {genie_agent_name} ({space_id})")
-        
-        # Store parallel executors for batch invocation
-        self.parallel_executors = parallel_executors
     
     def _create_parallel_execution_tool(self):
         """
@@ -1379,12 +1370,9 @@ class SQLSynthesisGenieAgent:
         
         Uses RunnableParallel pattern with StructuredTool for type safety.
         """
-
-        
-        # Define GenieToolInput schema (must match the one used by individual tools)
-        class GenieToolInput(BaseModel):
-            question: str = Field(..., description="Natural-language query to run in the Genie Space")
-            conversation_id: Optional[str] = Field(None, description="Optional Genie conversation for continuity")
+        from pydantic import BaseModel, Field
+        from langchain.tools import StructuredTool
+        import json
         
         # Define input schema for parallel execution
         class ParallelGenieInput(BaseModel):
@@ -1455,41 +1443,58 @@ class SQLSynthesisGenieAgent:
             
             return merged_results
         
+        # Build a mapping from space_id to tool for easy lookup
+        space_id_to_tool = {}
+        for space in self.relevant_spaces:
+            space_id = space.get("space_id")
+            if space_id:
+                # Find the corresponding tool by matching space_id
+                for tool in self.genie_agent_tools:
+                    # Match tool to space by checking if space_title is in tool name
+                    space_title = space.get("space_title", space_id)
+                    if f"Genie_{space_title}" == tool.name:
+                        space_id_to_tool[space_id] = tool
+                        break
+        
         # Tool function that builds and invokes dynamic parallel execution
-        def invoke_parallel_genie_agents(args: ParallelGenieInput) -> Dict[str, Any]:
+        def invoke_parallel_genie_agents(genie_route_plan: Dict[str, str]) -> Dict[str, Any]:
             """
             Invoke multiple Genie agents in parallel for efficient SQL generation.
             
+            StructuredTool with args_schema expects individual field arguments,
+            not a single Pydantic object.
+            
             Args:
-                args: ParallelGenieInput with genie_route_plan dict mapping space_id to question
+                genie_route_plan: Dictionary mapping space_id to question
             
             Returns:
                 Dictionary with results from each Genie agent, keyed by space_id.
                 Each result contains the SQL query, reasoning, and answer from that agent.
             """
             try:
-                route_plan = args.genie_route_plan
+                route_plan = genie_route_plan
                 
                 # Validate all requested space_ids exist
                 for space_id in route_plan.keys():
-                    if space_id not in self.parallel_executors:
+                    if space_id not in space_id_to_tool:
                         return {
-                            "error": f"No executor found for space_id: {space_id}",
-                            "available_space_ids": list(self.parallel_executors.keys())
+                            "error": f"No tool found for space_id: {space_id}",
+                            "available_space_ids": list(space_id_to_tool.keys())
                         }
                 
                 if not route_plan:
                     return {"error": "No valid parallel tasks to execute"}
                 
-                # Build dynamic parallel tasks - each task invokes the corresponding executor
-                # Note: We need to capture both space_id and question in the lambda's input
+                # Build dynamic parallel tasks - each task invokes the corresponding tool's func
+                # Call the underlying function directly with individual arguments
                 parallel_tasks = {}
                 for space_id, question in route_plan.items():
-                    # Create a lambda that invokes the executor with the question for this space_id
-                    # Use default argument to capture the value properly in closure
+                    tool = space_id_to_tool[space_id]
+                    # Create a lambda that calls the tool's func with individual kwargs
+                    # Use default argument to capture values properly in closure
                     parallel_tasks[space_id] = RunnableLambda(
-                        lambda inp, sid=space_id: self.parallel_executors[sid].invoke(
-                            GenieToolInput(question=inp[sid], conversation_id=None)
+                        lambda inp, sid=space_id, t=tool: t.func(
+                            question=inp[sid], conversation_id=None
                         )
                     )
                 
@@ -1641,15 +1646,30 @@ OUTPUT REQUIREMENTS:
         if not genie_route_plan:
             return {}
         
-        # Build parallel tasks that expect a dict input like {"space_id1": "question1", ...}
+        # Build space_id to tool mapping
+        space_id_to_tool = {}
+        for space in self.relevant_spaces:
+            space_id = space.get("space_id")
+            if space_id and space_id in genie_route_plan:
+                # Find the corresponding tool by matching space_id
+                for tool in self.genie_agent_tools:
+                    space_title = space.get("space_title", space_id)
+                    if f"Genie_{space_title}" == tool.name:
+                        space_id_to_tool[space_id] = tool
+                        break
+        
+        # Build parallel tasks that call tool.func() directly with individual arguments
         parallel_tasks = {}
-        for space_id in genie_route_plan.keys():
-            if space_id in self.parallel_executors:
+        for space_id, question in genie_route_plan.items():
+            if space_id in space_id_to_tool:
+                tool = space_id_to_tool[space_id]
                 parallel_tasks[space_id] = RunnableLambda(
-                    lambda inp, sid=space_id: self.parallel_executors[sid].invoke(inp[sid])
+                    lambda inp, sid=space_id, t=tool: t.func(
+                        question=inp[sid], conversation_id=None
+                    )
                 )
             else:
-                print(f"  ⚠ Warning: No executor found for space_id: {space_id}")
+                print(f"  ⚠ Warning: No tool found for space_id: {space_id}")
         
         if not parallel_tasks:
             print("  ⚠ Warning: No valid parallel tasks to execute")
