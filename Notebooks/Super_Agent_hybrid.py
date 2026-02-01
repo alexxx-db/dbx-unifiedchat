@@ -2006,13 +2006,15 @@ print("="*80)
 # MAGIC     # Emit agent start event
 # MAGIC     writer({"type": "agent_start", "agent": "planning", "query": planning_query[:100]})
 # MAGIC     
-# MAGIC     print(f"Query: {query}")
+# MAGIC     print(f"Query (from current_turn): {query}")
 # MAGIC     print(f"Intent: {intent_type}")
 # MAGIC     if context_summary:
-# MAGIC         print(f"✓ Using context summary from intent detection")
-# MAGIC         print(f"  Summary: {context_summary[:200]}...")
+# MAGIC         print(f"✓ Using context summary from intent detection (includes full conversation context)")
+# MAGIC         print(f"  Context summary: {context_summary[:300]}...")
+# MAGIC         print(f"  Planning query: {planning_query[:300]}...")
 # MAGIC     else:
 # MAGIC         print(f"✓ Using query directly (no context needed)")
+# MAGIC         print(f"  Planning query: {planning_query}")
 # MAGIC     
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING)
 # MAGIC     
@@ -2033,7 +2035,8 @@ print("="*80)
 # MAGIC     writer({"type": "agent_thinking", "agent": "planning", "content": "Creating execution plan..."})
 # MAGIC     
 # MAGIC     # Create execution plan
-# MAGIC     plan = planning_agent.create_execution_plan(query, relevant_spaces_full)
+# MAGIC     # IMPORTANT: Use planning_query (with context_summary) not just query
+# MAGIC     plan = planning_agent.create_execution_plan(planning_query, relevant_spaces_full)
 # MAGIC     
 # MAGIC     # Extract plan components
 # MAGIC     join_strategy = plan.get("join_strategy")
