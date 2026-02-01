@@ -1,7 +1,7 @@
 # Databricks notebook source
 # DBTITLE 1,Auto reload Local Package
-%load_ext autoreload
-%autoreload 2
+# MAGIC %load_ext autoreload
+# MAGIC %autoreload 2
 
 # COMMAND ----------
 
@@ -565,7 +565,7 @@ Prerequisites:
 # MAGIC # - Simplified clarification: pending_clarification (replaces 7+ legacy fields)
 # MAGIC # - All planning, SQL synthesis, execution, and summary fields
 # MAGIC # See kumc_poc/conversation_models.py for the complete definition
-# MAGIC 
+# MAGIC
 # MAGIC print("✓ AgentState imported from conversation_models (single source of truth)")
 # MAGIC
 # MAGIC # State Reset Template
@@ -3328,6 +3328,7 @@ print(f"{'='*80}\n")
 
 # COMMAND ----------
 
+# DBTITLE 1,clarification msg
 follow_up_msg =  "Patients currently enrolled in a plan (based on enrollment date ranges)"
 print("thread_id in use:", thread_id)
 # follow up of thread from above, update here
@@ -3336,6 +3337,34 @@ result1 = AGENT.predict(ResponsesAgentRequest(
     input=[{"role": "user", "content": f"{follow_up_msg}"}],
     custom_inputs={"thread_id": f"{thread_id}"}
 ))
+
+# COMMAND ----------
+
+# DBTITLE 1,refinement msg
+follow_up_msg =  "remove the active plan requirement, add their plan date_start AND date_end info"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+# DBTITLE 1,refinement msg
+follow_up_msg =  "now I only want to see those from Medicare plan type, give also top 10"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
