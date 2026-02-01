@@ -371,22 +371,8 @@ Prerequisites:
 # MAGIC if kumc_poc_path not in sys.path:
 # MAGIC     sys.path.insert(0, kumc_poc_path)
 # MAGIC
-# MAGIC from kumc_poc.conversation_models import (
-# MAGIC     AgentState,
-# MAGIC     ConversationTurn,
-# MAGIC     ClarificationRequest,
-# MAGIC     IntentMetadata,
-# MAGIC     create_conversation_turn,
-# MAGIC     create_clarification_request,
-# MAGIC     find_turn_by_id,
-# MAGIC     format_clarification_message,
-# MAGIC     get_reset_state_template
-# MAGIC )
-# MAGIC from kumc_poc.intent_detection_service import (
-# MAGIC     IntentDetectionAgent,
-# MAGIC     create_intent_metadata_from_result,
-# MAGIC     should_skip_clarification_for_intent
-# MAGIC )
+# MAGIC # NOTE: No imports from kumc_poc - all TypedDicts and logic are inline
+# MAGIC # This simplifies the agent and makes it self-contained
 # MAGIC from databricks_langchain.genie import GenieAgent
 # MAGIC from langchain.agents import create_agent
 # MAGIC from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, AIMessageChunk
@@ -559,14 +545,166 @@ Prerequisites:
 # MAGIC
 # MAGIC # Note: Context is now loaded dynamically in clarification_node
 # MAGIC # This allows refresh without model redeployment
-# MAGIC # AgentState is now imported from kumc_poc.conversation_models
-# MAGIC # This ensures a single source of truth for the state definition and includes:
-# MAGIC # - Turn-based fields: current_turn, turn_history, intent_metadata
-# MAGIC # - Simplified clarification: pending_clarification (replaces 7+ legacy fields)
-# MAGIC # - All planning, SQL synthesis, execution, and summary fields
-# MAGIC # See kumc_poc/conversation_models.py for the complete definition
+# MAGIC # ==============================================================================
+# MAGIC # Inline TypedDicts for Unified Agent (No kumc_poc imports)
+# MAGIC # ==============================================================================
 # MAGIC
-# MAGIC print("✓ AgentState imported from conversation_models (single source of truth)")
+# MAGIC from typing import TypedDict, Optional, List, Dict, Any, Literal, Annotated
+# MAGIC from datetime import datetime
+# MAGIC import operator
+# MAGIC import uuid as uuid_module
+# MAGIC
+# MAGIC class ConversationTurn(TypedDict):
+# MAGIC     """
+# MAGIC     Represents a single conversation turn with all its context.
+# MAGIC     Inline definition for simplified unified agent.
+# MAGIC     """
+# MAGIC     turn_id: str
+# MAGIC     query: str
+# MAGIC     intent_type: Literal["new_question", "refinement", "continuation"]
+# MAGIC     parent_turn_id: Optional[str]
+# MAGIC     context_summary: Optional[str]
+# MAGIC     timestamp: str  # ISO format datetime string
+# MAGIC     triggered_clarification: Optional[bool]
+# MAGIC     metadata: Optional[Dict[str, Any]]
+# MAGIC
+# MAGIC class ClarificationRequest(TypedDict):
+# MAGIC     """Unified clarification request object."""
+# MAGIC     reason: str
+# MAGIC     options: List[str]
+# MAGIC     turn_id: str
+# MAGIC     timestamp: str
+# MAGIC     best_guess: Optional[str]
+# MAGIC     best_guess_confidence: Optional[float]
+# MAGIC
+# MAGIC class IntentMetadata(TypedDict):
+# MAGIC     """Intent metadata for business logic."""
+# MAGIC     intent_type: Literal["new_question", "refinement", "continuation"]
+# MAGIC     confidence: float
+# MAGIC     reasoning: str
+# MAGIC     topic_change_score: float
+# MAGIC     domain: Optional[str]
+# MAGIC     operation: Optional[str]
+# MAGIC     complexity: Literal["simple", "moderate", "complex"]
+# MAGIC     parent_turn_id: Optional[str]
+# MAGIC
+# MAGIC class AgentState(TypedDict):
+# MAGIC     """Simplified agent state using turn-based context management."""
+# MAGIC     # Turn Management
+# MAGIC     current_turn: Optional[ConversationTurn]
+# MAGIC     turn_history: Annotated[List[ConversationTurn], operator.add]
+# MAGIC     intent_metadata: Optional[IntentMetadata]
+# MAGIC     
+# MAGIC     # Clarification
+# MAGIC     pending_clarification: Optional[ClarificationRequest]
+# MAGIC     question_clear: bool
+# MAGIC     
+# MAGIC     # Deprecated
+# MAGIC     original_query: Optional[str]
+# MAGIC     
+# MAGIC     # Planning
+# MAGIC     plan: Optional[Dict[str, Any]]
+# MAGIC     sub_questions: Optional[List[str]]
+# MAGIC     requires_multiple_spaces: Optional[bool]
+# MAGIC     relevant_space_ids: Optional[List[str]]
+# MAGIC     relevant_spaces: Optional[List[Dict[str, Any]]]
+# MAGIC     vector_search_relevant_spaces_info: Optional[List[Dict[str, str]]]
+# MAGIC     requires_join: Optional[bool]
+# MAGIC     join_strategy: Optional[str]
+# MAGIC     execution_plan: Optional[str]
+# MAGIC     genie_route_plan: Optional[Dict[str, str]]
+# MAGIC     
+# MAGIC     # SQL Synthesis
+# MAGIC     sql_query: Optional[str]
+# MAGIC     sql_synthesis_explanation: Optional[str]
+# MAGIC     synthesis_error: Optional[str]
+# MAGIC     
+# MAGIC     # Execution
+# MAGIC     execution_result: Optional[Dict[str, Any]]
+# MAGIC     execution_error: Optional[str]
+# MAGIC     
+# MAGIC     # Summary
+# MAGIC     final_summary: Optional[str]
+# MAGIC     
+# MAGIC     # Conversation Management
+# MAGIC     user_id: Optional[str]
+# MAGIC     thread_id: Optional[str]
+# MAGIC     user_preferences: Optional[Dict[str, Any]]
+# MAGIC     
+# MAGIC     # Control Flow
+# MAGIC     next_agent: Optional[str]
+# MAGIC     messages: Annotated[List, operator.add]
+# MAGIC
+# MAGIC # Helper functions
+# MAGIC def create_conversation_turn(
+# MAGIC     query: str,
+# MAGIC     intent_type: Literal["new_question", "refinement", "continuation"],
+# MAGIC     parent_turn_id: Optional[str] = None,
+# MAGIC     context_summary: Optional[str] = None,
+# MAGIC     triggered_clarification: bool = False,
+# MAGIC     metadata: Optional[Dict[str, Any]] = None
+# MAGIC ) -> ConversationTurn:
+# MAGIC     """Factory function to create a ConversationTurn."""
+# MAGIC     return ConversationTurn(
+# MAGIC         turn_id=str(uuid_module.uuid4()),
+# MAGIC         query=query,
+# MAGIC         intent_type=intent_type,
+# MAGIC         parent_turn_id=parent_turn_id,
+# MAGIC         context_summary=context_summary,
+# MAGIC         timestamp=datetime.utcnow().isoformat(),
+# MAGIC         triggered_clarification=triggered_clarification,
+# MAGIC         metadata=metadata or {}
+# MAGIC     )
+# MAGIC
+# MAGIC def create_clarification_request(
+# MAGIC     reason: str,
+# MAGIC     options: List[str],
+# MAGIC     turn_id: str,
+# MAGIC     best_guess: Optional[str] = None,
+# MAGIC     best_guess_confidence: Optional[float] = None
+# MAGIC ) -> ClarificationRequest:
+# MAGIC     """Factory function to create a ClarificationRequest."""
+# MAGIC     return ClarificationRequest(
+# MAGIC         reason=reason,
+# MAGIC         options=options,
+# MAGIC         turn_id=turn_id,
+# MAGIC         timestamp=datetime.utcnow().isoformat(),
+# MAGIC         best_guess=best_guess,
+# MAGIC         best_guess_confidence=best_guess_confidence
+# MAGIC     )
+# MAGIC
+# MAGIC def format_clarification_message(clarification: ClarificationRequest) -> str:
+# MAGIC     """Format a clarification request into a user-friendly message."""
+# MAGIC     message = f"I need clarification: {clarification['reason']}\n\n"
+# MAGIC     message += "Please choose one of the following options or provide your own clarification:\n"
+# MAGIC     for i, option in enumerate(clarification['options'], 1):
+# MAGIC         message += f"{i}. {option}\n"
+# MAGIC     return message
+# MAGIC
+# MAGIC def get_reset_state_template() -> Dict[str, Any]:
+# MAGIC     """Get template for resetting per-query execution fields."""
+# MAGIC     return {
+# MAGIC         "pending_clarification": None,
+# MAGIC         "question_clear": False,
+# MAGIC         "plan": None,
+# MAGIC         "sub_questions": None,
+# MAGIC         "requires_multiple_spaces": None,
+# MAGIC         "relevant_space_ids": None,
+# MAGIC         "relevant_spaces": None,
+# MAGIC         "vector_search_relevant_spaces_info": None,
+# MAGIC         "requires_join": None,
+# MAGIC         "join_strategy": None,
+# MAGIC         "execution_plan": None,
+# MAGIC         "genie_route_plan": None,
+# MAGIC         "sql_query": None,
+# MAGIC         "sql_synthesis_explanation": None,
+# MAGIC         "synthesis_error": None,
+# MAGIC         "execution_result": None,
+# MAGIC         "execution_error": None,
+# MAGIC         "final_summary": None,
+# MAGIC     }
+# MAGIC
+# MAGIC print("✓ Inline TypedDicts defined (no kumc_poc imports)")
 # MAGIC
 # MAGIC # State Reset Template
 # MAGIC # All per-query execution fields that should be cleared for each new query.
@@ -576,7 +714,7 @@ Prerequisites:
 # MAGIC RESET_STATE_TEMPLATE = get_reset_state_template()
 # MAGIC
 # MAGIC # NOTE: Turn-based fields (current_turn, turn_history, intent_metadata) are NOT reset
-# MAGIC # They are managed by intent_detection_node and persist across queries within a conversation
+# MAGIC # They are managed by unified_intent_context_clarification_node and persist across queries
 # MAGIC
 # MAGIC # For reference, the template includes per-query fields (see conversation_models.get_reset_state_template()):
 # MAGIC # RESET_STATE_TEMPLATE = {
@@ -1825,10 +1963,300 @@ Prerequisites:
 # MAGIC print("✓ Message truncation functions defined (keeps last 5 message turns, 10 turn_history)")
 # MAGIC
 # MAGIC # ==============================================================================
-# MAGIC # Intent Detection Node (NEW - First-Class Service)
+# MAGIC # Unified Intent, Context, and Clarification Node (Simplified - No kumc_poc imports)
 # MAGIC # ==============================================================================
 # MAGIC
-# MAGIC def intent_detection_node(state: AgentState) -> dict:
+# MAGIC def check_clarification_rate_limit(turn_history: List[ConversationTurn], window_size: int = 5) -> bool:
+# MAGIC     """
+# MAGIC     Check if clarification was triggered in the last N turns (sliding window).
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         turn_history: List of conversation turns
+# MAGIC         window_size: Number of recent turns to check (default: 5)
+# MAGIC     
+# MAGIC     Returns:
+# MAGIC         True if rate limited (skip clarification), False if ok to clarify
+# MAGIC     """
+# MAGIC     if not turn_history:
+# MAGIC         return False
+# MAGIC     
+# MAGIC     # Look at last N turns
+# MAGIC     recent_turns = turn_history[-window_size:]
+# MAGIC     
+# MAGIC     # Check if any triggered clarification
+# MAGIC     for turn in recent_turns:
+# MAGIC         if turn.get("triggered_clarification", False):
+# MAGIC             return True  # Rate limited
+# MAGIC     
+# MAGIC     return False  # OK to clarify
+# MAGIC
+# MAGIC
+# MAGIC def unified_intent_context_clarification_node(state: AgentState) -> dict:
+# MAGIC     """
+# MAGIC     Unified node that combines intent detection, context generation, and clarity check.
+# MAGIC     
+# MAGIC     Single LLM call for:
+# MAGIC     1. Intent classification (new_question, refinement, continuation)
+# MAGIC     2. Context summary generation
+# MAGIC     3. Clarity assessment with rate limiting (max 1 per 5 turns)
+# MAGIC     
+# MAGIC     Returns: Dictionary with state updates
+# MAGIC     """
+# MAGIC     from langgraph.config import get_stream_writer
+# MAGIC     
+# MAGIC     writer = get_stream_writer()
+# MAGIC     
+# MAGIC     print("\n" + "="*80)
+# MAGIC     print("🎯 UNIFIED INTENT, CONTEXT & CLARIFICATION AGENT")
+# MAGIC     print("="*80)
+# MAGIC     
+# MAGIC     # Get current query from messages
+# MAGIC     messages = state.get("messages", [])
+# MAGIC     turn_history = state.get("turn_history", [])
+# MAGIC     
+# MAGIC     human_messages = [m for m in messages if isinstance(m, HumanMessage)]
+# MAGIC     current_query = human_messages[-1].content if human_messages else ""
+# MAGIC     
+# MAGIC     writer({"type": "agent_start", "agent": "unified_intent_context_clarification", "query": current_query})
+# MAGIC     
+# MAGIC     print(f"Query: {current_query}")
+# MAGIC     print(f"Turn history: {len(turn_history)} turns")
+# MAGIC     
+# MAGIC     # Format conversation context
+# MAGIC     conversation_context = ""
+# MAGIC     if turn_history:
+# MAGIC         conversation_context = "Previous conversation:\n"
+# MAGIC         for i, turn in enumerate(turn_history[-5:], 1):  # Last 5 turns
+# MAGIC             intent_label = turn['intent_type'].replace('_', ' ').title()
+# MAGIC             conversation_context += f"{i}. [{intent_label}] {turn['query']}\n"
+# MAGIC             if turn.get('context_summary'):
+# MAGIC                 conversation_context += f"   Context: {turn['context_summary'][:100]}...\n"
+# MAGIC     else:
+# MAGIC         conversation_context = "No previous conversation (first query)."
+# MAGIC     
+# MAGIC     # Load space context for clarity check
+# MAGIC     space_context = load_space_context(TABLE_NAME)
+# MAGIC     
+# MAGIC     # Single unified prompt for intent + context + clarity
+# MAGIC     unified_prompt = f"""Analyze the user's query in the context of the conversation history.
+# MAGIC
+# MAGIC Current Query: {current_query}
+# MAGIC
+# MAGIC Conversation History:
+# MAGIC {conversation_context}
+# MAGIC
+# MAGIC Available Data Sources:
+# MAGIC {json.dumps(space_context, indent=2)}
+# MAGIC
+# MAGIC ## Task 1: Classify Intent
+# MAGIC Classify the query into ONE of these categories:
+# MAGIC 1. **new_question**: A completely different topic/domain from previous queries
+# MAGIC 2. **refinement**: Narrowing/filtering/modifying the previous query on same topic
+# MAGIC 3. **continuation**: Follow-up exploring same topic from different angle
+# MAGIC
+# MAGIC ## Task 2: Generate Context Summary
+# MAGIC Create a 2-3 sentence summary that:
+# MAGIC - Synthesizes the conversation history
+# MAGIC - States clearly what the user wants
+# MAGIC - Is actionable for SQL query planning
+# MAGIC
+# MAGIC ## Task 3: Check Clarity
+# MAGIC Determine if the query is clear enough to generate SQL:
+# MAGIC - Is the question clear and answerable as-is? (BE LENIENT - default to TRUE)
+# MAGIC - ONLY mark as unclear if CRITICAL information is missing
+# MAGIC - If unclear, provide 2-3 specific clarification options
+# MAGIC
+# MAGIC Return ONLY valid JSON:
+# MAGIC {{
+# MAGIC   "intent_type": "new_question" | "refinement" | "continuation",
+# MAGIC   "confidence": 0.95,
+# MAGIC   "context_summary": "2-3 sentence summary for planning agent",
+# MAGIC   "question_clear": true/false,
+# MAGIC   "clarification_reason": "Why unclear (if question_clear=false)",
+# MAGIC   "clarification_options": ["Option 1", "Option 2", "Option 3"] or null,
+# MAGIC   "metadata": {{
+# MAGIC     "domain": "patients | claims | providers | medications | ...",
+# MAGIC     "complexity": "simple | moderate | complex",
+# MAGIC     "topic_change_score": 0.8
+# MAGIC   }}
+# MAGIC }}
+# MAGIC """
+# MAGIC     
+# MAGIC     # Call LLM
+# MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_CLARIFICATION)
+# MAGIC     
+# MAGIC     try:
+# MAGIC         print("🤖 Invoking unified LLM call...")
+# MAGIC         response = llm.invoke(unified_prompt)
+# MAGIC         content = response.content if hasattr(response, 'content') else str(response)
+# MAGIC         
+# MAGIC         # Parse JSON response
+# MAGIC         if "```json" in content:
+# MAGIC             content = content.split("```json")[1].split("```")[0].strip()
+# MAGIC         elif "```" in content:
+# MAGIC             content = content.split("```")[1].split("```")[0].strip()
+# MAGIC         
+# MAGIC         result = json.loads(content)
+# MAGIC         
+# MAGIC         # Extract results
+# MAGIC         intent_type = result["intent_type"].lower()
+# MAGIC         confidence = result["confidence"]
+# MAGIC         context_summary = result["context_summary"]
+# MAGIC         question_clear = result["question_clear"]
+# MAGIC         clarification_reason = result.get("clarification_reason")
+# MAGIC         clarification_options = result.get("clarification_options", [])
+# MAGIC         metadata = result.get("metadata", {})
+# MAGIC         
+# MAGIC         print(f"✓ Intent: {intent_type} (confidence: {confidence:.2f})")
+# MAGIC         print(f"  Context: {context_summary[:100]}...")
+# MAGIC         print(f"  Question clear: {question_clear}")
+# MAGIC         
+# MAGIC         # Create conversation turn
+# MAGIC         turn = create_conversation_turn(
+# MAGIC             query=current_query,
+# MAGIC             intent_type=intent_type,
+# MAGIC             parent_turn_id=None,  # Could extract from history if needed
+# MAGIC             context_summary=context_summary,
+# MAGIC             triggered_clarification=False,  # Will be updated if clarification triggered
+# MAGIC             metadata=metadata
+# MAGIC         )
+# MAGIC         
+# MAGIC         # Create intent metadata
+# MAGIC         intent_metadata = IntentMetadata(
+# MAGIC             intent_type=intent_type,
+# MAGIC             confidence=confidence,
+# MAGIC             reasoning=f"Unified analysis: {intent_type}",
+# MAGIC             topic_change_score=metadata.get("topic_change_score", 0.5),
+# MAGIC             domain=metadata.get("domain"),
+# MAGIC             operation=None,
+# MAGIC             complexity=metadata.get("complexity", "moderate"),
+# MAGIC             parent_turn_id=None
+# MAGIC         )
+# MAGIC         
+# MAGIC         # Emit events
+# MAGIC         writer({
+# MAGIC             "type": "intent_detected",
+# MAGIC             "intent_type": intent_type,
+# MAGIC             "confidence": confidence,
+# MAGIC             "complexity": metadata.get("complexity", "moderate")
+# MAGIC         })
+# MAGIC         
+# MAGIC         # Check if clarification needed
+# MAGIC         if not question_clear:
+# MAGIC             print(f"⚠ Query unclear: {clarification_reason}")
+# MAGIC             
+# MAGIC             # Check rate limit
+# MAGIC             is_rate_limited = check_clarification_rate_limit(turn_history, window_size=5)
+# MAGIC             
+# MAGIC             if is_rate_limited:
+# MAGIC                 print("⚠ Clarification rate limit reached (1 per 5 turns)")
+# MAGIC                 print("  Proceeding with best-effort interpretation")
+# MAGIC                 
+# MAGIC                 writer({"type": "clarification_skipped", "reason": "Rate limited (1 per 5 turns)"})
+# MAGIC                 
+# MAGIC                 # Force proceed to planning
+# MAGIC                 return {
+# MAGIC                     "current_turn": turn,
+# MAGIC                     "turn_history": [turn],
+# MAGIC                     "intent_metadata": intent_metadata,
+# MAGIC                     "question_clear": True,  # Force clear
+# MAGIC                     "pending_clarification": None,
+# MAGIC                     "messages": [
+# MAGIC                         SystemMessage(content=f"Clarification rate limited. Proceeding with: {context_summary}")
+# MAGIC                     ]
+# MAGIC                 }
+# MAGIC             else:
+# MAGIC                 # OK to clarify
+# MAGIC                 print("✓ Requesting clarification from user")
+# MAGIC                 
+# MAGIC                 # Create clarification request
+# MAGIC                 clarification_request = create_clarification_request(
+# MAGIC                     reason=clarification_reason or "Query needs more specificity",
+# MAGIC                     options=clarification_options,
+# MAGIC                     turn_id=turn["turn_id"],
+# MAGIC                     best_guess=context_summary,
+# MAGIC                     best_guess_confidence=confidence
+# MAGIC                 )
+# MAGIC                 
+# MAGIC                 # Mark turn as triggering clarification
+# MAGIC                 turn["triggered_clarification"] = True
+# MAGIC                 
+# MAGIC                 # Format message
+# MAGIC                 clarification_message = format_clarification_message(clarification_request)
+# MAGIC                 
+# MAGIC                 writer({"type": "clarification_requested", "reason": clarification_reason})
+# MAGIC                 
+# MAGIC                 return {
+# MAGIC                     "current_turn": turn,
+# MAGIC                     "turn_history": [turn],
+# MAGIC                     "intent_metadata": intent_metadata,
+# MAGIC                     "question_clear": False,
+# MAGIC                     "pending_clarification": clarification_request,
+# MAGIC                     "messages": [
+# MAGIC                         AIMessage(content=clarification_message),
+# MAGIC                         SystemMessage(content=f"Clarification requested for turn {turn['turn_id']}")
+# MAGIC                     ]
+# MAGIC                 }
+# MAGIC         else:
+# MAGIC             # Question is clear, proceed to planning
+# MAGIC             print("✓ Query is clear - proceeding to planning")
+# MAGIC             
+# MAGIC             writer({"type": "clarity_analysis", "clear": True, "reasoning": "Query is clear and answerable"})
+# MAGIC             
+# MAGIC             return {
+# MAGIC                 "current_turn": turn,
+# MAGIC                 "turn_history": [turn],
+# MAGIC                 "intent_metadata": intent_metadata,
+# MAGIC                 "question_clear": True,
+# MAGIC                 "pending_clarification": None,
+# MAGIC                 "messages": [
+# MAGIC                     SystemMessage(content=f"Intent: {intent_type}, proceeding to planning")
+# MAGIC                 ]
+# MAGIC             }
+# MAGIC         
+# MAGIC     except Exception as e:
+# MAGIC         print(f"❌ Unified agent error: {e}")
+# MAGIC         import traceback
+# MAGIC         traceback.print_exc()
+# MAGIC         
+# MAGIC         # Fallback: create minimal turn and proceed
+# MAGIC         turn = create_conversation_turn(
+# MAGIC             query=current_query,
+# MAGIC             intent_type="new_question",
+# MAGIC             context_summary=f"Query: {current_query}",
+# MAGIC             triggered_clarification=False,
+# MAGIC             metadata={}
+# MAGIC         )
+# MAGIC         
+# MAGIC         intent_metadata = IntentMetadata(
+# MAGIC             intent_type="new_question",
+# MAGIC             confidence=0.5,
+# MAGIC             reasoning=f"Error fallback: {str(e)}",
+# MAGIC             topic_change_score=1.0,
+# MAGIC             domain=None,
+# MAGIC             operation=None,
+# MAGIC             complexity="moderate",
+# MAGIC             parent_turn_id=None
+# MAGIC         )
+# MAGIC         
+# MAGIC         return {
+# MAGIC             "current_turn": turn,
+# MAGIC             "turn_history": [turn],
+# MAGIC             "intent_metadata": intent_metadata,
+# MAGIC             "question_clear": True,  # Proceed despite error
+# MAGIC             "pending_clarification": None,
+# MAGIC             "messages": [
+# MAGIC                 SystemMessage(content=f"Unified agent error (proceeding anyway): {str(e)}")
+# MAGIC             ]
+# MAGIC         }
+# MAGIC
+# MAGIC print("✓ Unified intent, context, and clarification node defined")
+# MAGIC
+# MAGIC # ==============================================================================
+# MAGIC # OLD Intent Detection Node (DEPRECATED - kept for reference)
+# MAGIC # ==============================================================================
+# MAGIC
+# MAGIC def intent_detection_node_OLD(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     Dedicated node for intent classification and context building.
 # MAGIC     
@@ -2830,9 +3258,8 @@ Prerequisites:
 # MAGIC     # Create the graph with explicit state
 # MAGIC     workflow = StateGraph(AgentState)
 # MAGIC     
-# MAGIC     # Add nodes (wrapping OOP agents)
-# MAGIC     workflow.add_node("intent_detection", intent_detection_node)  # NEW: Intent detection first
-# MAGIC     workflow.add_node("clarification", clarification_node)
+# MAGIC     # Add nodes - SIMPLIFIED with unified node
+# MAGIC     workflow.add_node("unified_intent_context_clarification", unified_intent_context_clarification_node)  # NEW: Unified node
 # MAGIC     workflow.add_node("planning", planning_node)
 # MAGIC     workflow.add_node("sql_synthesis_table", sql_synthesis_table_node)
 # MAGIC     workflow.add_node("sql_synthesis_genie", sql_synthesis_genie_node)
@@ -2840,7 +3267,8 @@ Prerequisites:
 # MAGIC     workflow.add_node("summarize", summarize_node)  # Final summarization node
 # MAGIC     
 # MAGIC     # Define routing logic based on explicit state
-# MAGIC     def route_after_clarification(state: AgentState) -> str:
+# MAGIC     def route_after_unified(state: AgentState) -> str:
+# MAGIC         """Route after unified node: planning or END (clarification)"""
 # MAGIC         if state.get("question_clear", False):
 # MAGIC             return "planning"
 # MAGIC         return END  # End if clarification needed
@@ -2860,15 +3288,13 @@ Prerequisites:
 # MAGIC         return "summarize"  # Summarize if synthesis error
 # MAGIC     
 # MAGIC     # Add edges with conditional routing
-# MAGIC     # NEW: Entry point is now intent_detection
-# MAGIC     workflow.set_entry_point("intent_detection")
+# MAGIC     # NEW: Entry point is now unified node
+# MAGIC     workflow.set_entry_point("unified_intent_context_clarification")
 # MAGIC     
-# MAGIC     # Route from intent detection to clarification (always go to clarification)
-# MAGIC     workflow.add_edge("intent_detection", "clarification")
-# MAGIC     
+# MAGIC     # Route from unified node to planning or END (clarification)
 # MAGIC     workflow.add_conditional_edges(
-# MAGIC         "clarification",
-# MAGIC         route_after_clarification,
+# MAGIC         "unified_intent_context_clarification",
+# MAGIC         route_after_unified,
 # MAGIC         {
 # MAGIC             "planning": "planning",
 # MAGIC             END: END
@@ -2915,17 +3341,19 @@ Prerequisites:
 # MAGIC     app_graph = workflow
 # MAGIC     
 # MAGIC     print("✓ Workflow nodes added:")
-# MAGIC     print("  1. Clarification Agent (OOP)")
+# MAGIC     print("  1. Unified Intent+Context+Clarification Node (SIMPLIFIED - no kumc_poc imports)")
 # MAGIC     print("  2. Planning Agent (OOP)")
 # MAGIC     print("  3. SQL Synthesis Agent - Table Route (OOP)")
 # MAGIC     print("  4. SQL Synthesis Agent - Genie Route (OOP)")
 # MAGIC     print("  5. SQL Execution Agent (OOP)")
 # MAGIC     print("  6. Result Summarize Agent (OOP) - FINAL NODE")
-# MAGIC     print("\n✓ Explicit state management enabled")
+# MAGIC     print("\n✓ Single LLM call for intent + context + clarity (faster, cheaper)")
+# MAGIC     print("✓ Smart clarification rate limiting (1 per 5 turns, sliding window)")
+# MAGIC     print("✓ Self-contained implementation (no external imports)")
 # MAGIC     print("✓ Conditional routing configured")
 # MAGIC     print("✓ All paths route to summarize node before END")
 # MAGIC     print("✓ Checkpointer will be added at runtime (distributed serving)")
-# MAGIC     print("\n✅ Hybrid Super Agent workflow created successfully!")
+# MAGIC     print("\n✅ Simplified Hybrid Super Agent workflow created successfully!")
 # MAGIC     print("="*80)
 # MAGIC     
 # MAGIC     return app_graph
@@ -3331,7 +3759,7 @@ Prerequisites:
 # MAGIC                 HumanMessage(content=latest_query)
 # MAGIC             ]
 # MAGIC             # NOTE: current_turn, intent_metadata, turn_history are NOT in RESET_STATE_TEMPLATE
-# MAGIC             # They are managed by intent_detection_node and persist via CheckpointSaver
+# MAGIC             # They are managed by unified_intent_context_clarification_node and persist via CheckpointSaver
 # MAGIC         }
 # MAGIC         
 # MAGIC         # Add user_id to state for long-term memory access
