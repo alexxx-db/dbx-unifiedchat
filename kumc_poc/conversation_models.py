@@ -130,7 +130,7 @@ class AgentState(TypedDict):
     
     # -------------------------------------------------------------------------
     # Turn Management (NEW - replaces clarification_count, last_clarified_query, 
-    #                       combined_query_context, original_query)
+    #                       combined_query_context)
     # -------------------------------------------------------------------------
     # NOTE: current_turn and intent_metadata are Optional because intent_detection_node
     # (the workflow entry point) creates them. If they were required fields, initial_state
@@ -138,6 +138,11 @@ class AgentState(TypedDict):
     current_turn: Optional[ConversationTurn]
     turn_history: Annotated[List[ConversationTurn], operator.add]  # Append-only with reducer
     intent_metadata: Optional[IntentMetadata]
+    
+    # -------------------------------------------------------------------------
+    # Deprecated (Backward Compatibility)
+    # -------------------------------------------------------------------------
+    original_query: Optional[str]  # DEPRECATED: Use messages array or current_turn.query instead
     
     # -------------------------------------------------------------------------
     # Clarification (SIMPLIFIED from 7 fields to 2)
@@ -207,6 +212,7 @@ def get_reset_state_template() -> Dict[str, Any]:
     - intent_metadata: Set per turn by intent detection
     - messages: Managed by operator.add, persists across turns
     - user_id, thread_id, user_preferences: Identity/context, persists
+    - original_query: Set in initial_state, not included in reset (deprecated)
     
     Returns:
         Dictionary with per-query fields reset to None/default values

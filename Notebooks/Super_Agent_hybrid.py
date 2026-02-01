@@ -578,33 +578,59 @@ Prerequisites:
 # MAGIC # NOTE: Turn-based fields (current_turn, turn_history, intent_metadata) are NOT reset
 # MAGIC # They are managed by intent_detection_node and persist across queries within a conversation
 # MAGIC
-# MAGIC # For reference, the template now includes:
+# MAGIC # For reference, the template includes per-query fields (see conversation_models.get_reset_state_template()):
 # MAGIC # RESET_STATE_TEMPLATE = {
-# MAGIC     # Clarification fields (per-query) - SIMPLIFIED from 7 fields to 2
+# MAGIC     # Clarification fields (per-query) - SIMPLIFIED from 7+ legacy fields to 2
 # MAGIC     # "pending_clarification": None,
 # MAGIC     # "question_clear": False,
 # MAGIC     
 # MAGIC     # Planning fields (per-query)
-# MAGIC     #"plan": None,
-# MAGIC     #"sub_questions": None,
-# MAGIC     # ... (rest defined in conversation_models.get_reset_state_template())
+# MAGIC     # "plan": None,
+# MAGIC     # "sub_questions": None,
+# MAGIC     # "requires_multiple_spaces": None,
+# MAGIC     # "relevant_space_ids": None,
+# MAGIC     # "relevant_spaces": None,
+# MAGIC     # "vector_search_relevant_spaces_info": None,
+# MAGIC     # "requires_join": None,
+# MAGIC     # "join_strategy": None,
+# MAGIC     # "execution_plan": None,
+# MAGIC     # "genie_route_plan": None,
+# MAGIC     
+# MAGIC     # SQL fields (per-query)
+# MAGIC     # "sql_query": None,
+# MAGIC     # "sql_synthesis_explanation": None,
+# MAGIC     # "synthesis_error": None,
+# MAGIC     
+# MAGIC     # Execution fields (per-query)
+# MAGIC     # "execution_result": None,
+# MAGIC     # "execution_error": None,
+# MAGIC     
+# MAGIC     # Summary (per-query)
+# MAGIC     # "final_summary": None,
 # MAGIC # }
 # MAGIC
-# MAGIC # NOTE: Fields intentionally NOT in template (managed elsewhere):
-# MAGIC # NEW TURN-BASED FIELDS (persist across queries):
+# MAGIC # Fields intentionally NOT in reset template:
+# MAGIC # 
+# MAGIC # NEW TURN-BASED FIELDS (persist across queries via CheckpointSaver):
 # MAGIC # - current_turn: Set by intent_detection_node for each query
-# MAGIC # - turn_history: Accumulated by reducer, persists across conversation
+# MAGIC # - turn_history: Accumulated by reducer with operator.add, persists across conversation
 # MAGIC # - intent_metadata: Set by intent_detection_node for each query
 # MAGIC #
-# MAGIC # DEPRECATED FIELDS (removed):
-# MAGIC # - clarification_count: Replaced by adaptive strategy + turn history
-# MAGIC # - last_clarified_query: Replaced by turn_history with pending_clarification
-# MAGIC # - combined_query_context: Replaced by current_turn.context_summary
-# MAGIC # - clarification_needed, clarification_options: Replaced by pending_clarification
+# MAGIC # DEPRECATED LEGACY FIELDS (removed from AgentState):
+# MAGIC # - clarification_count: Replaced by adaptive_clarification_strategy() + turn_history
+# MAGIC # - last_clarified_query: Replaced by turn_history with triggered_clarification flag
+# MAGIC # - combined_query_context: Replaced by current_turn.context_summary (LLM-generated)
+# MAGIC # - clarification_needed (as state field): Replaced by pending_clarification object
+# MAGIC # - clarification_options (as state field): Replaced by pending_clarification object
 # MAGIC #
-# MAGIC # PERSISTENT FIELDS (not reset):
-# MAGIC # - messages: Managed by operator.add in AgentState, persists
-# MAGIC # - user_id, thread_id, user_preferences: Identity/context, persists
+# MAGIC # DEPRECATED BUT KEPT FOR BACKWARD COMPATIBILITY:
+# MAGIC # - original_query: Kept in AgentState but deprecated. Use messages array instead.
+# MAGIC #   This field is still set in initial_state for compatibility with legacy code.
+# MAGIC #
+# MAGIC # PERSISTENT FIELDS (never reset):
+# MAGIC # - messages: Managed by operator.add in AgentState, persists across conversation
+# MAGIC # - user_id, thread_id, user_preferences: Identity/context, persists for entire conversation
+# MAGIC # - next_agent: Control flow field, managed by nodes and routing logic (not in reset template)
 # MAGIC
 # MAGIC print("✓ State reset template defined for per-query field clearing")
 # MAGIC
@@ -650,21 +676,19 @@ Prerequisites:
 # MAGIC         context = load_space_context(table_name)
 # MAGIC         return cls(llm, context)
 # MAGIC     
-# MAGIC     def check_clarity(self, query: str, clarification_count: int = 0) -> Dict[str, Any]:
+# MAGIC     def check_clarity(self, query: str) -> Dict[str, Any]:
 # MAGIC         """
 # MAGIC         Check if the user query is clear and answerable.
 # MAGIC         
+# MAGIC         NOTE: Clarification limiting is now handled by adaptive_clarification_strategy()
+# MAGIC         in the clarification_node, not here. This agent only assesses clarity.
+# MAGIC         
 # MAGIC         Args:
 # MAGIC             query: User's question
-# MAGIC             clarification_count: Number of times clarification has been requested
 # MAGIC             
 # MAGIC         Returns:
 # MAGIC             Dictionary with clarity analysis
 # MAGIC         """
-# MAGIC         # If already clarified once, don't ask again - proceed with best effort
-# MAGIC         if clarification_count >= 1:
-# MAGIC             print("⚠ Max clarification attempts reached (1) - proceeding with query as-is")
-# MAGIC             return {"question_clear": True}
 # MAGIC         
 # MAGIC         clarity_prompt = f"""
 # MAGIC Analyze the following question for clarity and specificity based on the context.
@@ -720,9 +744,9 @@ Prerequisites:
 # MAGIC             print(f"Defaulting to question_clear=True")
 # MAGIC             return {"question_clear": True}
 # MAGIC     
-# MAGIC     def __call__(self, query: str, clarification_count: int = 0) -> Dict[str, Any]:
+# MAGIC     def __call__(self, query: str) -> Dict[str, Any]:
 # MAGIC         """Make agent callable for easy invocation."""
-# MAGIC         return self.check_clarity(query, clarification_count)
+# MAGIC         return self.check_clarity(query)
 # MAGIC
 # MAGIC print("✓ ClarificationAgent class defined")
 # MAGIC class PlanningAgent:
@@ -1676,11 +1700,11 @@ Prerequisites:
 # MAGIC     print(f"  Context Summary: {intent_result.get('context_summary', 'N/A')[:100]}...")
 # MAGIC     
 # MAGIC     # Return state updates
+# MAGIC     # NOTE: next_agent is not needed here - workflow edges define routing
 # MAGIC     return {
 # MAGIC         "current_turn": turn,
 # MAGIC         "turn_history": [turn],  # Reducer will append
 # MAGIC         "intent_metadata": intent_metadata,
-# MAGIC         "next_agent": "clarification",
 # MAGIC         "messages": [
 # MAGIC             SystemMessage(content=f"Intent detected: {intent_result['intent_type']} (confidence: {intent_result['confidence']:.2f})")
 # MAGIC         ]
@@ -1833,8 +1857,8 @@ Prerequisites:
 # MAGIC     writer({"type": "agent_thinking", "agent": "clarification", "content": "Analyzing query clarity..."})
 # MAGIC     clarification_agent = ClarificationAgent.from_table(llm, TABLE_NAME)
 # MAGIC     
-# MAGIC     # Call clarity check WITHOUT clarification_count (no longer needed)
-# MAGIC     clarity_result = clarification_agent.check_clarity(query, clarification_count=0)
+# MAGIC     # Call clarity check (clarification limiting handled by adaptive strategy)
+# MAGIC     clarity_result = clarification_agent.check_clarity(query)
 # MAGIC     
 # MAGIC     # Prepare state updates (don't modify state in-place)
 # MAGIC     question_clear = clarity_result.get("question_clear", True)
@@ -3747,10 +3771,10 @@ def invoke_super_agent_hybrid(query: str, thread_id: str = "default") -> Dict[st
     print("="*80)
     
     # Initialize state with reset template to clear per-query fields
+    # NOTE: Workflow entry point is "intent_detection", so no need to set next_agent
     initial_state = {
         **RESET_STATE_TEMPLATE,  # Reset all per-query execution fields
-        "original_query": query,
-        "question_clear": False,
+        "original_query": query,  # DEPRECATED: Kept for backward compatibility
         "messages": [
             SystemMessage(content="""You are a multi-agent Q&A analysis system.
 Your role is to help users query and analyze cross-domain data.
@@ -3763,8 +3787,7 @@ Guidelines:
 - Use UC functions and Genie agents to generate accurate SQL
 - Return results with proper context and explanations"""),
             HumanMessage(content=query)
-        ],
-        "next_agent": "clarification"
+        ]
     }
     
     # Configure with thread
