@@ -1176,6 +1176,10 @@ OUTPUT REQUIREMENTS:
         """
         Synthesize SQL using Genie agents (genie route) with autonomous tool calling.
         
+        EXECUTION STRATEGY:
+        1. PRIMARY: Try RunnableParallel for fast parallel execution
+        2. FALLBACK: Use LangGraph agent with retries and DR if parallel fails
+        
         Args:
             plan: Complete plan dictionary from PlanningAgent containing:
                 - original_query: Original user question
@@ -1195,6 +1199,98 @@ OUTPUT REQUIREMENTS:
         # Build the plan result JSON for the agent
         plan_result = plan
         
+        print(f"\n{'='*80}")
+        print("🤖 SQL Synthesis Agent - Starting...")
+        print(f"{'='*80}")
+        print(f"Plan: {json.dumps(plan_result, indent=2)}")
+        print(f"{'='*80}\n")
+        
+        # STRATEGY 1: Try RunnableParallel execution first (fast path)
+        genie_route_plan = plan_result.get("genie_route_plan", {})
+        use_parallel_fallback = False
+        
+        if genie_route_plan:
+            print("🚀 PRIMARY STRATEGY: Attempting RunnableParallel execution...")
+            try:
+                # Invoke Genie agents in parallel
+                parallel_results = self.invoke_genie_agents_parallel(genie_route_plan)
+                
+                if parallel_results:
+                    print(f"  ✅ Parallel execution successful! Got {len(parallel_results)} results")
+                    
+                    # Extract SQL fragments from parallel results
+                    sql_fragments = {}
+                    for space_id, result in parallel_results.items():
+                        # Extract SQL from Genie agent response
+                        if isinstance(result, dict):
+                            sql = result.get("sql") or result.get("messages", [{}])[-1].get("content", "")
+                        else:
+                            sql = str(result)
+                        sql_fragments[space_id] = sql
+                    
+                    # Use LLM to combine SQL fragments
+                    print("  🔧 Combining SQL fragments with LLM...")
+                    combine_prompt = f"""
+You are a SQL expert. Combine the following SQL fragments into a single, executable SQL query.
+
+Original Question: {plan_result.get('original_query', 'N/A')}
+Execution Plan: {plan_result.get('execution_plan', 'N/A')}
+
+SQL Fragments from Genie Agents:
+{json.dumps(sql_fragments, indent=2)}
+
+Requirements:
+- Generate complete, executable SQL with proper JOINs
+- Use WHERE clauses for filtering
+- Include appropriate aggregations
+- Use clear column aliases
+- Always use real column names from the data
+
+Return your response with:
+1. Brief explanation of your approach
+2. The final SQL query in a ```sql code block
+"""
+                    
+                    combine_result = self.llm.invoke(combine_prompt)
+                    final_content = combine_result.content.strip() if hasattr(combine_result, 'content') else str(combine_result)
+                    
+                    # Extract SQL from the combined result
+                    sql_query = None
+                    has_sql = False
+                    explanation = final_content
+                    
+                    if "```sql" in final_content.lower():
+                        sql_match = re.search(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
+                        if sql_match:
+                            sql_query = sql_match.group(1).strip()
+                            has_sql = True
+                            explanation = re.sub(r'```sql\s*.*?\s*```', '', final_content, flags=re.IGNORECASE | re.DOTALL)
+                    
+                    if has_sql and sql_query:
+                        print("  ✅ PRIMARY STRATEGY SUCCESS: SQL generated via RunnableParallel")
+                        return {
+                            "sql": sql_query,
+                            "explanation": f"[Parallel Execution] {explanation.strip()}",
+                            "has_sql": True
+                        }
+                    else:
+                        print("  ⚠️ PRIMARY STRATEGY: Could not extract SQL from combined results")
+                        use_parallel_fallback = True
+                else:
+                    print("  ⚠️ PRIMARY STRATEGY: Parallel execution returned no results")
+                    use_parallel_fallback = True
+                    
+            except Exception as e:
+                print(f"  ❌ PRIMARY STRATEGY FAILED: {str(e)}")
+                use_parallel_fallback = True
+        else:
+            print("  ℹ️ No genie_route_plan provided, skipping parallel execution")
+            use_parallel_fallback = True
+        
+        # STRATEGY 2: Fallback to LangGraph agent (with retries and DR)
+        if use_parallel_fallback:
+            print("\n🔄 FALLBACK STRATEGY: Using LangGraph agent with retries/DR...")
+        
         # Create the message for the agent
         agent_message = {
             "messages": [
@@ -1207,12 +1303,6 @@ Generate a SQL query to answer the question according to the Query Plan:
                 }
             ]
         }
-        
-        print(f"\n{'='*80}")
-        print("🤖 Invoking SQL Synthesis Agent with Genie Agent Tools...")
-        print(f"{'='*80}")
-        print(f"Plan: {json.dumps(plan_result, indent=2)}")
-        print(f"{'='*80}\n")
         
         try:
             # Enable MLflow autologging for tracing
@@ -1228,7 +1318,10 @@ Generate a SQL query to answer the question according to the Query Plan:
             final_content = final_message.content.strip()
             
             print(f"\n{'='*80}")
-            print("✅ SQL Synthesis Agent completed")
+            if use_parallel_fallback:
+                print("✅ FALLBACK STRATEGY SUCCESS: LangGraph agent completed")
+            else:
+                print("✅ SQL Synthesis Agent completed")
             print(f"{'='*80}")
             print(f"Result: {final_content[:500]}...")
             print(f"{'='*80}\n")
@@ -1265,6 +1358,10 @@ Generate a SQL query to answer the question according to the Query Plan:
             explanation = explanation.strip()
             if not explanation:
                 explanation = final_content if not has_sql else "SQL query generated successfully by Genie agent tools."
+            
+            # Add strategy indicator to explanation
+            if use_parallel_fallback:
+                explanation = f"[Agent Orchestration - Fallback] {explanation}"
             
             return {
                 "sql": sql_query,

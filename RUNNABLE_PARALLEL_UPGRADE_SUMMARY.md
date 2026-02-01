@@ -2,7 +2,9 @@
 
 ## ✅ Upgrade Complete
 
-Successfully upgraded the `SQLSynthesisGenieAgent` to use LangChain's `RunnableParallel` pattern for efficient parallel execution of Genie agents.
+Successfully upgraded the `SQLSynthesisGenieAgent` to use LangChain's `RunnableParallel` pattern with an intelligent **primary/fallback execution strategy**:
+- **PRIMARY:** Fast parallel execution using `RunnableParallel`
+- **FALLBACK:** Reliable agent orchestration with retries when primary fails
 
 ## 📊 Verification Results
 

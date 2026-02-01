@@ -1470,6 +1470,10 @@ Prerequisites:
 # MAGIC         """
 # MAGIC         Synthesize SQL using Genie agents (genie route) with autonomous tool calling.
 # MAGIC         
+# MAGIC         EXECUTION STRATEGY:
+# MAGIC         1. PRIMARY: Try RunnableParallel for fast parallel execution
+# MAGIC         2. FALLBACK: Use LangGraph agent with retries and DR if parallel fails
+# MAGIC         
 # MAGIC         Args:
 # MAGIC             plan: Complete plan dictionary from PlanningAgent containing:
 # MAGIC                 - original_query: Original user question
@@ -1489,6 +1493,98 @@ Prerequisites:
 # MAGIC         # Build the plan result JSON for the agent
 # MAGIC         plan_result = plan
 # MAGIC         
+# MAGIC         print(f"\n{'='*80}")
+# MAGIC         print("🤖 SQL Synthesis Agent - Starting...")
+# MAGIC         print(f"{'='*80}")
+# MAGIC         print(f"Plan: {json.dumps(plan_result, indent=2)}")
+# MAGIC         print(f"{'='*80}\n")
+# MAGIC         
+# MAGIC         # STRATEGY 1: Try RunnableParallel execution first (fast path)
+# MAGIC         genie_route_plan = plan_result.get("genie_route_plan", {})
+# MAGIC         use_parallel_fallback = False
+# MAGIC         
+# MAGIC         if genie_route_plan:
+# MAGIC             print("🚀 PRIMARY STRATEGY: Attempting RunnableParallel execution...")
+# MAGIC             try:
+# MAGIC                 # Invoke Genie agents in parallel
+# MAGIC                 parallel_results = self.invoke_genie_agents_parallel(genie_route_plan)
+# MAGIC                 
+# MAGIC                 if parallel_results:
+# MAGIC                     print(f"  ✅ Parallel execution successful! Got {len(parallel_results)} results")
+# MAGIC                     
+# MAGIC                     # Extract SQL fragments from parallel results
+# MAGIC                     sql_fragments = {}
+# MAGIC                     for space_id, result in parallel_results.items():
+# MAGIC                         # Extract SQL from Genie agent response
+# MAGIC                         if isinstance(result, dict):
+# MAGIC                             sql = result.get("sql") or result.get("messages", [{}])[-1].get("content", "")
+# MAGIC                         else:
+# MAGIC                             sql = str(result)
+# MAGIC                         sql_fragments[space_id] = sql
+# MAGIC                     
+# MAGIC                     # Use LLM to combine SQL fragments
+# MAGIC                     print("  🔧 Combining SQL fragments with LLM...")
+# MAGIC                     combine_prompt = f"""
+# MAGIC You are a SQL expert. Combine the following SQL fragments into a single, executable SQL query.
+# MAGIC 
+# MAGIC Original Question: {plan_result.get('original_query', 'N/A')}
+# MAGIC Execution Plan: {plan_result.get('execution_plan', 'N/A')}
+# MAGIC 
+# MAGIC SQL Fragments from Genie Agents:
+# MAGIC {json.dumps(sql_fragments, indent=2)}
+# MAGIC 
+# MAGIC Requirements:
+# MAGIC - Generate complete, executable SQL with proper JOINs
+# MAGIC - Use WHERE clauses for filtering
+# MAGIC - Include appropriate aggregations
+# MAGIC - Use clear column aliases
+# MAGIC - Always use real column names from the data
+# MAGIC 
+# MAGIC Return your response with:
+# MAGIC 1. Brief explanation of your approach
+# MAGIC 2. The final SQL query in a ```sql code block
+# MAGIC """
+# MAGIC                     
+# MAGIC                     combine_result = self.llm.invoke(combine_prompt)
+# MAGIC                     final_content = combine_result.content.strip() if hasattr(combine_result, 'content') else str(combine_result)
+# MAGIC                     
+# MAGIC                     # Extract SQL from the combined result
+# MAGIC                     sql_query = None
+# MAGIC                     has_sql = False
+# MAGIC                     explanation = final_content
+# MAGIC                     
+# MAGIC                     if "```sql" in final_content.lower():
+# MAGIC                         sql_match = re.search(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
+# MAGIC                         if sql_match:
+# MAGIC                             sql_query = sql_match.group(1).strip()
+# MAGIC                             has_sql = True
+# MAGIC                             explanation = re.sub(r'```sql\s*.*?\s*```', '', final_content, flags=re.IGNORECASE | re.DOTALL)
+# MAGIC                     
+# MAGIC                     if has_sql and sql_query:
+# MAGIC                         print("  ✅ PRIMARY STRATEGY SUCCESS: SQL generated via RunnableParallel")
+# MAGIC                         return {
+# MAGIC                             "sql": sql_query,
+# MAGIC                             "explanation": f"[Parallel Execution] {explanation.strip()}",
+# MAGIC                             "has_sql": True
+# MAGIC                         }
+# MAGIC                     else:
+# MAGIC                         print("  ⚠️ PRIMARY STRATEGY: Could not extract SQL from combined results")
+# MAGIC                         use_parallel_fallback = True
+# MAGIC                 else:
+# MAGIC                     print("  ⚠️ PRIMARY STRATEGY: Parallel execution returned no results")
+# MAGIC                     use_parallel_fallback = True
+# MAGIC                     
+# MAGIC             except Exception as e:
+# MAGIC                 print(f"  ❌ PRIMARY STRATEGY FAILED: {str(e)}")
+# MAGIC                 use_parallel_fallback = True
+# MAGIC         else:
+# MAGIC             print("  ℹ️ No genie_route_plan provided, skipping parallel execution")
+# MAGIC             use_parallel_fallback = True
+# MAGIC         
+# MAGIC         # STRATEGY 2: Fallback to LangGraph agent (with retries and DR)
+# MAGIC         if use_parallel_fallback:
+# MAGIC             print("\n🔄 FALLBACK STRATEGY: Using LangGraph agent with retries/DR...")
+# MAGIC         
 # MAGIC         # Create the message for the agent
 # MAGIC         agent_message = {
 # MAGIC             "messages": [
@@ -1501,12 +1597,6 @@ Prerequisites:
 # MAGIC                 }
 # MAGIC             ]
 # MAGIC         }
-# MAGIC         
-# MAGIC         print(f"\n{'='*80}")
-# MAGIC         print("🤖 Invoking SQL Synthesis Agent with Genie Agent Tools...")
-# MAGIC         print(f"{'='*80}")
-# MAGIC         print(f"Plan: {json.dumps(plan_result, indent=2)}")
-# MAGIC         print(f"{'='*80}\n")
 # MAGIC         
 # MAGIC         try:
 # MAGIC             # Enable MLflow autologging for tracing
@@ -1522,7 +1612,10 @@ Prerequisites:
 # MAGIC             final_content = final_message.content.strip()
 # MAGIC             
 # MAGIC             print(f"\n{'='*80}")
-# MAGIC             print("✅ SQL Synthesis Agent completed")
+# MAGIC             if use_parallel_fallback:
+# MAGIC                 print("✅ FALLBACK STRATEGY SUCCESS: LangGraph agent completed")
+# MAGIC             else:
+# MAGIC                 print("✅ SQL Synthesis Agent completed")
 # MAGIC             print(f"{'='*80}")
 # MAGIC             print(f"Result: {final_content[:500]}...")
 # MAGIC             print(f"{'='*80}\n")
@@ -1559,6 +1652,10 @@ Prerequisites:
 # MAGIC             explanation = explanation.strip()
 # MAGIC             if not explanation:
 # MAGIC                 explanation = final_content if not has_sql else "SQL query generated successfully by Genie agent tools."
+# MAGIC             
+# MAGIC             # Add strategy indicator to explanation
+# MAGIC             if use_parallel_fallback:
+# MAGIC                 explanation = f"[Agent Orchestration - Fallback] {explanation}"
 # MAGIC             
 # MAGIC             return {
 # MAGIC                 "sql": sql_query,
