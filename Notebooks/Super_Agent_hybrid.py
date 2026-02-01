@@ -1716,7 +1716,7 @@ print("="*80)
 # MAGIC     print(f"  Context Summary: {intent_result.get('context_summary', 'N/A')[:100]}...")
 # MAGIC     
 # MAGIC     # Return state updates
-# MAGIC     return {
+# MAGIC     state_update = {
 # MAGIC         "current_turn": turn,
 # MAGIC         "turn_history": [turn],  # Reducer will append
 # MAGIC         "intent_metadata": intent_metadata,
@@ -1725,6 +1725,14 @@ print("="*80)
 # MAGIC             SystemMessage(content=f"Intent detected: {intent_result['intent_type']} (confidence: {intent_result['confidence']:.2f})")
 # MAGIC         ]
 # MAGIC     }
+# MAGIC     
+# MAGIC     print(f"🔍 DEBUG: intent_detection_node returning state update:")
+# MAGIC     print(f"  current_turn.turn_id: {turn['turn_id']}")
+# MAGIC     print(f"  current_turn.query: {turn['query'][:80]}...")
+# MAGIC     print(f"  current_turn.intent_type: {turn['intent_type']}")
+# MAGIC     print(f"  current_turn.context_summary: {turn.get('context_summary', 'N/A')[:100]}...")
+# MAGIC     
+# MAGIC     return state_update
 # MAGIC
 # MAGIC print("✓ Intent detection node defined")
 # MAGIC
@@ -1824,6 +1832,17 @@ print("="*80)
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🔍 CLARIFICATION AGENT")
 # MAGIC     print("="*80)
+# MAGIC     
+# MAGIC     # DEBUG: Log what state we received
+# MAGIC     print(f"🔍 DEBUG: clarification_node received state:")
+# MAGIC     print(f"  state.keys(): {list(state.keys())}")
+# MAGIC     print(f"  'current_turn' in state: {'current_turn' in state}")
+# MAGIC     if 'current_turn' in state:
+# MAGIC         ct = state['current_turn']
+# MAGIC         print(f"  current_turn type: {type(ct)}")
+# MAGIC         if ct:
+# MAGIC             print(f"  current_turn.turn_id: {ct.get('turn_id', 'MISSING')}")
+# MAGIC             print(f"  current_turn.query: {ct.get('query', 'MISSING')[:80]}")
 # MAGIC     
 # MAGIC     # Get current turn and intent from state (set by intent_detection_node)
 # MAGIC     current_turn = state.get("current_turn")
@@ -3024,8 +3043,7 @@ print("="*80)
 # MAGIC         
 # MAGIC         # SIMPLIFIED: Unified state initialization for all scenarios
 # MAGIC         # CheckpointSaver will restore previous conversation context automatically
-# MAGIC         # The clarification_node will auto-detect if this is a clarification response
-# MAGIC         # by examining the message history
+# MAGIC         # The intent_detection_node runs first and creates current_turn
 # MAGIC         initial_state = {
 # MAGIC             **RESET_STATE_TEMPLATE,  # Reset all per-query execution fields
 # MAGIC             "original_query": latest_query,
@@ -3042,8 +3060,10 @@ print("="*80)
 # MAGIC - Use UC functions and Genie agents to generate accurate SQL
 # MAGIC - Return results with proper context and explanations"""),
 # MAGIC                 HumanMessage(content=latest_query)
-# MAGIC             ],
-# MAGIC             "next_agent": "clarification"
+# MAGIC             ]
+# MAGIC             # NOTE: current_turn and intent_metadata NOT set here
+# MAGIC             # They will be created by intent_detection_node (the entry point)
+# MAGIC             # NOTE: turn_history persists via operator.add reducer (conversation memory)
 # MAGIC         }
 # MAGIC         
 # MAGIC         # Add user_id to state for long-term memory access
