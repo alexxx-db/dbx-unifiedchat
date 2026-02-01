@@ -3315,7 +3315,7 @@ The make_json_serializable() method now properly handles LangChain message objec
 from mlflow.types.responses import ResponsesAgentRequest
 from uuid import uuid4
 
-test_query = "Show me the top 10 active plan members over 50 years old"
+test_query = "Show me the top 10 active plan members over 50 years old and with diabetes"
 
 print(f"\n{'='*80}")
 print(f"Testing Enhanced Granular Streaming")
@@ -3379,7 +3379,56 @@ print(f"{'='*80}\n")
 # COMMAND ----------
 
 # DBTITLE 1,clarification msg
-follow_up_msg =  "Patients currently enrolled in a plan (based on enrollment date ranges)"
+follow_up_msg =  "Patients currently enrolled in a plan (based on enrollment date ranges); use diabetes code (E10-E14)"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+# DBTITLE 1,no clarify but actaully a new question msg
+follow_up_msg =  "What are top 10 patients with highest medical charges?"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+# DBTITLE 1,continution msg
+follow_up_msg =  "Now I want to look at medical and pharmacy cost combined"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+# DBTITLE 1,switch to new topic
+follow_up_msg =  "What is the average cost of medical claims for patients diagnosed with diabetes, broken down by insurance payer type and patient age group? use genie route"
+thread_id = f"test-streaming-{str(uuid4())[:8]}"
+print("thread_id in use:", thread_id)
+# follow up of thread from above, update here
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": f"{follow_up_msg}"}],
+    custom_inputs={"thread_id": f"{thread_id}"}
+))
+
+# COMMAND ----------
+
+# DBTITLE 1,response to clarify
+follow_up_msg =  "you decide"
 print("thread_id in use:", thread_id)
 # follow up of thread from above, update here
 # First message
@@ -3403,7 +3452,7 @@ result1 = AGENT.predict(ResponsesAgentRequest(
 # COMMAND ----------
 
 # DBTITLE 1,refinement msg
-follow_up_msg =  "now I only want to see those from Medicare plan type, give also top 10"
+follow_up_msg =  "now I only want to see those NOT from Medicare plan type, give also top 10"
 print("thread_id in use:", thread_id)
 # follow up of thread from above, update here
 # First message
