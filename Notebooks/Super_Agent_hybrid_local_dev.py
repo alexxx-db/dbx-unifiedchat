@@ -1219,8 +1219,19 @@ OUTPUT REQUIREMENTS:
                     sql_fragments = {}
                     for space_id, result in parallel_results.items():
                         # Extract SQL from Genie agent response
-                        if isinstance(result, dict):
-                            sql = result.get("sql") or result.get("messages", [{}])[-1].get("content", "")
+                        # Result structure: {'messages': [AIMessage, ...], 'conversation_id': '...'}
+                        sql = ""
+                        if isinstance(result, dict) and "messages" in result:
+                            messages = result.get("messages", [])
+                            # Look for message with name='query_sql' or take last message
+                            for msg in messages:
+                                if hasattr(msg, 'name') and msg.name == 'query_sql':
+                                    sql = msg.content if hasattr(msg, 'content') else str(msg)
+                                    break
+                            # Fallback to last message if no query_sql found
+                            if not sql and messages:
+                                last_msg = messages[-1]
+                                sql = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
                         else:
                             sql = str(result)
                         sql_fragments[space_id] = sql
