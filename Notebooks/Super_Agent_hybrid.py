@@ -1664,21 +1664,41 @@ Prerequisites:
 # MAGIC """
 # MAGIC
 # MAGIC def extract_intent_detection_context(state: AgentState) -> dict:
-# MAGIC     """Extract minimal context for intent detection."""
+# MAGIC     """
+# MAGIC     Extract minimal context for intent detection.
+# MAGIC     
+# MAGIC     OPTIMIZED: Applies message and turn history truncation
+# MAGIC     """
+# MAGIC     messages = state.get("messages", [])
+# MAGIC     turn_history = state.get("turn_history", [])
+# MAGIC     
 # MAGIC     return {
-# MAGIC         "messages": state.get("messages", []),
-# MAGIC         "turn_history": state.get("turn_history", []),
+# MAGIC         "messages": truncate_message_history(messages, max_turns=5),
+# MAGIC         "turn_history": truncate_turn_history(turn_history, max_turns=10),
 # MAGIC         "user_id": state.get("user_id"),
-# MAGIC         "thread_id": state.get("thread_id")
+# MAGIC         "thread_id": state.get("thread_id"),
+# MAGIC         # For logging: track original sizes
+# MAGIC         "_original_message_count": len(messages),
+# MAGIC         "_original_turn_count": len(turn_history)
 # MAGIC     }
 # MAGIC
 # MAGIC def extract_clarification_context(state: AgentState) -> dict:
-# MAGIC     """Extract minimal context for clarification."""
+# MAGIC     """
+# MAGIC     Extract minimal context for clarification.
+# MAGIC     
+# MAGIC     OPTIMIZED: Applies message and turn history truncation
+# MAGIC     """
+# MAGIC     messages = state.get("messages", [])
+# MAGIC     turn_history = state.get("turn_history", [])
+# MAGIC     
 # MAGIC     return {
 # MAGIC         "current_turn": state.get("current_turn"),
-# MAGIC         "turn_history": state.get("turn_history", []),
+# MAGIC         "turn_history": truncate_turn_history(turn_history, max_turns=10),
 # MAGIC         "intent_metadata": state.get("intent_metadata"),
-# MAGIC         "messages": state.get("messages", [])
+# MAGIC         "messages": truncate_message_history(messages, max_turns=5),
+# MAGIC         # For logging: track original sizes
+# MAGIC         "_original_message_count": len(messages),
+# MAGIC         "_original_turn_count": len(turn_history)
 # MAGIC     }
 # MAGIC
 # MAGIC def extract_planning_context(state: AgentState) -> dict:
@@ -1711,17 +1731,98 @@ Prerequisites:
 # MAGIC     }
 # MAGIC
 # MAGIC def extract_summarize_context(state: AgentState) -> dict:
-# MAGIC     """Extract minimal context for result summarization."""
+# MAGIC     """
+# MAGIC     Extract minimal context for result summarization.
+# MAGIC     
+# MAGIC     OPTIMIZED: Applies message history truncation
+# MAGIC     """
+# MAGIC     messages = state.get("messages", [])
+# MAGIC     
 # MAGIC     return {
-# MAGIC         "messages": state.get("messages", []),
+# MAGIC         "messages": truncate_message_history(messages, max_turns=5),
 # MAGIC         "sql_query": state.get("sql_query"),
 # MAGIC         "execution_result": state.get("execution_result"),
 # MAGIC         "execution_error": state.get("execution_error"),
 # MAGIC         "sql_synthesis_explanation": state.get("sql_synthesis_explanation"),
-# MAGIC         "synthesis_error": state.get("synthesis_error")
+# MAGIC         "synthesis_error": state.get("synthesis_error"),
+# MAGIC         # For logging: track original size
+# MAGIC         "_original_message_count": len(messages)
 # MAGIC     }
 # MAGIC
 # MAGIC print("✓ State extraction helpers defined (for token optimization)")
+# MAGIC
+# MAGIC # ==============================================================================
+# MAGIC # Message History Truncation (Token Optimization - Priority 3)
+# MAGIC # ==============================================================================
+# MAGIC """
+# MAGIC Smart message history truncation to keep only recent turns.
+# MAGIC
+# MAGIC Reduces token usage in long conversations by keeping only:
+# MAGIC - All SystemMessage instances (prompts)
+# MAGIC - Last N HumanMessage/AIMessage pairs
+# MAGIC
+# MAGIC Example: After 10 turns (20 messages):
+# MAGIC - Before: 18K tokens
+# MAGIC - After: 6K tokens (67% reduction)
+# MAGIC """
+# MAGIC
+# MAGIC def truncate_message_history(
+# MAGIC     messages: List, 
+# MAGIC     max_turns: int = 5,
+# MAGIC     keep_system: bool = True
+# MAGIC ) -> List:
+# MAGIC     """
+# MAGIC     Keep only recent turns + system messages.
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         messages: Full message history
+# MAGIC         max_turns: Number of recent turns to keep (default 5)
+# MAGIC         keep_system: Whether to preserve all SystemMessage instances
+# MAGIC         
+# MAGIC     Returns:
+# MAGIC         Truncated message list
+# MAGIC     """
+# MAGIC     if not messages:
+# MAGIC         return []
+# MAGIC     
+# MAGIC     # Separate system messages from conversation
+# MAGIC     system_msgs = []
+# MAGIC     conversation_msgs = []
+# MAGIC     
+# MAGIC     for msg in messages:
+# MAGIC         if isinstance(msg, SystemMessage) and keep_system:
+# MAGIC             system_msgs.append(msg)
+# MAGIC         else:
+# MAGIC             conversation_msgs.append(msg)
+# MAGIC     
+# MAGIC     # Keep only last N turns (each turn = HumanMessage + AIMessage pair)
+# MAGIC     recent_msgs = conversation_msgs[-(max_turns * 2):] if len(conversation_msgs) > max_turns * 2 else conversation_msgs
+# MAGIC     
+# MAGIC     return system_msgs + recent_msgs
+# MAGIC
+# MAGIC
+# MAGIC def truncate_turn_history(
+# MAGIC     turn_history: List, 
+# MAGIC     max_turns: int = 10
+# MAGIC ) -> List:
+# MAGIC     """
+# MAGIC     Keep only recent turns in turn_history.
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         turn_history: Full turn history
+# MAGIC         max_turns: Number of recent turns to keep (default 10)
+# MAGIC         
+# MAGIC     Returns:
+# MAGIC         Truncated turn history list
+# MAGIC     """
+# MAGIC     if not turn_history:
+# MAGIC         return []
+# MAGIC     
+# MAGIC     # Keep only last N turns
+# MAGIC     return turn_history[-max_turns:] if len(turn_history) > max_turns else turn_history
+# MAGIC
+# MAGIC
+# MAGIC print("✓ Message truncation functions defined (keeps last 5 message turns, 10 turn_history)")
 # MAGIC
 # MAGIC # ==============================================================================
 # MAGIC # Intent Detection Node (NEW - First-Class Service)
@@ -1752,12 +1853,23 @@ Prerequisites:
 # MAGIC     context = extract_intent_detection_context(state)
 # MAGIC     print(f"📊 State optimization: Using {len(context)} fields (vs {len([k for k in state.keys() if state.get(k) is not None])} in full state)")
 # MAGIC     
+# MAGIC     # OPTIMIZATION: Log message and turn history truncation
+# MAGIC     original_msg_count = context.get("_original_message_count", 0)
+# MAGIC     original_turn_count = context.get("_original_turn_count", 0)
+# MAGIC     messages = context.get("messages", [])
+# MAGIC     turn_history = context.get("turn_history", [])
+# MAGIC     
+# MAGIC     if original_msg_count > len(messages):
+# MAGIC         saved_pct = ((original_msg_count - len(messages)) / original_msg_count * 100)
+# MAGIC         print(f"✂️ Message truncation: {original_msg_count} → {len(messages)} messages ({saved_pct:.0f}% reduction)")
+# MAGIC     if original_turn_count > len(turn_history):
+# MAGIC         saved_pct = ((original_turn_count - len(turn_history)) / original_turn_count * 100)
+# MAGIC         print(f"✂️ Turn history truncation: {original_turn_count} → {len(turn_history)} turns ({saved_pct:.0f}% reduction)")
+# MAGIC     
 # MAGIC     # Get current query and conversation context
 # MAGIC     # IMPORTANT: Extract only from HumanMessage to avoid capturing SystemMessage or AIMessage
-# MAGIC     messages = context.get("messages", [])
 # MAGIC     human_messages = [m for m in messages if isinstance(m, HumanMessage)]
 # MAGIC     current_query = human_messages[-1].content if human_messages else ""
-# MAGIC     turn_history = context.get("turn_history", [])
 # MAGIC     
 # MAGIC     writer({"type": "agent_start", "agent": "intent_detection", "query": current_query})
 # MAGIC     
@@ -1929,13 +2041,26 @@ Prerequisites:
 # MAGIC     context = extract_clarification_context(state)
 # MAGIC     print(f"📊 State optimization: Using {len(context)} fields (vs {len([k for k in state.keys() if state.get(k) is not None])} in full state)")
 # MAGIC     
+# MAGIC     # OPTIMIZATION: Log message and turn history truncation
+# MAGIC     original_msg_count = context.get("_original_message_count", 0)
+# MAGIC     original_turn_count = context.get("_original_turn_count", 0)
+# MAGIC     messages = context.get("messages", [])
+# MAGIC     turn_history = context.get("turn_history", [])
+# MAGIC     
+# MAGIC     if original_msg_count > len(messages):
+# MAGIC         saved_pct = ((original_msg_count - len(messages)) / original_msg_count * 100)
+# MAGIC         print(f"✂️ Message truncation: {original_msg_count} → {len(messages)} messages ({saved_pct:.0f}% reduction)")
+# MAGIC     if original_turn_count > len(turn_history):
+# MAGIC         saved_pct = ((original_turn_count - len(turn_history)) / original_turn_count * 100)
+# MAGIC         print(f"✂️ Turn history truncation: {original_turn_count} → {len(turn_history)} turns ({saved_pct:.0f}% reduction)")
+# MAGIC     
 # MAGIC     # Get current turn and intent from state (set by intent_detection_node)
 # MAGIC     current_turn = context.get("current_turn")
 # MAGIC     if not current_turn:
 # MAGIC         # Fallback for backward compatibility - create a proper ConversationTurn
 # MAGIC         print("⚠ No current_turn found, falling back to legacy behavior")
 # MAGIC         # IMPORTANT: Extract only from HumanMessage to avoid capturing SystemMessage or AIMessage
-# MAGIC         messages = context.get("messages", [])
+# MAGIC         # messages already extracted above for truncation logging
 # MAGIC         human_messages = [m for m in messages if isinstance(m, HumanMessage)]
 # MAGIC         query = human_messages[-1].content if human_messages else state.get("original_query", "")
 # MAGIC         current_turn = create_conversation_turn(
