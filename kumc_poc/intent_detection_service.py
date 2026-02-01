@@ -291,17 +291,38 @@ class IntentDetectionAgent:
             original_query = clarification_check.get("original_query", "")
             clarification_question = clarification_check.get("clarification_question", "")
             
+            # Get previous context from turn_history (crucial for refinement chains)
+            # The original_query might only be a refinement, missing the full conversation context
+            previous_context = ""
+            if turn_history:
+                last_turn = turn_history[-1]
+                previous_context_summary = last_turn.get("context_summary", "")
+                
+                if previous_context_summary:
+                    print(f"  ✓ Found previous context_summary from turn {last_turn['turn_id'][:8]}...")
+                    previous_context = f"\nPrevious Conversation Context:\n{previous_context_summary}\n"
+                else:
+                    # Fallback: Build context from recent turns
+                    recent_turns = turn_history[-3:] if len(turn_history) >= 3 else turn_history
+                    if recent_turns:
+                        print(f"  ✓ Building context from {len(recent_turns)} recent turns...")
+                        previous_context = "\nPrevious Conversation History:\n"
+                        for turn in recent_turns:
+                            intent_label = turn['intent_type'].replace('_', ' ').title()
+                            previous_context += f"- [{intent_label}] {turn['query']}\n"
+                        previous_context += "\n"
+            
             # Use LLM to generate context summary (instead of manual template)
             context_generation_prompt = f"""You are helping a planning agent understand the complete context of a clarification flow.
 
-The user was asked for clarification and has now responded. Generate a concise, actionable context summary that combines all three pieces of information for the planning agent.
-
+The user was asked for clarification and has now responded. Generate a concise, actionable context summary that combines all pieces of information for the planning agent.
+{previous_context}
 Original Query: {original_query}
 Clarification Question Asked: {clarification_question}
 User's Clarification Response: {current_query}
 
 Generate a 2-3 sentence context summary that:
-1. Synthesizes the original intent with the clarification
+1. Synthesizes the FULL conversation context (including previous context if provided)
 2. States clearly what the user wants
 3. Is actionable for SQL query generation
 
