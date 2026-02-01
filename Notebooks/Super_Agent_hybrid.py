@@ -3050,10 +3050,12 @@ Prerequisites:
 # MAGIC         # SIMPLIFIED: Unified state initialization for all scenarios
 # MAGIC         # CheckpointSaver will restore previous conversation context automatically
 # MAGIC         # The intent_detection_node runs first and creates current_turn
+# MAGIC         # 
+# MAGIC         # CRITICAL: Explicitly reset per-query fields to None to clear checkpoint stale data
+# MAGIC         # But DON'T set current_turn, turn_history, intent_metadata - let intent_detection_node set them
 # MAGIC         initial_state = {
-# MAGIC             **RESET_STATE_TEMPLATE,  # Reset all per-query execution fields
+# MAGIC             # Query input
 # MAGIC             "original_query": latest_query,
-# MAGIC             "question_clear": False,
 # MAGIC             "messages": [
 # MAGIC                 SystemMessage(content="""You are a multi-agent Q&A analysis system.
 # MAGIC Your role is to help users query and analyze cross-domain data.
@@ -3066,10 +3068,31 @@ Prerequisites:
 # MAGIC - Use UC functions and Genie agents to generate accurate SQL
 # MAGIC - Return results with proper context and explanations"""),
 # MAGIC                 HumanMessage(content=latest_query)
-# MAGIC             ]
-# MAGIC             # NOTE: current_turn and intent_metadata NOT set here
-# MAGIC             # They will be created by intent_detection_node (the entry point)
-# MAGIC             # NOTE: turn_history persists via operator.add reducer (conversation memory)
+# MAGIC             ],
+# MAGIC             
+# MAGIC             # Reset per-query execution fields (prevents stale data from checkpoint)
+# MAGIC             "pending_clarification": None,
+# MAGIC             "question_clear": False,
+# MAGIC             "plan": None,
+# MAGIC             "sub_questions": None,
+# MAGIC             "requires_multiple_spaces": None,
+# MAGIC             "relevant_space_ids": None,
+# MAGIC             "relevant_spaces": None,
+# MAGIC             "vector_search_relevant_spaces_info": None,
+# MAGIC             "requires_join": None,
+# MAGIC             "join_strategy": None,
+# MAGIC             "execution_plan": None,
+# MAGIC             "genie_route_plan": None,
+# MAGIC             "sql_query": None,
+# MAGIC             "sql_synthesis_explanation": None,
+# MAGIC             "synthesis_error": None,
+# MAGIC             "execution_result": None,
+# MAGIC             "execution_error": None,
+# MAGIC             "final_summary": None
+# MAGIC             
+# MAGIC             # NOTE: current_turn, turn_history, intent_metadata NOT set here
+# MAGIC             # They will be created/updated by intent_detection_node (the entry point)
+# MAGIC             # turn_history persists across queries via operator.add reducer
 # MAGIC         }
 # MAGIC         
 # MAGIC         # Add user_id to state for long-term memory access
