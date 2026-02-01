@@ -287,11 +287,36 @@ class IntentDetectionAgent:
         if clarification_check["is_clarification_response"]:
             print("✓ Detected clarification response (fast-path)")
             
-            # Build context summary for clarification response
+            # Generate intelligent context summary using LLM
             original_query = clarification_check.get("original_query", "")
             clarification_question = clarification_check.get("clarification_question", "")
             
-            context_summary = f"""User is responding to a clarification request.
+            # Use LLM to generate context summary (instead of manual template)
+            context_generation_prompt = f"""You are helping a planning agent understand the complete context of a clarification flow.
+
+The user was asked for clarification and has now responded. Generate a concise, actionable context summary that combines all three pieces of information for the planning agent.
+
+Original Query: {original_query}
+Clarification Question Asked: {clarification_question}
+User's Clarification Response: {current_query}
+
+Generate a 2-3 sentence context summary that:
+1. Synthesizes the original intent with the clarification
+2. States clearly what the user wants
+3. Is actionable for SQL query generation
+
+Return ONLY the context summary text (no JSON, no formatting)."""
+
+            try:
+                print("🤖 Generating LLM-based context summary for clarification response...")
+                summary_response = self.llm.invoke(context_generation_prompt)
+                context_summary = summary_response.content if hasattr(summary_response, 'content') else str(summary_response)
+                context_summary = context_summary.strip()
+                print(f"✓ Context summary generated: {context_summary[:150]}...")
+            except Exception as e:
+                print(f"⚠ Failed to generate LLM context summary: {e}")
+                # Fallback to structured template (better than crashing)
+                context_summary = f"""User is responding to a clarification request.
             
 Original Query: {original_query}
 Clarification Asked: {clarification_question}
