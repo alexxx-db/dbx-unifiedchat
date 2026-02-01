@@ -132,9 +132,12 @@ class AgentState(TypedDict):
     # Turn Management (NEW - replaces clarification_count, last_clarified_query, 
     #                       combined_query_context, original_query)
     # -------------------------------------------------------------------------
-    current_turn: ConversationTurn
+    # NOTE: current_turn and intent_metadata are Optional because intent_detection_node
+    # (the workflow entry point) creates them. If they were required fields, initial_state
+    # would need to include them, but that would prevent proper state updates from propagating.
+    current_turn: Optional[ConversationTurn]
     turn_history: Annotated[List[ConversationTurn], operator.add]  # Append-only with reducer
-    intent_metadata: IntentMetadata
+    intent_metadata: Optional[IntentMetadata]
     
     # -------------------------------------------------------------------------
     # Clarification (SIMPLIFIED from 7 fields to 2)

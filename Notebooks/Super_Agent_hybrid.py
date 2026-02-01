@@ -1722,7 +1722,7 @@ Prerequisites:
 # MAGIC     print(f"  Context Summary: {intent_result.get('context_summary', 'N/A')[:100]}...")
 # MAGIC     
 # MAGIC     # Return state updates
-# MAGIC     state_update = {
+# MAGIC     return {
 # MAGIC         "current_turn": turn,
 # MAGIC         "turn_history": [turn],  # Reducer will append
 # MAGIC         "intent_metadata": intent_metadata,
@@ -1731,14 +1731,6 @@ Prerequisites:
 # MAGIC             SystemMessage(content=f"Intent detected: {intent_result['intent_type']} (confidence: {intent_result['confidence']:.2f})")
 # MAGIC         ]
 # MAGIC     }
-# MAGIC     
-# MAGIC     print(f"🔍 DEBUG: intent_detection_node returning state update:")
-# MAGIC     print(f"  current_turn.turn_id: {turn['turn_id']}")
-# MAGIC     print(f"  current_turn.query: {turn['query'][:80]}...")
-# MAGIC     print(f"  current_turn.intent_type: {turn['intent_type']}")
-# MAGIC     print(f"  current_turn.context_summary: {turn.get('context_summary', 'N/A')[:100]}...")
-# MAGIC     
-# MAGIC     return state_update
 # MAGIC
 # MAGIC print("✓ Intent detection node defined")
 # MAGIC
@@ -1838,17 +1830,6 @@ Prerequisites:
 # MAGIC     print("\n" + "="*80)
 # MAGIC     print("🔍 CLARIFICATION AGENT")
 # MAGIC     print("="*80)
-# MAGIC     
-# MAGIC     # DEBUG: Log what state we received
-# MAGIC     print(f"🔍 DEBUG: clarification_node received state:")
-# MAGIC     print(f"  state.keys(): {list(state.keys())}")
-# MAGIC     print(f"  'current_turn' in state: {'current_turn' in state}")
-# MAGIC     if 'current_turn' in state:
-# MAGIC         ct = state['current_turn']
-# MAGIC         print(f"  current_turn type: {type(ct)}")
-# MAGIC         if ct:
-# MAGIC             print(f"  current_turn.turn_id: {ct.get('turn_id', 'MISSING')}")
-# MAGIC             print(f"  current_turn.query: {ct.get('query', 'MISSING')[:80]}")
 # MAGIC     
 # MAGIC     # Get current turn and intent from state (set by intent_detection_node)
 # MAGIC     current_turn = state.get("current_turn")
@@ -2031,15 +2012,13 @@ Prerequisites:
 # MAGIC     # Emit agent start event
 # MAGIC     writer({"type": "agent_start", "agent": "planning", "query": planning_query[:100]})
 # MAGIC     
-# MAGIC     print(f"Query (from current_turn): {query}")
+# MAGIC     print(f"Query: {query}")
 # MAGIC     print(f"Intent: {intent_type}")
 # MAGIC     if context_summary:
-# MAGIC         print(f"✓ Using context summary from intent detection (includes full conversation context)")
-# MAGIC         print(f"  Context summary: {context_summary[:300]}...")
-# MAGIC         print(f"  Planning query: {planning_query[:300]}...")
+# MAGIC         print(f"✓ Using context summary from intent detection")
+# MAGIC         print(f"  Summary: {context_summary[:200]}...")
 # MAGIC     else:
 # MAGIC         print(f"✓ Using query directly (no context needed)")
-# MAGIC         print(f"  Planning query: {planning_query}")
 # MAGIC     
 # MAGIC     llm = ChatDatabricks(endpoint=LLM_ENDPOINT_PLANNING)
 # MAGIC     
@@ -3050,11 +3029,8 @@ Prerequisites:
 # MAGIC         # SIMPLIFIED: Unified state initialization for all scenarios
 # MAGIC         # CheckpointSaver will restore previous conversation context automatically
 # MAGIC         # The intent_detection_node runs first and creates current_turn
-# MAGIC         # 
-# MAGIC         # CRITICAL: Explicitly reset per-query fields to None to clear checkpoint stale data
-# MAGIC         # But DON'T set current_turn, turn_history, intent_metadata - let intent_detection_node set them
 # MAGIC         initial_state = {
-# MAGIC             # Query input
+# MAGIC             **RESET_STATE_TEMPLATE,  # Reset all per-query execution fields
 # MAGIC             "original_query": latest_query,
 # MAGIC             "messages": [
 # MAGIC                 SystemMessage(content="""You are a multi-agent Q&A analysis system.
@@ -3068,31 +3044,9 @@ Prerequisites:
 # MAGIC - Use UC functions and Genie agents to generate accurate SQL
 # MAGIC - Return results with proper context and explanations"""),
 # MAGIC                 HumanMessage(content=latest_query)
-# MAGIC             ],
-# MAGIC             
-# MAGIC             # Reset per-query execution fields (prevents stale data from checkpoint)
-# MAGIC             "pending_clarification": None,
-# MAGIC             "question_clear": False,
-# MAGIC             "plan": None,
-# MAGIC             "sub_questions": None,
-# MAGIC             "requires_multiple_spaces": None,
-# MAGIC             "relevant_space_ids": None,
-# MAGIC             "relevant_spaces": None,
-# MAGIC             "vector_search_relevant_spaces_info": None,
-# MAGIC             "requires_join": None,
-# MAGIC             "join_strategy": None,
-# MAGIC             "execution_plan": None,
-# MAGIC             "genie_route_plan": None,
-# MAGIC             "sql_query": None,
-# MAGIC             "sql_synthesis_explanation": None,
-# MAGIC             "synthesis_error": None,
-# MAGIC             "execution_result": None,
-# MAGIC             "execution_error": None,
-# MAGIC             "final_summary": None
-# MAGIC             
-# MAGIC             # NOTE: current_turn, turn_history, intent_metadata NOT set here
-# MAGIC             # They will be created/updated by intent_detection_node (the entry point)
-# MAGIC             # turn_history persists across queries via operator.add reducer
+# MAGIC             ]
+# MAGIC             # NOTE: current_turn, intent_metadata, turn_history are NOT in RESET_STATE_TEMPLATE
+# MAGIC             # They are managed by intent_detection_node and persist via CheckpointSaver
 # MAGIC         }
 # MAGIC         
 # MAGIC         # Add user_id to state for long-term memory access
