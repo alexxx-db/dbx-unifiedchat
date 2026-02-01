@@ -1526,7 +1526,7 @@ Prerequisites:
 # MAGIC         
 # MAGIC         original_query = state.get('original_query', 'N/A')
 # MAGIC         question_clear = state.get('question_clear', False)
-# MAGIC         clarification_needed = state.get('clarification_needed')
+# MAGIC         pending_clarification = state.get('pending_clarification')
 # MAGIC         execution_plan = state.get('execution_plan')
 # MAGIC         join_strategy = state.get('join_strategy')
 # MAGIC         sql_query = state.get('sql_query')
@@ -1544,9 +1544,10 @@ Prerequisites:
 # MAGIC """
 # MAGIC         
 # MAGIC         # Add clarification info
-# MAGIC         if not question_clear:
+# MAGIC         if not question_clear and pending_clarification:
+# MAGIC             clarification_reason = pending_clarification.get('reason', 'Query needs clarification')
 # MAGIC             prompt += f"""**Status:** Query needs clarification
-# MAGIC **Clarification Needed:** {clarification_needed}
+# MAGIC **Clarification Needed:** {clarification_reason}
 # MAGIC **Summary:** The query was too vague or ambiguous. Requested user clarification before proceeding.
 # MAGIC """
 # MAGIC         else:
@@ -3834,8 +3835,10 @@ def respond_to_clarification(
         
         # If clarification needed - SIMPLIFIED API!
         if not state1['question_clear']:
-            print("Clarification needed:", state1['clarification_needed'])
-            print("Options:", state1['clarification_options'])
+            clarification = state1.get('pending_clarification')
+            if clarification:
+                print("Clarification needed:", clarification['reason'])
+                print("Options:", clarification['options'])
             
             # Just call invoke again with same thread_id
             state2 = respond_to_clarification(
@@ -3932,12 +3935,14 @@ def display_results(final_state: Dict[str, Any]):
     
     # Display Clarification Info (if any)
     if not final_state.get('question_clear', True):
-        print(f"\n⚠️  Clarification Needed:")
-        print(f"  Reason: {final_state.get('clarification_needed', 'N/A')}")
-        if final_state.get('clarification_options'):
-            print(f"  Options:")
-            for i, opt in enumerate(final_state.get('clarification_options', []), 1):
-                print(f"    {i}. {opt}")
+        clarification = final_state.get('pending_clarification')
+        if clarification:
+            print(f"\n⚠️  Clarification Needed:")
+            print(f"  Reason: {clarification.get('reason', 'N/A')}")
+            if clarification.get('options'):
+                print(f"  Options:")
+                for i, opt in enumerate(clarification.get('options', []), 1):
+                    print(f"    {i}. {opt}")
     
     # Display Execution Plan
     if final_state.get('execution_plan'):
@@ -4359,8 +4364,10 @@ else:
 # MAGIC     print("CLARIFICATION REQUESTED BY AGENT")
 # MAGIC     print("="*80)
 # MAGIC     print(f"Original Query (preserved): {state1['original_query']}")
-# MAGIC     print(f"Clarification Needed: {state1['clarification_needed']}")
-# MAGIC     print(f"Options: {state1['clarification_options']}")
+# MAGIC     clarification = state1.get('pending_clarification')
+# MAGIC     if clarification:
+# MAGIC         print(f"Clarification Needed: {clarification['reason']}")
+# MAGIC         print(f"Options: {clarification['options']}")
 # MAGIC     
 # MAGIC     # Step 2: User provides clarification
 # MAGIC     print("\n" + "="*80)
@@ -4377,9 +4384,14 @@ else:
 # MAGIC     print("CONTEXT VERIFICATION")
 # MAGIC     print("="*80)
 # MAGIC     print(f"✓ Original Query Preserved: {state2.get('original_query')}")
-# MAGIC     print(f"✓ Clarification Message: {state2.get('clarification_message', 'N/A')[:100]}...")
-# MAGIC     print(f"✓ User Response: {state2.get('user_clarification_response')}")
-# MAGIC     print(f"✓ Combined Context Created: {state2.get('combined_query_context') is not None}")
+# MAGIC     # NEW: Access clarification through pending_clarification object
+# MAGIC     clarification = state2.get('pending_clarification')
+# MAGIC     if clarification:
+# MAGIC         print(f"✓ Clarification Reason: {clarification.get('reason', 'N/A')[:100]}...")
+# MAGIC     # NEW: Context is now in current_turn.context_summary (from intent detection)
+# MAGIC     current_turn = state2.get('current_turn')
+# MAGIC     if current_turn:
+# MAGIC         print(f"✓ Context Summary Created: {current_turn.get('context_summary') is not None}")
 # MAGIC     
 # MAGIC     display_results(state2)
 # MAGIC else:
