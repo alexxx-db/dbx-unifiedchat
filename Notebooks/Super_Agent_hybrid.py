@@ -1748,10 +1748,10 @@ Prerequisites:
 # MAGIC     # Factor 2: Recent clarification frequency (don't annoy users)
 # MAGIC     recent_turns = turn_history[-5:] if len(turn_history) >= 5 else turn_history
 # MAGIC     recent_clarifications = sum(1 for t in recent_turns if t.get("triggered_clarification"))
-# MAGIC     if recent_clarifications >= 2:
+# MAGIC     if recent_clarifications >= 3:
 # MAGIC         print(f"  ✓ Factor 2: Too many recent clarifications ({recent_clarifications}/5) - skip")
 # MAGIC         return False
-# MAGIC     print(f"  • Factor 2: Recent clarifications = {recent_clarifications}/5 (max: 2)")
+# MAGIC     print(f"  • Factor 2: Recent clarifications = {recent_clarifications}/5 (max: 3)")
 # MAGIC     
 # MAGIC     # Factor 3: Query complexity (simple queries don't need clarification)
 # MAGIC     complexity = intent_metadata.get("complexity", "moderate")
