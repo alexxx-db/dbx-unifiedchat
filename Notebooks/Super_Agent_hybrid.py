@@ -1357,7 +1357,7 @@ class SQLSynthesisGenieAgent:
             model=self.llm,
             tools=tools,
             system_prompt=(
-"""You are a SQL synthesis agent, which can take analysis plan, and route queries to the corresponding Genie Agent.
+"""You are a SQL synthesis agent, which can take analysis plan, and route queries in parallel to the corresponding Genie Agent.
 The Plan given to you is a JSON:
 {
 'original_query': 'The User's Question',
@@ -1378,7 +1378,7 @@ The Plan given to you is a JSON:
 
 ## Tool Calling Plan:
 1. Under the key of 'genie_route_plan' in the JSON, extracting 'partial_question_1' and feed to the right Genie Agent tool of 'space_id_1' with the input as a string. 
-2. Asynchronously send all other partial_questions to the corresponding Genie Agent tools accordingly.
+2. In parallel, send all partial_questions to the corresponding Genie Agent tools accordingly using the 'genie_route_plan' as the mapping.
 3. You have access to all Genie Agents as tools given to you; locate the proper Genie Agent Tool by searching the 'space_id_1' in the tool's description. After each Genie agent returns result, only extract the SQL string from the Genie tool output JSON {"thinking": thinking, "sql": sql, "answer": answer}.
 4. If you find you are still missing necessary analytical components (metrics, filters, dimensions, etc.) to assemble the final SQL, which might be due to some genie agent tool may not have the necessary information being assigned, try to leverage other most likely Genie agents to find the missing pieces.
 
