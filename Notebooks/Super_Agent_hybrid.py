@@ -372,6 +372,7 @@ Prerequisites:
 # MAGIC     sys.path.insert(0, kumc_poc_path)
 # MAGIC
 # MAGIC from kumc_poc.conversation_models import (
+# MAGIC     AgentState,
 # MAGIC     ConversationTurn,
 # MAGIC     ClarificationRequest,
 # MAGIC     IntentMetadata,
@@ -558,61 +559,14 @@ Prerequisites:
 # MAGIC
 # MAGIC # Note: Context is now loaded dynamically in clarification_node
 # MAGIC # This allows refresh without model redeployment
-# MAGIC class AgentState(TypedDict):
-# MAGIC     """
-# MAGIC     Explicit state that flows through the multi-agent system.
-# MAGIC     This provides full observability and makes debugging easier.
-# MAGIC     
-# MAGIC     SIMPLIFIED (v2): Redundant fields removed/deprecated.
-# MAGIC     Context is now primarily managed through the messages array.
-# MAGIC     """
-# MAGIC     # Input
-# MAGIC     original_query: str  # DEPRECATED: Kept for backward compatibility, use messages array
-# MAGIC     
-# MAGIC     # Clarification
-# MAGIC     question_clear: bool
-# MAGIC     clarification_needed: Optional[str]
-# MAGIC     clarification_options: Optional[List[str]]
-# MAGIC     clarification_count: Optional[int]  # Track clarification attempts per conversation branch
-# MAGIC     last_clarified_query: Optional[str]  # Track last query that received clarification (for intent detection)
-# MAGIC     # REMOVED: user_clarification_response - auto-detected from messages array
-# MAGIC     # REMOVED: clarification_message - stored in messages array as AIMessage
-# MAGIC     combined_query_context: Optional[str]  # Combined context for planning agent
-# MAGIC     
-# MAGIC     # Planning
-# MAGIC     plan: Optional[Dict[str, Any]]
-# MAGIC     sub_questions: Optional[List[str]]
-# MAGIC     requires_multiple_spaces: Optional[bool]
-# MAGIC     relevant_space_ids: Optional[List[str]]
-# MAGIC     relevant_spaces: Optional[List[Dict[str, Any]]]
-# MAGIC     vector_search_relevant_spaces_info: Optional[List[Dict[str, str]]]
-# MAGIC     requires_join: Optional[bool]
-# MAGIC     join_strategy: Optional[str]  # "table_route" or "genie_route"
-# MAGIC     execution_plan: Optional[str]
-# MAGIC     genie_route_plan: Optional[Dict[str, str]]
-# MAGIC     
-# MAGIC     # SQL Synthesis
-# MAGIC     sql_query: Optional[str]
-# MAGIC     sql_synthesis_explanation: Optional[str]  # Agent's explanation/reasoning
-# MAGIC     synthesis_error: Optional[str]
-# MAGIC     
-# MAGIC     # Execution
-# MAGIC     execution_result: Optional[Dict[str, Any]]
-# MAGIC     execution_error: Optional[str]
-# MAGIC     
-# MAGIC     # Summary
-# MAGIC     final_summary: Optional[str]  # Natural language summary of the workflow execution
-# MAGIC     
-# MAGIC     # State Management (NEW - for distributed serving and long-term memory)
-# MAGIC     user_id: Optional[str]  # User identifier for long-term memory
-# MAGIC     thread_id: Optional[str]  # Thread identifier for short-term memory
-# MAGIC     user_preferences: Optional[Dict]  # User preferences loaded from long-term memory
-# MAGIC     
-# MAGIC     # Control flow
-# MAGIC     next_agent: Optional[str]
-# MAGIC     messages: Annotated[List, operator.add]
-# MAGIC     
-# MAGIC print("✓ Agent State defined with explicit fields for observability")
+# MAGIC # AgentState is now imported from kumc_poc.conversation_models
+# MAGIC # This ensures a single source of truth for the state definition and includes:
+# MAGIC # - Turn-based fields: current_turn, turn_history, intent_metadata
+# MAGIC # - Simplified clarification: pending_clarification (replaces 7+ legacy fields)
+# MAGIC # - All planning, SQL synthesis, execution, and summary fields
+# MAGIC # See kumc_poc/conversation_models.py for the complete definition
+# MAGIC 
+# MAGIC print("✓ AgentState imported from conversation_models (single source of truth)")
 # MAGIC
 # MAGIC # State Reset Template
 # MAGIC # All per-query execution fields that should be cleared for each new query.
