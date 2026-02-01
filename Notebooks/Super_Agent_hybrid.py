@@ -960,20 +960,27 @@ class PlanningAgent:
     def create_execution_plan(
         self, 
         query: str, 
-        relevant_spaces: List[Dict[str, Any]]
+        relevant_spaces: List[Dict[str, Any]],
+        original_query: str = None
     ) -> Dict[str, Any]:
         """
         Create execution plan based on query and relevant spaces.
         
         Args:
-            query: User's question
+            query: User's question (may be context_summary if available)
             relevant_spaces: List of relevant Genie spaces
+            original_query: Original user query from this turn (before context enrichment)
             
         Returns:
             Dictionary with execution plan
         """
+        # Use original_query if provided, otherwise use query as original
+        original_query_display = original_query if original_query is not None else query
+        
         planning_prompt = f"""
 You are a query planning expert. Analyze the following question and create an execution plan.
+
+User original query this turn: {original_query_display}
 
 Question: {query}
 
@@ -2913,7 +2920,8 @@ def planning_node(state: AgentState) -> dict:
     
     # Create execution plan
     # IMPORTANT: Use planning_query (with context_summary) not just query
-    plan = planning_agent.create_execution_plan(planning_query, relevant_spaces_full)
+    # Pass original_query so it can be shown in the prompt before context_summary
+    plan = planning_agent.create_execution_plan(planning_query, relevant_spaces_full, original_query=query)
     
     # Extract plan components
     join_strategy = plan.get("join_strategy")
