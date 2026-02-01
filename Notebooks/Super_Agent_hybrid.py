@@ -1751,7 +1751,7 @@ Prerequisites:
 # MAGIC     
 # MAGIC     # DEFENSIVE ASSERTION: This should never be reached for clarification_response
 # MAGIC     intent_type = intent_metadata.get("intent_type", "")
-# MAGIC     if intent_type == "clarification_response":
+# MAGIC     if intent_type.lower() == "clarification_response":
 # MAGIC         print("🚨 CRITICAL WARNING: adaptive_clarification_strategy called with clarification_response!")
 # MAGIC         print("   This should NEVER happen - clarification_node should have exited early!")
 # MAGIC         print("   Forcing return False to prevent clarifying a clarification.")
@@ -1883,7 +1883,7 @@ Prerequisites:
 # MAGIC         }
 # MAGIC     
 # MAGIC     # Layer 2: Explicit check for clarification_response (backward compatibility)
-# MAGIC     if intent_type == "clarification_response":
+# MAGIC     if intent_type.lower() == "clarification_response":
 # MAGIC         # This should never be reached due to Layer 1, but kept as defensive programming
 # MAGIC         print("⚠ WARNING: Layer 2 clarification skip triggered (should not happen!)")
 # MAGIC         print("  This indicates Layer 1 check may have failed - investigating...")

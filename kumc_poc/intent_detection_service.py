@@ -513,6 +513,11 @@ The planning agent should use all three pieces to understand the complete intent
             
             result = json.loads(content)
             
+            # Normalize intent_type to lowercase for consistency
+            # LLM might return uppercase (CLARIFICATION_RESPONSE) or lowercase (clarification_response)
+            if "intent_type" in result:
+                result["intent_type"] = result["intent_type"].lower()
+            
             print(f"✓ Intent: {result['intent_type']} (confidence: {result['confidence']:.2f})")
             print(f"  Reasoning: {result['reasoning']}")
             print(f"  Topic Change: {result['topic_change_score']:.2f}")
@@ -614,7 +619,7 @@ def should_skip_clarification_for_intent(intent_type: str) -> bool:
     to avoid asking for clarification on a clarification.
     
     Args:
-        intent_type: Intent type from intent detection
+        intent_type: Intent type from intent detection (case-insensitive)
     
     Returns:
         True if clarification should be skipped, False otherwise
@@ -623,4 +628,5 @@ def should_skip_clarification_for_intent(intent_type: str) -> bool:
         "clarification_response",  # Already answering a clarification
     }
     
-    return intent_type in skip_intents
+    # Case-insensitive comparison to handle both uppercase and lowercase
+    return intent_type.lower() in skip_intents

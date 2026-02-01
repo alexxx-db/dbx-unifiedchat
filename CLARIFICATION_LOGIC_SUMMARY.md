@@ -239,7 +239,8 @@ Track these metrics:
 ## Related Documentation
 
 - **Technical Deep Dive**: `CLARIFICATION_RESPONSE_DETECTION_FIX.md`
-- **Defense-in-Depth Protection**: `CLARIFICATION_PROTECTION_LAYERS.md` ⭐ **NEW**
+- **Defense-in-Depth Protection**: `CLARIFICATION_PROTECTION_LAYERS.md`
+- **Case Sensitivity Fix**: `CASE_SENSITIVITY_FIX.md` ⭐ **CRITICAL FIX**
 - **Conversation Models**: `kumc_poc/conversation_models.py`
 - **Intent Detection Service**: `kumc_poc/intent_detection_service.py`
 - **Super Agent Integration**: `Notebooks/Super_Agent_hybrid.py` (lines 1803-1965)
