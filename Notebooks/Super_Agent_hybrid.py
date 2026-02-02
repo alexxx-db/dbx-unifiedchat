@@ -6,7 +6,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,Install Packages
-# MAGIC %pip install databricks-langchain[memory]==0.12.1 databricks-vectorsearch==0.63 databricks-agents mlflow-skinny[databricks]
+# MAGIC %pip install databricks-sql-connector databricks-langchain[memory]==0.12.1 databricks-vectorsearch==0.63 databricks-agents mlflow-skinny[databricks]
 
 # COMMAND ----------
 
@@ -1833,14 +1833,52 @@ Then combine them into a final SQL query.
 print("✓ SQLSynthesisGenieAgent class defined")
 class SQLExecutionAgent:
     """
-    Agent responsible for executing SQL queries.
+    Agent responsible for executing SQL queries using Databricks SQL Warehouse.
     
-    OOP design for clean execution logic.
-    Synced with test_uc_functions.py implementation.
+    PRODUCTION-READY DESIGN:
+    - Uses databricks-sql-connector for Model Serving compatibility
+    - Follows official Databricks authentication patterns
+    - Supports both development (notebook) and production (Model Serving) environments
+    
+    MODEL SERVING DEPLOYMENT CONFIGURATION:
+    When deploying to Model Serving, configure these environment variables:
+    
+    1. DATABRICKS_HOST (plain text):
+       - Via Serving UI: Advanced configurations → Add environment variable
+       - Name: DATABRICKS_HOST
+       - Value: your-workspace.cloud.databricks.com (without https://)
+    
+    2. DATABRICKS_TOKEN (secrets-based):
+       - Step 1: Store token in Databricks secrets:
+         databricks secrets create-scope my_scope
+         databricks secrets put-secret my_scope sql_token
+       - Step 2: Configure via Serving UI:
+         Name: DATABRICKS_TOKEN
+         Value: {{secrets/my_scope/sql_token}}
+    
+    3. SQL_WAREHOUSE_ID (passed to __init__):
+       - Configured in your config.py or .env file
+       - Passed when creating the agent instance
+    
+    Reference: https://docs.databricks.com/machine-learning/model-serving/store-env-variable-model-serving.html
+    
+    AUTHENTICATION PRECEDENCE:
+    1. Environment variables (DATABRICKS_HOST, DATABRICKS_TOKEN) - Production
+    2. Notebook context (spark.conf, dbutils) - Development only
     """
     
-    def __init__(self):
+    def __init__(self, warehouse_id: str):
+        """
+        Initialize SQL Execution Agent.
+        
+        Args:
+            warehouse_id: Databricks SQL Warehouse ID for query execution
+        """
         self.name = "SQLExecution"
+        self.warehouse_id = warehouse_id
+        # Will be set lazily during first execution
+        self.workspace_url = None
+        self.access_token = None
     
     def execute_sql(
         self, 
@@ -1849,7 +1887,19 @@ class SQLExecutionAgent:
         return_format: str = "dict"
     ) -> Dict[str, Any]:
         """
-        Execute SQL query on delta tables and return formatted results.
+        Execute SQL query using Databricks SQL Warehouse and return formatted results.
+        
+        PRODUCTION BEST PRACTICES IMPLEMENTED:
+        1. Context Managers: Uses 'with' statements for automatic resource cleanup
+        2. Connection Resilience: Configures timeouts and retry logic for transient failures
+        3. Proper Error Handling: Categorizes errors for better production debugging
+        4. ANSI SQL Mode: Ensures consistent SQL behavior across environments
+        5. Model Serving Compatible: Works without Spark session via REST API
+        
+        Connection Configuration:
+        - Socket timeout: 900s (balances Model Serving 297s limit with warehouse query time)
+        - HTTP retries: 30 attempts with exponential backoff (1-60s)
+        - Session config: ANSI mode enabled for SQL compliance
         
         Args:
             sql_query: Support two types: 
@@ -1866,9 +1916,11 @@ class SQLExecutionAgent:
             - row_count: int - Number of rows returned
             - columns: List[str] - Column names
             - error: str - Error message if failed (optional)
+            - error_type: str - Exception type for debugging (only on failure)
+            - error_hint: str - Suggested resolution (only on failure)
         """
-        from pyspark.sql import SparkSession
-        spark = SparkSession.builder.getOrCreate()
+        from databricks import sql
+        import json
         
         # Step 1: Extract SQL from agent result or markdown code blocks if present
         if sql_query and isinstance(sql_query, dict) and "messages" in sql_query:
@@ -1892,39 +1944,122 @@ class SQLExecutionAgent:
             extracted_sql = f"{extracted_sql.rstrip(';')} LIMIT {max_rows}"
         
         try:
-            # Step 3: Execute the SQL query
+            # Step 3: Get workspace URL and access token (lazily initialized)
+            # PRODUCTION PATTERN: Use environment variables for Model Serving compatibility
+            # These are configured via Model Serving endpoint configuration
+            if self.workspace_url is None or self.access_token is None:
+                import os
+                
+                # Try multiple authentication sources in order of production readiness
+                # 1. Environment variables (Model Serving standard pattern)
+                self.workspace_url = os.environ.get("DATABRICKS_HOST")
+                self.access_token = os.environ.get("DATABRICKS_TOKEN")
+                
+                # 2. If not in environment, try notebook context (development only)
+                if not self.workspace_url or not self.access_token:
+                    try:
+                        # Try notebook context (only available in notebook environment)
+                        from pyspark.sql import SparkSession
+                        spark = SparkSession.builder.getOrCreate()
+                        
+                        if not self.workspace_url:
+                            self.workspace_url = spark.conf.get("spark.databricks.workspaceUrl")
+                        
+                        if not self.access_token:
+                            # Try dbutils (only available in notebook environment)
+                            try:
+                                self.access_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+                            except:
+                                pass  # dbutils not available, will handle below
+                    except:
+                        pass  # Spark not available, will handle below
+                
+                # 3. Validate that we have credentials
+                if not self.workspace_url:
+                    raise ValueError(
+                        "DATABRICKS_HOST not found. "
+                        "For Model Serving deployment, configure environment variable via: "
+                        "Serving UI → Advanced configurations → Add environment variable → "
+                        "Name: DATABRICKS_HOST, Value: your-workspace.cloud.databricks.com"
+                    )
+                
+                if not self.access_token:
+                    raise ValueError(
+                        "DATABRICKS_TOKEN not found. "
+                        "For Model Serving deployment, store token in Databricks secrets and configure: "
+                        "1. Create secret: databricks secrets put-secret <scope> <key> "
+                        "2. Add environment variable via Serving UI: "
+                        "   Name: DATABRICKS_TOKEN, Value: {{secrets/<scope>/<key>}} "
+                        "See: https://docs.databricks.com/machine-learning/model-serving/store-env-variable-model-serving.html"
+                    )
+            
+            # Step 4: Execute the SQL query using SQL Warehouse
             print(f"\n{'='*80}")
-            print("🔍 EXECUTING SQL QUERY")
+            print("🔍 EXECUTING SQL QUERY (via SQL Warehouse)")
             print(f"{'='*80}")
+            print(f"Warehouse ID: {self.warehouse_id}")
             print(f"SQL:\n{extracted_sql}")
             print(f"{'='*80}\n")
             
-            df = spark.sql(extracted_sql)
+            # Connect to SQL Warehouse using context manager (production best practice)
+            # Context managers ensure proper cleanup even if exceptions occur
+            with sql.connect(
+                server_hostname=self.workspace_url,
+                http_path=f"/sql/1.0/warehouses/{self.warehouse_id}",
+                access_token=self.access_token,
+                # Production settings for resilience
+                session_configuration={
+                    "ansi_mode": "true"  # Enable ANSI SQL compliance for consistent behavior
+                },
+                socket_timeout=900,  # 15 minutes - Model Serving has 297s limit, warehouse queries can be longer
+                http_retry_delay_min=1,  # Minimum retry delay in seconds
+                http_retry_delay_max=60,  # Maximum retry delay in seconds
+                http_retry_max_redirects=5,  # Max HTTP redirects
+                http_retry_stop_after_attempts=30,  # Max retry attempts for transient failures
+            ) as connection:
+                
+                # Use nested context manager for cursor (ensures cursor cleanup)
+                with connection.cursor() as cursor:
+                    
+                    # Execute query
+                    cursor.execute(extracted_sql)
+                    
+                    # Fetch results
+                    results = cursor.fetchall()
+                    row_count = len(results)
+                    columns = [desc[0] for desc in cursor.description]
+                    
+                    print(f"✅ Query executed successfully!")
+                    print(f"📊 Rows returned: {row_count}")
+                    print(f"📋 Columns: {', '.join(columns)}\n")
+                    
+                    # Step 5: Convert results to list of dicts for compatibility
+                    result_data = [dict(zip(columns, row)) for row in results]
+                    
+                # Cursor automatically closed here by context manager
             
-            # Step 4: Collect results
-            results_list = df.collect()
-            row_count = len(results_list)
-            columns = df.columns
+            # Connection automatically closed here by context manager
             
-            print(f"✅ Query executed successfully!")
-            print(f"📊 Rows returned: {row_count}")
-            print(f"📋 Columns: {', '.join(columns)}\n")
-            
-            # Step 5: Format results based on return_format
+            # Step 6: Format results based on return_format
             if return_format == "json":
-                result_data = df.toJSON().collect()
+                # Convert to JSON strings (matching old spark behavior)
+                result_data = [json.dumps(row) for row in result_data]
             elif return_format == "markdown":
                 # Create markdown table
-                pandas_df = df.toPandas()
+                import pandas as pd
+                pandas_df = pd.DataFrame(result_data)
                 result_data = pandas_df.to_markdown(index=False)
-            else:  # dict (default)
-                result_data = [row.asDict() for row in results_list]
+            # else: dict format (default) - already in correct format
             
             # Step 7: Display preview
             print(f"{'='*80}")
             print("📄 RESULTS PREVIEW (first 10 rows)")
             print(f"{'='*80}")
-            # df.show(n=min(10, row_count), truncate=False) # comment out to save time.
+            # Preview first 10 rows
+            for i, row in enumerate(result_data[:10]):
+                if return_format == "markdown":
+                    break  # Don't print individual rows for markdown
+                print(f"Row {i+1}: {row}")
             print(f"{'='*80}\n")
             
             return {
@@ -1936,12 +2071,31 @@ class SQLExecutionAgent:
             }
             
         except Exception as e:
-            # Step 8: Handle errors
+            # Step 8: Handle errors with specific exception types for better diagnostics
+            error_type = type(e).__name__
             error_msg = str(e)
+            
+            # Provide production-grade error categorization
+            if "DatabaseError" in error_type or "OperationalError" in error_type:
+                error_category = "SQL Execution Error"
+                error_hint = "Check SQL syntax and table/column permissions"
+            elif "ConnectionError" in error_type or "timeout" in error_msg.lower():
+                error_category = "Connection Error"
+                error_hint = "Verify SQL Warehouse is running and network connectivity"
+            elif "Authentication" in error_msg or "Unauthorized" in error_msg:
+                error_category = "Authentication Error"
+                error_hint = "Verify access token and warehouse permissions"
+            else:
+                error_category = "General Error"
+                error_hint = "Review full error details below"
+            
             print(f"\n{'='*80}")
-            print("❌ SQL EXECUTION FAILED")
+            print(f"❌ SQL EXECUTION FAILED - {error_category}")
             print(f"{'='*80}")
-            print(f"Error: {error_msg}")
+            print(f"Error Type: {error_type}")
+            print(f"Error Message: {error_msg}")
+            print(f"Hint: {error_hint}")
+            print(f"Warehouse ID: {self.warehouse_id}")
             print(f"{'='*80}\n")
             
             return {
@@ -1950,7 +2104,9 @@ class SQLExecutionAgent:
                 "result": None,
                 "row_count": 0,
                 "columns": [],
-                "error": error_msg
+                "error": f"{error_category}: {error_msg}",
+                "error_type": error_type,
+                "error_hint": error_hint
             }
     
     def __call__(self, sql_query: str, max_rows: int = 100, return_format: str = "dict") -> Dict[str, Any]:
@@ -3343,8 +3499,8 @@ def sql_execution_node(state: AgentState) -> dict:
     # Emit execution start event
     writer({"type": "sql_execution_start", "estimated_complexity": "standard"})
     
-    # Use OOP agent
-    execution_agent = SQLExecutionAgent()
+    # Use OOP agent with SQL Warehouse
+    execution_agent = SQLExecutionAgent(warehouse_id=SQL_WAREHOUSE_ID)
     result = execution_agent(sql_query)
     
     # Prepare updates based on result
@@ -5743,6 +5899,264 @@ else:
 # MAGIC print(f"✓ No cross-contamination between threads")
 # MAGIC print("="*80)
 # MAGIC """
+
+# COMMAND ----------
+
+# DBTITLE 1,Test: Refactored SQLExecutionAgent with SQL Warehouse
+# MAGIC %md
+# MAGIC ### Test: SQLExecutionAgent with Databricks SQL Warehouse
+# MAGIC
+# MAGIC This test verifies the refactored SQLExecutionAgent works correctly with databricks-sql-connector.
+# MAGIC The agent now uses SQL Warehouse instead of spark.sql, making it compatible with Model Serving.
+
+# COMMAND ----------
+
+# Test the refactored SQLExecutionAgent
+print("="*80)
+print("🧪 TESTING REFACTORED SQLExecutionAgent")
+print("="*80)
+print(f"Using SQL Warehouse ID: {SQL_WAREHOUSE_ID}")
+print("="*80)
+
+# Create test agent instance
+test_agent = SQLExecutionAgent(warehouse_id=SQL_WAREHOUSE_ID)
+
+# Test query - simple query to verify functionality
+test_query = """
+SELECT 
+    'Test' as test_column,
+    123 as number_column,
+    CURRENT_DATE() as date_column
+LIMIT 5
+"""
+
+print("\n📝 Test Query:")
+print(test_query)
+print("\n🔄 Executing test query...")
+
+# Execute test query
+result = test_agent.execute_sql(test_query, max_rows=5, return_format="dict")
+
+# Verify results
+print("\n" + "="*80)
+print("📊 TEST RESULTS")
+print("="*80)
+
+if result["success"]:
+    print("✅ SUCCESS: Query executed via SQL Warehouse")
+    print(f"✓ Rows returned: {result['row_count']}")
+    print(f"✓ Columns: {result['columns']}")
+    print(f"✓ Result format: {type(result['result'])}")
+    print(f"\n📄 Sample result:")
+    if result['result']:
+        print(f"   {result['result'][0]}")
+    print("\n✅ SQLExecutionAgent refactoring SUCCESSFUL!")
+    print("✅ Agent is now compatible with Model Serving")
+else:
+    print(f"❌ FAILED: {result.get('error', 'Unknown error')}")
+    print("⚠️  Please check SQL Warehouse ID and permissions")
+
+print("="*80)
+
+# COMMAND ----------
+
+# DBTITLE 1,Test: SQLExecutionAgent with Real Healthcare Query
+# MAGIC %md
+# MAGIC ### Test: Real Healthcare Query via SQL Warehouse
+# MAGIC
+# MAGIC Test with an actual healthcare data query to verify full functionality.
+
+# COMMAND ----------
+
+# Test with a real healthcare query
+print("="*80)
+print("🧪 TESTING WITH REAL HEALTHCARE QUERY")
+print("="*80)
+
+real_query = """
+SELECT 
+    COUNT(DISTINCT patient_id) as patient_count,
+    COUNT(DISTINCT claim_id) as claim_count
+FROM healthverity_claims_sample_patient_dataset.hv_claims_sample.diagnosis
+LIMIT 10
+"""
+
+print("\n📝 Healthcare Query:")
+print(real_query)
+print("\n🔄 Executing via SQL Warehouse...")
+
+result = test_agent.execute_sql(real_query, max_rows=10, return_format="dict")
+
+print("\n" + "="*80)
+print("📊 HEALTHCARE QUERY RESULTS")
+print("="*80)
+
+if result["success"]:
+    print("✅ SUCCESS: Healthcare query executed")
+    print(f"✓ Rows returned: {result['row_count']}")
+    print(f"\n📄 Results:")
+    for row in result['result']:
+        print(f"   {row}")
+    print("\n✅ FULL INTEGRATION TEST PASSED!")
+else:
+    print(f"❌ FAILED: {result.get('error', 'Unknown error')}")
+
+print("="*80)
+
+# COMMAND ----------
+
+# DBTITLE 1,Production Deployment Guide for Model Serving
+# MAGIC %md
+# MAGIC ### 🚀 Production Deployment Guide: SQLExecutionAgent to Model Serving
+# MAGIC
+# MAGIC This guide shows how to deploy the SQLExecutionAgent to Databricks Model Serving with proper authentication configuration.
+# MAGIC
+# MAGIC #### Prerequisites
+# MAGIC 1. SQL Warehouse ID configured in your `.env` file
+# MAGIC 2. Databricks secrets scope created
+# MAGIC 3. Access token stored in Databricks secrets
+# MAGIC
+# MAGIC #### Step 1: Store SQL Warehouse Access Token in Databricks Secrets
+# MAGIC
+# MAGIC ```bash
+# MAGIC # Create a secret scope (if not exists)
+# MAGIC databricks secrets create-scope sql_warehouse_scope
+# MAGIC
+# MAGIC # Store your access token
+# MAGIC databricks secrets put-secret sql_warehouse_scope warehouse_token
+# MAGIC # (you will be prompted to enter the token)
+# MAGIC ```
+# MAGIC
+# MAGIC #### Step 2: Configure Environment Variables for Model Serving
+# MAGIC
+# MAGIC When creating/updating your Model Serving endpoint, configure these environment variables:
+# MAGIC
+# MAGIC **Via Serving UI:**
+# MAGIC 1. Navigate to: Serving → Your Endpoint → Configuration → Advanced configurations
+# MAGIC 2. Click "Add environment variable"
+# MAGIC 3. Add the following variables:
+# MAGIC
+# MAGIC | Variable Name | Value | Type |
+# MAGIC |---------------|-------|------|
+# MAGIC | `DATABRICKS_HOST` | `your-workspace.cloud.databricks.com` | Plain text |
+# MAGIC | `DATABRICKS_TOKEN` | `{{secrets/sql_warehouse_scope/warehouse_token}}` | Secret |
+# MAGIC
+# MAGIC **Via REST API:**
+# MAGIC ```python
+# MAGIC {
+# MAGIC   "name": "super-agent-endpoint",
+# MAGIC   "config": {
+# MAGIC     "served_entities": [{
+# MAGIC       "entity_name": "catalog.schema.super_agent_model",
+# MAGIC       "entity_version": "1",
+# MAGIC       "workload_size": "Small",
+# MAGIC       "scale_to_zero_enabled": true,
+# MAGIC       "environment_vars": {
+# MAGIC         "DATABRICKS_HOST": "your-workspace.cloud.databricks.com",
+# MAGIC         "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}"
+# MAGIC       }
+# MAGIC     }]
+# MAGIC   }
+# MAGIC }
+# MAGIC ```
+# MAGIC
+# MAGIC **Via Python SDK:**
+# MAGIC ```python
+# MAGIC from databricks.sdk import WorkspaceClient
+# MAGIC from databricks.sdk.service.serving import ServedEntityInput, EndpointCoreConfigInput
+# MAGIC
+# MAGIC w = WorkspaceClient()
+# MAGIC w.serving_endpoints.create_and_wait(
+# MAGIC     name="super-agent-endpoint",
+# MAGIC     config=EndpointCoreConfigInput(
+# MAGIC         served_entities=[
+# MAGIC             ServedEntityInput(
+# MAGIC                 entity_name="catalog.schema.super_agent_model",
+# MAGIC                 entity_version="1",
+# MAGIC                 workload_size="Small",
+# MAGIC                 scale_to_zero_enabled=True,
+# MAGIC                 environment_vars={
+# MAGIC                     "DATABRICKS_HOST": "your-workspace.cloud.databricks.com",
+# MAGIC                     "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}"
+# MAGIC                 }
+# MAGIC             )
+# MAGIC         ]
+# MAGIC     )
+# MAGIC )
+# MAGIC ```
+# MAGIC
+# MAGIC #### Step 3: Package Model with MLflow
+# MAGIC
+# MAGIC When packaging your model for deployment:
+# MAGIC
+# MAGIC ```python
+# MAGIC import mlflow
+# MAGIC
+# MAGIC class SuperAgentModel(mlflow.pyfunc.PythonModel):
+# MAGIC     def load_context(self, context):
+# MAGIC         # Initialize SQL Execution Agent with warehouse ID
+# MAGIC         self.sql_agent = SQLExecutionAgent(warehouse_id="your-warehouse-id")
+# MAGIC         # Credentials will be loaded from environment variables at runtime
+# MAGIC     
+# MAGIC     def predict(self, context, model_input):
+# MAGIC         # Use the agent
+# MAGIC         result = self.sql_agent.execute_sql(query)
+# MAGIC         return result
+# MAGIC
+# MAGIC # Log model
+# MAGIC mlflow.pyfunc.log_model("model", python_model=SuperAgentModel())
+# MAGIC ```
+# MAGIC
+# MAGIC #### Step 4: Verify Deployment
+# MAGIC
+# MAGIC After deployment, test your endpoint:
+# MAGIC
+# MAGIC ```python
+# MAGIC import requests
+# MAGIC
+# MAGIC response = requests.post(
+# MAGIC     "https://your-workspace.cloud.databricks.com/serving-endpoints/super-agent-endpoint/invocations",
+# MAGIC     headers={"Authorization": f"Bearer {token}"},
+# MAGIC     json={"inputs": {"query": "SELECT * FROM table LIMIT 10"}}
+# MAGIC )
+# MAGIC print(response.json())
+# MAGIC ```
+# MAGIC
+# MAGIC #### Security Best Practices
+# MAGIC
+# MAGIC ✅ **DO:**
+# MAGIC - Store sensitive credentials in Databricks secrets
+# MAGIC - Use secrets-based environment variables for tokens
+# MAGIC - Use service principal authentication for production
+# MAGIC - Implement least-privilege access controls
+# MAGIC - Rotate tokens regularly
+# MAGIC
+# MAGIC ❌ **DON'T:**
+# MAGIC - Hard-code tokens in your model code
+# MAGIC - Use plain text environment variables for sensitive data
+# MAGIC - Share tokens across multiple applications
+# MAGIC - Use personal access tokens in production (use service principals)
+# MAGIC
+# MAGIC #### Troubleshooting
+# MAGIC
+# MAGIC **Error: "DATABRICKS_HOST not found"**
+# MAGIC - Verify environment variable is set in endpoint configuration
+# MAGIC - Check variable name is exactly `DATABRICKS_HOST` (case-sensitive)
+# MAGIC
+# MAGIC **Error: "DATABRICKS_TOKEN not found"**
+# MAGIC - Verify secret exists: `databricks secrets list-secrets sql_warehouse_scope`
+# MAGIC - Verify environment variable uses correct syntax: `{{secrets/scope/key}}`
+# MAGIC - Ensure endpoint creator has READ access to the secret
+# MAGIC
+# MAGIC **Error: "Authentication failed"**
+# MAGIC - Verify token has not expired
+# MAGIC - Check SQL Warehouse permissions for the token owner
+# MAGIC - Verify workspace URL is correct (without https://)
+# MAGIC
+# MAGIC #### References
+# MAGIC - [Configure access to resources from model serving endpoints](https://docs.databricks.com/machine-learning/model-serving/store-env-variable-model-serving.html)
+# MAGIC - [Databricks unified authentication](https://docs.databricks.com/dev-tools/auth/unified-auth.html)
+# MAGIC - [Model Serving endpoints API](https://docs.databricks.com/api/workspace/servingendpoints)
 
 # COMMAND ----------
 
