@@ -100,14 +100,29 @@ class TableMetadataConfig:
     
     @classmethod
     def from_env(cls, uc_config: UnityCatalogConfig) -> 'TableMetadataConfig':
-        """Load configuration from environment variables."""
+        """
+        Load configuration from environment variables.
+        
+        ENVIRONMENT-SPECIFIC CONFIGURATION:
+        - Development: Set SQL_WAREHOUSE_ID in .env file
+        - Production: Set SQL_WAREHOUSE_ID via Model Serving endpoint environment variables
+          (or keep in .env if same warehouse used for both)
+        
+        Get SQL Warehouse ID from:
+        - SQL Warehouses UI → Click warehouse → Copy ID from URL or Details
+        - Format: alphanumeric string (e.g., '148ccb90800933a1')
+        """
         default_volume = f"{uc_config.full_schema_name}.volume"
         default_table = f"{uc_config.full_schema_name}.enriched_genie_docs"
         
         # Parse Genie Space IDs from environment
+        # Support both GENIE_SPACE_IDS and legacy genie_ids for backward compatibility
         default_space_ids = "01f072dbd668159d99934dfd3b17f544,01f08f4d1f5f172ea825ec8c9a3c6064,01f073c5476313fe8f51966e3ce85bd7,01f07795f6981dc4a99d62c9fc7c2caa,01f08a9fd9ca125a986d01c1a7a5b2fe"
-        space_ids_str = os.getenv("GENIE_SPACE_IDS", default_space_ids)
+        space_ids_str = os.getenv("GENIE_SPACE_IDS") or os.getenv("genie_ids", default_space_ids)
         space_ids = [sid.strip() for sid in space_ids_str.split(",") if sid.strip()]
+        
+        # SQL Warehouse ID - required for SQLExecutionAgent
+        sql_warehouse_id = os.getenv("SQL_WAREHOUSE_ID", "").strip()
         
         return cls(
             sample_size=int(os.getenv("SAMPLE_SIZE", "100")),
@@ -115,7 +130,7 @@ class TableMetadataConfig:
             genie_exports_volume=os.getenv("GENIE_EXPORTS_VOLUME", default_volume),
             enriched_docs_table=os.getenv("ENRICHED_DOCS_TABLE", default_table),
             genie_space_ids=space_ids,
-            sql_warehouse_id=os.getenv("SQL_WAREHOUSE_ID", ""),
+            sql_warehouse_id=sql_warehouse_id,
         )
 
 
@@ -214,6 +229,21 @@ class AgentConfig:
         # Check vector search
         if not self.vector_search.endpoint_name:
             raise ValueError("VS_ENDPOINT_NAME cannot be empty")
+        
+        # Check SQL Warehouse ID (critical for SQL execution agent)
+        if not self.table_metadata.sql_warehouse_id:
+            raise ValueError(
+                "SQL_WAREHOUSE_ID cannot be empty. "
+                "Set it in .env file or environment variable. "
+                "Get warehouse ID from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details"
+            )
+        
+        # Validate SQL Warehouse ID format (should be alphanumeric, typically 16 chars)
+        if not self.table_metadata.sql_warehouse_id.replace("-", "").replace("_", "").isalnum():
+            raise ValueError(
+                f"SQL_WAREHOUSE_ID format invalid: '{self.table_metadata.sql_warehouse_id}'. "
+                "Expected alphanumeric string (e.g., '148ccb90800933a1')"
+            )
         
         # Check Lakebase (critical for distributed Model Serving)
         if not self.lakebase.instance_name:

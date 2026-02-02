@@ -19,6 +19,20 @@
 Configuration loaded from config.py and .env file.
 To update configuration, edit .env file instead of this notebook.
 
+SQL_WAREHOUSE_ID CONFIGURATION:
+Required for SQLExecutionAgent to execute queries via SQL Warehouse.
+
+Development Environment:
+- Set SQL_WAREHOUSE_ID in .env file: SQL_WAREHOUSE_ID=your-dev-warehouse-id
+- Get warehouse ID from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details
+
+Production Environment (Model Serving):
+- Option 1: Set SQL_WAREHOUSE_ID in .env file (if same warehouse for dev/prod)
+- Option 2: Configure via Model Serving endpoint environment variables:
+  - Add environment variable: SQL_WAREHOUSE_ID=your-prod-warehouse-id
+  - Or use secrets: SQL_WAREHOUSE_ID={{secrets/scope/warehouse_id_key}}
+- The agent will use environment variables if available, falling back to .env
+
 RELOADING CONFIGURATION AFTER CHANGING .env:
 If you modify the .env file, you need to reload the configuration:
 1. Change the line below from: config = get_config()
@@ -64,6 +78,15 @@ EMBEDDING_DIMS = config.lakebase.embedding_dims
 # Table Metadata configuration (from .env)
 SQL_WAREHOUSE_ID = config.table_metadata.sql_warehouse_id
 GENIE_SPACE_ID = config.table_metadata.genie_space_ids
+
+# Validate SQL_WAREHOUSE_ID is configured
+if not SQL_WAREHOUSE_ID:
+    print("⚠️ WARNING: SQL_WAREHOUSE_ID is not configured!")
+    print("Set it in .env file: SQL_WAREHOUSE_ID=your-warehouse-id")
+    print("Get warehouse ID from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details")
+    print("Example: SQL_WAREHOUSE_ID=148ccb90800933a1")
+    raise ValueError("SQL_WAREHOUSE_ID must be configured in .env file")
+
 # Print configuration summary
 config.print_summary()
 
@@ -4813,11 +4836,15 @@ GENIE_SPACE_IDS = config.table_metadata.genie_space_ids
 for space_id in GENIE_SPACE_IDS:
     print(f"  - {space_id}")
 
-# 2. SQL Warehouse ID (you need to provide this manually)
+# 2. SQL Warehouse ID (from config - already loaded at line 65)
 print("\n[2/4] SQL Warehouse ID:")
-print("  ⚠️ TODO: Get from SQL Warehouses UI → Click warehouse → Copy ID from URL or Details")
-print("  Example: 'abc123def456'")
-SQL_WAREHOUSE_ID = "148ccb90800933a1"  # UPDATE THIS!
+print(f"  ✓ Using SQL Warehouse ID from config: {SQL_WAREHOUSE_ID}")
+print(f"  Source: config.table_metadata.sql_warehouse_id")
+print(f"  Configured via: .env file → SQL_WAREHOUSE_ID environment variable")
+if not SQL_WAREHOUSE_ID:
+    print("  ⚠️ WARNING: SQL_WAREHOUSE_ID is empty!")
+    print("  Set it in .env file: SQL_WAREHOUSE_ID=your-warehouse-id")
+    print("  Get warehouse ID from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details")
 
 # 3. Query underlying tables used by Genie spaces
 print("\n[3/4] Querying underlying tables from metadata...")
@@ -6012,9 +6039,10 @@ print("="*80)
 # MAGIC This guide shows how to deploy the SQLExecutionAgent to Databricks Model Serving with proper authentication configuration.
 # MAGIC
 # MAGIC #### Prerequisites
-# MAGIC 1. SQL Warehouse ID configured in your `.env` file
+# MAGIC 1. SQL Warehouse ID configured in your `.env` file (for development) or Model Serving endpoint (for production)
 # MAGIC 2. Databricks secrets scope created
 # MAGIC 3. Access token stored in Databricks secrets
+# MAGIC 4. SQL Warehouse ID obtained from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details
 # MAGIC
 # MAGIC #### Step 1: Store SQL Warehouse Access Token in Databricks Secrets
 # MAGIC
@@ -6036,10 +6064,16 @@ print("="*80)
 # MAGIC 2. Click "Add environment variable"
 # MAGIC 3. Add the following variables:
 # MAGIC
-# MAGIC | Variable Name | Value | Type |
-# MAGIC |---------------|-------|------|
-# MAGIC | `DATABRICKS_HOST` | `your-workspace.cloud.databricks.com` | Plain text |
-# MAGIC | `DATABRICKS_TOKEN` | `{{secrets/sql_warehouse_scope/warehouse_token}}` | Secret |
+# MAGIC | Variable Name | Value | Type | Required |
+# MAGIC |---------------|-------|------|----------|
+# MAGIC | `DATABRICKS_HOST` | `your-workspace.cloud.databricks.com` | Plain text | Yes |
+# MAGIC | `DATABRICKS_TOKEN` | `{{secrets/sql_warehouse_scope/warehouse_token}}` | Secret | Yes |
+# MAGIC | `SQL_WAREHOUSE_ID` | `your-production-warehouse-id` | Plain text | Yes* |
+# MAGIC
+# MAGIC \* **SQL_WAREHOUSE_ID**: 
+# MAGIC - If your production warehouse differs from development, set it here
+# MAGIC - If same warehouse for dev/prod, can be omitted (will use from .env/model code)
+# MAGIC - Get warehouse ID from: SQL Warehouses UI → Click warehouse → Copy ID from URL or Details
 # MAGIC
 # MAGIC **Via REST API:**
 # MAGIC ```python
@@ -6053,7 +6087,8 @@ print("="*80)
 # MAGIC       "scale_to_zero_enabled": true,
 # MAGIC       "environment_vars": {
 # MAGIC         "DATABRICKS_HOST": "your-workspace.cloud.databricks.com",
-# MAGIC         "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}"
+# MAGIC         "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}",
+# MAGIC         "SQL_WAREHOUSE_ID": "your-production-warehouse-id"
 # MAGIC       }
 # MAGIC     }]
 # MAGIC   }
@@ -6077,7 +6112,8 @@ print("="*80)
 # MAGIC                 scale_to_zero_enabled=True,
 # MAGIC                 environment_vars={
 # MAGIC                     "DATABRICKS_HOST": "your-workspace.cloud.databricks.com",
-# MAGIC                     "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}"
+# MAGIC                     "DATABRICKS_TOKEN": "{{secrets/sql_warehouse_scope/warehouse_token}}",
+# MAGIC                     "SQL_WAREHOUSE_ID": "your-production-warehouse-id"
 # MAGIC                 }
 # MAGIC             )
 # MAGIC         ]
@@ -6095,8 +6131,13 @@ print("="*80)
 # MAGIC class SuperAgentModel(mlflow.pyfunc.PythonModel):
 # MAGIC     def load_context(self, context):
 # MAGIC         # Initialize SQL Execution Agent with warehouse ID
-# MAGIC         self.sql_agent = SQLExecutionAgent(warehouse_id="your-warehouse-id")
-# MAGIC         # Credentials will be loaded from environment variables at runtime
+# MAGIC         # Warehouse ID can come from:
+# MAGIC         # 1. Environment variable SQL_WAREHOUSE_ID (Model Serving) - recommended
+# MAGIC         # 2. Hardcoded value - fallback for development
+# MAGIC         import os
+# MAGIC         warehouse_id = os.getenv("SQL_WAREHOUSE_ID") or "your-default-warehouse-id"
+# MAGIC         self.sql_agent = SQLExecutionAgent(warehouse_id=warehouse_id)
+# MAGIC         # Credentials (DATABRICKS_HOST, DATABRICKS_TOKEN) loaded from environment variables at runtime
 # MAGIC     
 # MAGIC     def predict(self, context, model_input):
 # MAGIC         # Use the agent
