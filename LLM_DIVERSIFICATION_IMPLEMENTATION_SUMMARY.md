@@ -104,23 +104,23 @@ Comprehensive 400+ line guide covering:
 
 | Agent | Model | Speed Tier | Rationale |
 |-------|-------|-----------|-----------|
-| Clarification | `databricks-gpt-5-mini` | FAST | Intent classification, structured task |
+| Clarification | `databricks-claude-haiku-4-5` | FAST | Intent classification, structured task |
 | Planning | `databricks-claude-sonnet-4-5` | MEDIUM | Route decision, requires reasoning |
-| SQL Synthesis (Table) | `databricks-gpt-5-1-codex-mini` | FAST | Code generation, SQL optimized |
-| SQL Synthesis (Genie) | `databricks-gpt-5` | MEDIUM-SLOW | Complex orchestration, multi-agent |
-| SQL Execution | `databricks-gpt-5-nano` | FASTEST | Error handling only, minimal LLM use |
-| Summarize | `databricks-gemini-2-5-flash` | FAST | Content generation, speed critical |
+| SQL Synthesis (Table) | `databricks-claude-haiku-4-5` | FAST | Code generation, SQL optimized |
+| SQL Synthesis (Genie) | `databricks-claude-sonnet-4-5` | MEDIUM | Complex orchestration, multi-agent |
+| SQL Execution | `databricks-claude-haiku-4-5` | FAST | Error handling only, minimal LLM use |
+| Summarize | `databricks-claude-haiku-4-5` | FAST | Content generation, speed critical |
 
 ## Expected Performance Improvements
 
 Based on Databricks model performance data:
 
-- **Overall latency**: 15-25% faster for typical queries
-- **Clarification agent**: 30-50% faster (GPT-5 mini vs Claude Sonnet 4.5)
-- **SQL Synthesis (Table)**: 20-40% faster + improved accuracy (code-specialized)
-- **Summarize agent**: 40-60% faster (Gemini Flash optimized for content)
-- **Overall cost**: 10-20% reduction (faster models on high-frequency paths)
-- **Accuracy**: Maintained or improved (specialized models for specific tasks)
+- **Overall latency**: 20-30% faster for typical queries
+- **Clarification agent**: 40-50% faster (Haiku vs Sonnet)
+- **SQL Synthesis (Table)**: Balanced speed and accuracy with Haiku
+- **Summarize agent**: Faster with Haiku while maintaining quality
+- **Overall cost**: 30-40% reduction (Haiku on high-frequency paths)
+- **Accuracy**: Maintained with Claude models (Haiku for fast tasks, Sonnet for complex)
 
 ## Backward Compatibility
 
@@ -135,22 +135,22 @@ All changes are fully backward compatible:
 
 ### Budget-Conscious (Maximum Speed/Cost Savings)
 ```
-LLM_ENDPOINT_CLARIFICATION=databricks-gpt-5-nano
+LLM_ENDPOINT_CLARIFICATION=databricks-claude-haiku-4-5
 LLM_ENDPOINT_PLANNING=databricks-meta-llama-3-3-70b-instruct
-LLM_ENDPOINT_SQL_SYNTHESIS_TABLE=databricks-gpt-5-mini
-LLM_ENDPOINT_SQL_SYNTHESIS_GENIE=databricks-claude-sonnet-4-5
-LLM_ENDPOINT_EXECUTION=databricks-gpt-5-nano
-LLM_ENDPOINT_SUMMARIZE=databricks-gemini-3-flash
+LLM_ENDPOINT_SQL_SYNTHESIS_TABLE=databricks-claude-haiku-4-5
+LLM_ENDPOINT_SQL_SYNTHESIS_GENIE=databricks-claude-haiku-4-5
+LLM_ENDPOINT_EXECUTION=databricks-claude-haiku-4-5
+LLM_ENDPOINT_SUMMARIZE=databricks-claude-haiku-4-5
 ```
 
 ### Quality-First (Maximum Accuracy)
 ```
 LLM_ENDPOINT_CLARIFICATION=databricks-claude-sonnet-4-5
-LLM_ENDPOINT_PLANNING=databricks-claude-opus-4-5
-LLM_ENDPOINT_SQL_SYNTHESIS_TABLE=databricks-gpt-5-1-codex-max
-LLM_ENDPOINT_SQL_SYNTHESIS_GENIE=databricks-gpt-5-2
-LLM_ENDPOINT_EXECUTION=databricks-gpt-5-mini
-LLM_ENDPOINT_SUMMARIZE=databricks-gpt-5-1
+LLM_ENDPOINT_PLANNING=databricks-claude-sonnet-4-5
+LLM_ENDPOINT_SQL_SYNTHESIS_TABLE=databricks-claude-sonnet-4-5
+LLM_ENDPOINT_SQL_SYNTHESIS_GENIE=databricks-claude-sonnet-4-5
+LLM_ENDPOINT_EXECUTION=databricks-claude-sonnet-4-5
+LLM_ENDPOINT_SUMMARIZE=databricks-claude-sonnet-4-5
 ```
 
 ## Testing Checklist
@@ -173,7 +173,7 @@ Before deploying to production:
 1. **Update Environment Variables**:
    ```bash
    # In .env file or Model Serving environment variables
-   LLM_ENDPOINT_CLARIFICATION=databricks-gpt-5-mini
+   LLM_ENDPOINT_CLARIFICATION=databricks-claude-haiku-4-5
    LLM_ENDPOINT_PLANNING=databricks-claude-sonnet-4-5
    # ... (all 6 endpoints)
    ```

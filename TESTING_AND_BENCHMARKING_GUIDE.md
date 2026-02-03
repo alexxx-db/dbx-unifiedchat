@@ -20,12 +20,12 @@ Run the configuration cell in `Notebooks/Super_Agent_hybrid.py` and verify the o
 # Expected output should show:
 # LLM Endpoints (Diversified by Agent):
 #   Default/Fallback: databricks-claude-sonnet-4-5
-#   Clarification Agent: databricks-gpt-5-mini
+#   Clarification Agent: databricks-claude-haiku-4-5
 #   Planning Agent: databricks-claude-sonnet-4-5
-#   SQL Synthesis (Table) Agent: databricks-gpt-5-1-codex-mini
-#   SQL Synthesis (Genie) Agent: databricks-gpt-5
-#   SQL Execution Agent: databricks-gpt-5-nano
-#   Summarize Agent: databricks-gemini-2-5-flash
+#   SQL Synthesis (Table) Agent: databricks-claude-haiku-4-5
+#   SQL Synthesis (Genie) Agent: databricks-claude-sonnet-4-5
+#   SQL Execution Agent: databricks-claude-haiku-4-5
+#   Summarize Agent: databricks-claude-haiku-4-5
 ```
 
 ### Step 2: Verify Model Access
@@ -71,7 +71,7 @@ result_2 = AGENT.predict(messages=[{"role": "user", "content": test_query_2}])
 
 # Check tracking
 print_agent_model_usage()
-# Should show clarification agent using databricks-gpt-5-mini
+# Should show clarification agent using databricks-claude-haiku-4-5
 ```
 
 ### Test 2: Planning Agent
@@ -115,8 +115,8 @@ result_genie = AGENT.predict(messages=[{
 
 # Verify correct models used
 print_agent_model_usage()
-# Table route should use: databricks-gpt-5-1-codex-mini
-# Genie route should use: databricks-gpt-5
+# Table route should use: databricks-claude-haiku-4-5
+# Genie route should use: databricks-claude-sonnet-4-5
 ```
 
 ### Test 4: Summarize Agent
@@ -132,7 +132,7 @@ result = AGENT.predict(messages=[{
 
 # Check summary quality and model usage
 print_agent_model_usage()
-# Should show: databricks-gemini-2-5-flash
+# Should show: databricks-claude-haiku-4-5
 ```
 
 ## Phase 3: Performance Benchmarking
@@ -288,13 +288,10 @@ Estimate costs based on token usage (requires actual token counts from model res
 ```python
 # Estimated pricing (tokens per million) - UPDATE WITH ACTUAL DATABRICKS PRICING
 MODEL_PRICING = {
-    "databricks-gpt-5-nano": {"input": 0.15, "output": 0.60},
-    "databricks-gpt-5-mini": {"input": 0.50, "output": 1.50},
     "databricks-claude-haiku-4-5": {"input": 0.80, "output": 4.00},
     "databricks-claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
-    "databricks-gpt-5": {"input": 2.50, "output": 10.00},
-    "databricks-gpt-5-1-codex-mini": {"input": 1.00, "output": 3.00},
-    "databricks-gemini-2-5-flash": {"input": 0.075, "output": 0.30},
+    "databricks-claude-opus-4-5": {"input": 15.00, "output": 75.00},
+    "databricks-meta-llama-3-3-70b-instruct": {"input": 0.99, "output": 0.99},
 }
 
 def estimate_cost(model, input_tokens, output_tokens):

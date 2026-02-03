@@ -443,12 +443,12 @@ Prerequisites:
 # MAGIC     
 # MAGIC     # LLM Endpoint Configuration - Diversified by Agent Role
 # MAGIC     "llm_endpoint": "databricks-claude-sonnet-4-5",  # Default/fallback
-# MAGIC     "llm_endpoint_clarification": "databricks-gpt-5-mini",
+# MAGIC     "llm_endpoint_clarification": "databricks-claude-haiku-4-5",
 # MAGIC     "llm_endpoint_planning": "databricks-claude-sonnet-4-5",
-# MAGIC     "llm_endpoint_sql_synthesis_table": "databricks-gpt-5-1-codex-mini",
-# MAGIC     "llm_endpoint_sql_synthesis_genie": "databricks-gpt-5",
-# MAGIC     "llm_endpoint_execution": "databricks-gpt-5-nano",
-# MAGIC     "llm_endpoint_summarize": "databricks-gemini-2-5-flash",
+# MAGIC     "llm_endpoint_sql_synthesis_table": "databricks-claude-haiku-4-5",
+# MAGIC     "llm_endpoint_sql_synthesis_genie": "databricks-claude-sonnet-4-5",
+# MAGIC     "llm_endpoint_execution": "databricks-claude-haiku-4-5",
+# MAGIC     "llm_endpoint_summarize": "databricks-claude-haiku-4-5",
 # MAGIC     
 # MAGIC     # Vector Search Configuration
 # MAGIC     "vs_endpoint_name": "genie_multi_agent_vs",
@@ -667,7 +667,7 @@ Prerequisites:
 # MAGIC     
 # MAGIC     Args:
 # MAGIC         agent_name: Name of the agent (e.g., "clarification", "planning")
-# MAGIC         model_endpoint: LLM endpoint being used (e.g., "databricks-gpt-5-mini")
+# MAGIC         model_endpoint: LLM endpoint being used (e.g., "databricks-claude-haiku-4-5")
 # MAGIC     """
 # MAGIC     if "agent_model_usage" not in _performance_metrics:
 # MAGIC         _performance_metrics["agent_model_usage"] = {}
