@@ -5,8 +5,17 @@
 catalog_name: yyang
 schema_name: multi_agent_genie
 
-# LLM Endpoint Configuration
+# LLM Endpoint Configuration - Diversified by Agent Role
+# Default/Fallback endpoint (used if specific endpoint not set)
 llm_endpoint: databricks-claude-sonnet-4-5
+
+# Agent-Specific Endpoints (Balanced Configuration - Recommended)
+llm_endpoint_clarification: databricks-gpt-5-mini
+llm_endpoint_planning: databricks-claude-sonnet-4-5
+llm_endpoint_sql_synthesis_table: databricks-gpt-5-1-codex-mini
+llm_endpoint_sql_synthesis_genie: databricks-gpt-5
+llm_endpoint_execution: databricks-gpt-5-nano
+llm_endpoint_summarize: databricks-gemini-2-5-flash
 
 # Vector Search Configuration
 vs_endpoint_name: genie_multi_agent_vs
