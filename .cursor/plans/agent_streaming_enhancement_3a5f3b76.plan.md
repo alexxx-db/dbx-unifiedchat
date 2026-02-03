@@ -4,16 +4,16 @@ overview: Comprehensive guide to streaming tool calls and intermediate results i
 todos:
   - id: add-config-params
     content: Add RunnableConfig parameters to tool signatures (_genie_tool_call, invoke_parallel_genie_agents)
-    status: pending
+    status: completed
   - id: inject-streaming
     content: Add get_stream_writer() calls within tools to emit progress events (SQL generation, execution stages)
-    status: pending
+    status: completed
   - id: enhance-formatting
     content: Update format_custom_event() to handle new tool progress event types with rich formatting
-    status: pending
+    status: completed
   - id: test-streaming
     content: Test streaming in local environment and Databricks Playground to verify progress updates appear in real-time
-    status: pending
+    status: completed
 isProject: false
 ---
 
