@@ -4489,10 +4489,13 @@ with mlflow.start_run():
         # This config overrides the development_config in agent.py
         model_config="../prod_config.yaml",  # Production configuration
         pip_requirements=[
+            f"databricks-sdk=={get_distribution('databricks-sdk').version}",  # Required for Config() unified auth
+            f"databricks-sql-connector=={get_distribution('databricks-sql-connector').version}",  # Required for SQLExecutionAgent
             f"databricks-langchain[memory]=={get_distribution('databricks-langchain').version}",
             f"databricks-agents=={get_distribution('databricks-agents').version}",
             f"databricks-vectorsearch=={get_distribution('databricks-vectorsearch').version}",
-            f"mlflow[databricks]=={mlflow.__version__}",
+            f"langgraph=={get_distribution('langgraph').version}",  # Required for StateGraph
+            f"mlflow[databricks]=={mlflow.__version__}"
         ]
     )
     print(f"✓ Model logged: {logged_agent_info.model_uri}")
