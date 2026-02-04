@@ -3142,23 +3142,18 @@ Prerequisites:
 # MAGIC }}
 # MAGIC """
 # MAGIC     
-# MAGIC     # Call LLM with streaming for immediate first token (using pooled connection)
+# MAGIC     # Call LLM with invoke for clean output (using pooled connection)
 # MAGIC     llm = get_pooled_llm(LLM_ENDPOINT_CLARIFICATION)
 # MAGIC     track_agent_model_usage("clarification", LLM_ENDPOINT_CLARIFICATION)
 # MAGIC     
 # MAGIC     try:
-# MAGIC         print("🤖 Streaming unified LLM call for immediate first token...")
-# MAGIC         writer({"type": "llm_streaming_start", "agent": "unified_intent_context_clarification"})
+# MAGIC         print("🤖 Calling unified LLM for intent & context analysis...")
 # MAGIC         
-# MAGIC         # Stream LLM response for immediate first token emission
-# MAGIC         content = ""
-# MAGIC         for chunk in llm.stream(unified_prompt):
-# MAGIC             if chunk.content:
-# MAGIC                 content += chunk.content
-# MAGIC                 # Emit streaming event for real-time visibility
-# MAGIC                 writer({"type": "llm_token", "content": chunk.content})
+# MAGIC         # Use invoke for clean, complete output (no streaming artifacts)
+# MAGIC         response = llm.invoke(unified_prompt)
+# MAGIC         content = response.content
 # MAGIC         
-# MAGIC         print(f"✓ Streaming complete ({len(content)} chars)")
+# MAGIC         print(f"✓ Analysis complete ({len(content)} chars)")
 # MAGIC         
 # MAGIC         # Parse JSON response
 # MAGIC         if "```json" in content:
