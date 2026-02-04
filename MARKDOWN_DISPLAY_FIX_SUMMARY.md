@@ -252,6 +252,17 @@ result = AGENT.predict(request)
 
 **Expected**: Should proceed normally to planning → SQL synthesis → execution
 
+## Update: Streaming Delay Removed
+
+After testing, the character-by-character streaming with `time.sleep(0.01)` was causing 15-17 second delays for long content. This has been removed.
+
+**Change**: The `stream_markdown_response()` function now prints content immediately without delays.
+
+**Impact**: 
+- Before: 4s JSON + 17s streaming = 21s total
+- After: 4s JSON + instant display = 4s total
+- **Improvement**: 17 second reduction! ⚡
+
 ## Implementation Status
 
 | Task | Status |
@@ -260,6 +271,7 @@ result = AGENT.predict(request)
 | Update clarification streaming | ✅ Complete |
 | Update meta-answer streaming | ✅ Complete |
 | Fix AIMessage content | ✅ Complete |
+| Remove streaming delay | ✅ Complete |
 | Testing | ✅ Ready to test |
 
 ## Files Modified

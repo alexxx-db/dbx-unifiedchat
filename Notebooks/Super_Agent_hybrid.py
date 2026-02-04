@@ -2988,21 +2988,18 @@ def unified_intent_context_clarification_node(state: AgentState) -> dict:
     Returns: Dictionary with state updates
     """
     from langgraph.config import get_stream_writer
-    import time
     
     writer = get_stream_writer()
     
     def stream_markdown_response(content: str, label: str = "Response"):
-        """Stream markdown content token-by-token for smooth display."""
+        """Display markdown content immediately (no streaming delay)."""
         print(f"\n✨ {label}:")
         print("-" * 80)
         
-        # Stream character by character for smooth effect
-        for char in content:
-            print(char, end='', flush=True)
-            time.sleep(0.01)  # Small delay for readability
+        # Print content immediately without character-by-character delay
+        print(content)
         
-        print("\n" + "-" * 80)
+        print("-" * 80)
     
     def format_clarification_markdown(reason: str, options: list = None) -> str:
         """
