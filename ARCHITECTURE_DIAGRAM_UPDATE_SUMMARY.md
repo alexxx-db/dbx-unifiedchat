@@ -2,7 +2,9 @@
 
 **Date:** February 4, 2026  
 **Updated By:** AI Assistant  
-**Scope:** Updated both simple and full architecture diagrams to reflect current ETL pipeline and Super_Agent_hybrid.py implementation
+**Scope:** Updated both simple and full architecture diagrams to reflect current ETL pipeline, Super_Agent_hybrid.py implementation, and highlighted the 💡 **Instructed Retriever innovation**
+
+**Reference:** [Databricks Blog - Instructed Retriever: Unlocking System-Level Reasoning in Search Agents](https://www.databricks.com/blog/instructed-retriever-unlocking-system-level-reasoning-search-agents)
 
 ---
 
@@ -58,18 +60,21 @@
 - Added **Memory class** (teal color) for Lakebase components
 - Updated all data flows to reflect actual implementation
 
-### 2. SVG Diagram Files
+### 2. Rendered Diagram Files (SVG + PDF)
 
-#### ✅ `architecture_diagram_simple.svg` (45KB)
+#### ✅ `architecture_diagram_simple.svg` (45KB) + `architecture_diagram_simple.pdf` (191KB)
 - Generated from updated simple.mmd
 - Neutral theme with transparent background
 - Optimized for embedding in documentation
+- PDF version for high-quality printing and presentations
 
-#### ✅ `architecture_diagram.svg` (121KB)
+#### ✅ `architecture_diagram.svg` (121KB) + `architecture_diagram.pdf` (232KB)
 - Generated from updated full diagram
 - Larger canvas (3000x2500) for detailed view
 - Shows all agents, data flows, and ETL pipeline
+- **Highlights the Instructed Retriever innovation** with special callouts
 - High-resolution for presentations
+- PDF version for professional distribution
 
 ### 3. Documentation
 
@@ -96,44 +101,70 @@
 
 ## Key Improvements
 
-### 1. Accurate Representation
+### 1. 💡 Innovation Highlight: Instructed Retriever
+✅ **Multi-step Instructed Retrieval** marked as key innovation in diagrams  
+✅ UC Function Toolkit shown as implementation of [Databricks Instructed Retriever architecture](https://www.databricks.com/blog/instructed-retriever-unlocking-system-level-reasoning-search-agents)  
+✅ Hierarchical metadata retrieval flow visualized (summary → table → column → details)  
+✅ System specifications propagation illustrated  
+✅ Performance improvements documented (35-50% recall, 70%+ response quality)  
+✅ Detailed section in documentation explaining the innovation  
+
+### 2. Accurate Representation
 ✅ Diagrams now match the actual implementation in `Super_Agent_hybrid.py`  
 ✅ All agent classes properly represented  
 ✅ ETL pipeline reflects actual notebooks (00, 02, 04)  
 ✅ Memory system integration shown
 
-### 2. Better Clarity
+### 3. Better Clarity
 ✅ Simple diagram focuses on high-level flow + ETL  
 ✅ Full diagram shows all technical details  
 ✅ ETL pipeline shows build order (1→2→3)  
-✅ All 4 execution paths clearly distinguished
+✅ All 4 execution paths clearly distinguished  
+✅ Innovation callouts with emoji markers (💡)
 
-### 3. Enhanced Documentation
+### 4. Enhanced Documentation
 ✅ Detailed ETL notebook descriptions  
 ✅ Configuration parameters documented  
 ✅ Build and deployment order provided  
 ✅ Design decisions explained  
-✅ Query flow example updated with current flow
+✅ Query flow example updated with current flow  
+✅ **New section**: "Key Innovation: Multi-step Instructed Retrieval"  
+✅ Performance comparison tables added  
+✅ Implementation details provided
 
-### 4. Memory System Integration
+### 5. Memory System Integration
 ✅ Lakebase shown as central memory store  
 ✅ Short-term (checkpoints) and long-term (user memories) distinction  
 ✅ Memory class color (teal) for visual clarity
 
+### 6. Multiple Export Formats
+✅ SVG files for web and documentation  
+✅ **PDF files for high-quality printing and presentations**  
+✅ Mermaid source files for easy editing
+
 ---
 
-## Files Modified
+## Files Modified and Created
 
 ### Mermaid Source Files
-- ✅ `architecture_diagram_simple.mmd` - Simple version updated
-- ✅ `architecture_diagram.mmd` - Full version updated
+- ✅ `architecture_diagram_simple.mmd` - Simple version updated with innovation markers
+- ✅ `architecture_diagram.mmd` - Full version updated with detailed UC Functions callout
 
 ### Generated SVG Files
 - ✅ `architecture_diagram_simple.svg` - Regenerated (45KB)
-- ✅ `architecture_diagram.svg` - Regenerated (121KB)
+- ✅ `architecture_diagram.svg` - Regenerated (121KB) with innovation highlights
+
+### Generated PDF Files (NEW! 📄)
+- ✅ `architecture_diagram_simple.pdf` - High-quality print version (191KB)
+- ✅ `architecture_diagram.pdf` - High-quality print version (232KB)
 
 ### Documentation
-- ✅ `ARCHITECTURE_DIAGRAM.md` - Comprehensive updates
+- ✅ `ARCHITECTURE_DIAGRAM.md` - Comprehensive updates including:
+  - New section: "Key Innovation: Multi-step Instructed Retrieval"
+  - Performance comparison tables
+  - Implementation details with code examples
+  - Download links for SVG and PDF formats
+  - Reference to Databricks blog post
 
 ### New Files
 - ✅ `ARCHITECTURE_DIAGRAM_UPDATE_SUMMARY.md` - This file
@@ -367,13 +398,85 @@ Return to User (thinking_result, sql_result, answer_result)
 
 ---
 
+---
+
+## 💡 Instructed Retriever Innovation Details
+
+### What It Is
+The **Instructed Retriever** is a novel retrieval architecture from Databricks that addresses fundamental limitations of traditional RAG by enabling system-level reasoning in search agents.
+
+### Key Capabilities
+
+1. **System Specifications Propagation**
+   - User instructions, execution plans, and index schemas flow through all stages
+   - Not just the user query, but complete context for instruction-following
+
+2. **Hierarchical Metadata Retrieval**
+   - Minimal sufficiency principle: Start lightweight, add detail only if needed
+   - UC functions implement staged retrieval: summary → table → column → details
+   - Parallel execution for speed
+
+3. **Instruction-Following Query Generation**
+   - Translates natural language to precise SQL filters
+   - Schema-aware: Only uses fields that exist in the index
+   - Handles complex constraints (inclusion, exclusion, recency)
+
+4. **Metadata Reasoning**
+   - Query decomposition into multiple structured searches
+   - Contextual relevance beyond text similarity
+   - True understanding of user intent in context
+
+### Performance Improvements (Databricks Research)
+
+| Metric | Improvement vs RAG |
+|--------|-------------------|
+| Retrieval Recall | **+35-50%** |
+| Response Quality (Enterprise QA) | **+70%+** |
+| vs RAG + Rerank | **+15%** |
+| Multi-step Agent (vs RAG tool) | **+30%** |
+| Time to Completion | **-8%** (faster) |
+
+### Our Implementation
+
+**Location:** `SQLSynthesisTableAgent` in `Super_Agent_hybrid.py`
+
+**UC Functions:**
+```python
+# Hierarchical metadata retrieval
+get_space_summary(space_ids_json)      # High-level (first attempt)
+get_table_overview(space_ids_json)     # Table schemas (if needed)
+get_column_detail(space_ids_json)      # Column details (specific columns)
+get_space_details(space_ids_json)      # Complete (last resort)
+```
+
+**Data Source:** `enriched_genie_docs_chunks` Delta table with multi-level chunks
+
+**Features:**
+- Instruction-aware LLM system prompt
+- Parallel UC function calls (reduces latency)
+- Schema-aware query validation
+- Offline RL for small model optimization
+
+### Why This Matters
+
+1. **Enterprise-Ready**: Handles complex, multi-part instructions
+2. **Cost-Effective**: Small models achieve frontier performance
+3. **Low Latency**: Single-step execution with intelligent fetching
+4. **Accurate**: Schema awareness reduces hallucinations
+5. **Scalable**: Works across heterogeneous knowledge sources
+
+---
+
 ## Summary
 
 ✅ **All diagrams updated** to reflect current implementation  
+✅ **💡 Innovation highlighted**: Multi-step Instructed Retrieval with UC Functions  
 ✅ **ETL pipeline documented** with 3-notebook workflow  
 ✅ **Memory system integrated** with Lakebase  
 ✅ **All agents represented** from Super_Agent_hybrid.py  
 ✅ **SVG files regenerated** for high-quality viewing  
-✅ **Documentation enhanced** with detailed explanations  
+✅ **PDF files created** for printing and presentations (NEW!)  
+✅ **Documentation enhanced** with detailed innovation section and performance data  
+✅ **Referenced Databricks research** on Instructed Retriever architecture  
 
-The architecture diagrams now accurately represent the current KUMC POC Multi-Agent System with complete ETL pipeline and memory support.
+The architecture diagrams now accurately represent the current KUMC POC Multi-Agent System with complete ETL pipeline, memory support, and the innovative Instructed Retriever implementation via UC Functions.
