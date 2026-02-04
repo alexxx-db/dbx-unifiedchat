@@ -3004,6 +3004,46 @@ def unified_intent_context_clarification_node(state: AgentState) -> dict:
         
         print("\n" + "-" * 80)
     
+    def format_clarification_markdown(reason: str, options: list = None) -> str:
+        """
+        Format clarification reason and options as professional markdown.
+        
+        Args:
+            reason: The clarification reason text
+            options: List of clarification options
+            
+        Returns:
+            Formatted markdown string
+        """
+        # Start with heading and reason
+        markdown = f"### Clarification Needed\n\n{reason}\n\n"
+        
+        # Add options if provided
+        if options and len(options) > 0:
+            markdown += "**Please choose from the following options:**\n\n"
+            for i, option in enumerate(options, 1):
+                markdown += f"{i}. {option}\n\n"
+        
+        return markdown.strip()
+    
+    def format_meta_answer_markdown(answer: str) -> str:
+        """
+        Format meta-answer as professional markdown if not already formatted.
+        
+        Args:
+            answer: The meta answer text
+            
+        Returns:
+            Formatted markdown string
+        """
+        # Check if already formatted (has markdown headings)
+        if answer.startswith("#") or "**" in answer:
+            return answer  # Already formatted
+        
+        # Add basic formatting
+        markdown = f"## Available Capabilities\n\n{answer}"
+        return markdown
+    
     print("\n" + "="*80)
     print("🎯 UNIFIED INTENT, CONTEXT & CLARIFICATION AGENT")
     print("="*80)
@@ -3240,8 +3280,11 @@ IMPORTANT Markdown Formatting Guidelines:
                 "answer_preview": meta_answer[:100]
             })
             
+            # Ensure meta-answer is formatted as markdown
+            formatted_meta_answer = format_meta_answer_markdown(meta_answer)
+            
             # Stream the markdown answer for user
-            stream_markdown_response(meta_answer, label="Meta Question Answer")
+            stream_markdown_response(formatted_meta_answer, label="Meta Question Answer")
             
             # Return with meta-answer and flag to skip SQL generation
             return {
@@ -3309,9 +3352,14 @@ IMPORTANT Markdown Formatting Guidelines:
                 
                 writer({"type": "clarification_requested", "reason": clarification_reason})
                 
-                # Stream the markdown-formatted clarification (already formatted by LLM in unified prompt)
-                # The LLM has incorporated clarification_options into clarification_reason as a formatted list
-                stream_markdown_response(clarification_reason, label="Clarification Needed")
+                # Format clarification with options as markdown
+                formatted_clarification = format_clarification_markdown(
+                    reason=clarification_reason,
+                    options=clarification_options
+                )
+                
+                # Stream the formatted clarification
+                stream_markdown_response(formatted_clarification, label="Clarification Needed")
                 
                 return {
                     "current_turn": turn,
@@ -3320,7 +3368,7 @@ IMPORTANT Markdown Formatting Guidelines:
                     "question_clear": False,
                     "pending_clarification": clarification_request,
                     "messages": [
-                        AIMessage(content=clarification_reason),
+                        AIMessage(content=formatted_clarification),
                         SystemMessage(content=f"Clarification requested for turn {turn['turn_id']}")
                     ]
                 }
