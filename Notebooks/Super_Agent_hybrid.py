@@ -6,7 +6,7 @@
 # COMMAND ----------
 
 # DBTITLE 1,📥⏳Install Packages
-# MAGIC %pip install python-dotenv databricks-sdk databricks-sql-connector databricks-langchain[memory]==0.12.1 databricks-vectorsearch==0.63 databricks-agents mlflow[databricks]>=3.6.0
+# MAGIC %pip install python-dotenv databricks-sdk==0.84.0 databricks-sql-connector==4.2.4 databricks-langchain[memory]==0.12.1 databricks-vectorsearch==0.63 databricks-agents==1.9.3 mlflow[databricks]>=3.6.0
 
 # COMMAND ----------
 
