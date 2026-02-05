@@ -2544,7 +2544,77 @@ Prerequisites:
 # MAGIC         summary = summary.strip()
 # MAGIC         print(f"✓ Summary stream complete ({len(summary)} chars)")
 # MAGIC         
+# MAGIC         # Append Option B downloadable tables if query execution was successful
+# MAGIC         exec_result = state.get('execution_result', {})
+# MAGIC         if exec_result.get('success'):
+# MAGIC             columns = exec_result.get('columns', [])
+# MAGIC             result = exec_result.get('result', [])
+# MAGIC             
+# MAGIC             if columns and result:
+# MAGIC                 option_b_tables = self._format_option_b_tables(columns, result, display_rows=100)
+# MAGIC                 summary += option_b_tables
+# MAGIC                 print(f"✓ Appended Option B downloadable tables ({len(option_b_tables)} chars)")
+# MAGIC         
 # MAGIC         return summary
+# MAGIC     
+# MAGIC     def _format_option_b_tables(
+# MAGIC         self,
+# MAGIC         columns: List[str],
+# MAGIC         data: List[Dict[str, Any]],
+# MAGIC         display_rows: int = 100
+# MAGIC     ) -> str:
+# MAGIC         """
+# MAGIC         Generate Option B downloadable table formats for Databricks Playground:
+# MAGIC         - Single scrollable markdown table (all rows in one table)
+# MAGIC         - Full JSON export (all rows in collapsible section)
+# MAGIC         
+# MAGIC         Args:
+# MAGIC             columns: List of column names
+# MAGIC             data: List of row dictionaries
+# MAGIC             display_rows: Number of rows to display (default 100)
+# MAGIC             
+# MAGIC         Returns:
+# MAGIC             Formatted markdown string with collapsible sections
+# MAGIC         """
+# MAGIC         if not data or not columns:
+# MAGIC             return ""
+# MAGIC         
+# MAGIC         # Limit to display_rows
+# MAGIC         display_data = data[:display_rows]
+# MAGIC         total_rows = len(data)
+# MAGIC         
+# MAGIC         markdown = "\n\n---\n\n## 📥 Downloadable Results\n\n"
+# MAGIC         
+# MAGIC         # Part 1: Single Scrollable Markdown Table
+# MAGIC         markdown += "### Markdown Table (Scrollable)\n\n"
+# MAGIC         markdown += f"<details>\n<summary>📄 View Full Table ({len(display_data)} rows) - Click to expand</summary>\n\n"
+# MAGIC         
+# MAGIC         # Generate single markdown table with all rows
+# MAGIC         markdown += "| " + " | ".join(columns) + " |\n"
+# MAGIC         markdown += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+# MAGIC         
+# MAGIC         for row in display_data:
+# MAGIC             row_values = [str(row.get(col, "")) for col in columns]
+# MAGIC             markdown += "| " + " | ".join(row_values) + " |\n"
+# MAGIC         
+# MAGIC         markdown += "\n</details>\n\n"
+# MAGIC         
+# MAGIC         # Part 2: Full JSON Export
+# MAGIC         markdown += "### JSON Format (All Rows)\n\n"
+# MAGIC         markdown += "<details>\n<summary>📋 JSON Export (click to expand)</summary>\n\n"
+# MAGIC         markdown += "```json\n"
+# MAGIC         markdown += self._safe_json_dumps({
+# MAGIC             "columns": columns,
+# MAGIC             "data": display_data,
+# MAGIC             "row_count": len(display_data)
+# MAGIC         }, indent=2)
+# MAGIC         markdown += "\n```\n\n"
+# MAGIC         markdown += "</details>\n\n"
+# MAGIC         
+# MAGIC         if total_rows > display_rows:
+# MAGIC             markdown += f"*Note: Showing top {display_rows} of {total_rows} total rows in downloadable format above.*\n"
+# MAGIC         
+# MAGIC         return markdown
 # MAGIC     
 # MAGIC     def _build_summary_prompt(self, state: AgentState) -> str:
 # MAGIC         """Build the prompt for summary generation based on state."""
@@ -2607,9 +2677,9 @@ Prerequisites:
 # MAGIC                     # - Max 10 rows
 # MAGIC                     # - Max 10 columns per row
 # MAGIC                     # - Max 5000 characters for JSON
-# MAGIC                     MAX_PREVIEW_ROWS = 10
-# MAGIC                     MAX_PREVIEW_COLS = 10
-# MAGIC                     MAX_JSON_CHARS = 5000
+# MAGIC                     MAX_PREVIEW_ROWS = 20
+# MAGIC                     MAX_PREVIEW_COLS = 20
+# MAGIC                     MAX_JSON_CHARS = 2000
 # MAGIC                     
 # MAGIC                     # Sample rows
 # MAGIC                     result_preview = result[:MAX_PREVIEW_ROWS] if len(result) > MAX_PREVIEW_ROWS else result
@@ -3141,7 +3211,7 @@ Prerequisites:
 # MAGIC             intent_label = turn['intent_type'].replace('_', ' ').title()
 # MAGIC             conversation_context += f"{i}. [{intent_label}] {turn['query']}\n"
 # MAGIC             if turn.get('context_summary'):
-# MAGIC                 conversation_context += f"   Context: {turn['context_summary'][:1000]}...\n"
+# MAGIC                 conversation_context += f"   Context: {turn['context_summary']}...\n"
 # MAGIC     else:
 # MAGIC         conversation_context = "No previous conversation (first query)."
 # MAGIC     
