@@ -19,10 +19,10 @@ todos:
     status: completed
   - id: phase6-infrastructure
     content: Create pyproject.toml (rename to multi-agent-genie), organize configs (keep YAML at root for deployment, .env for local)
-    status: in_progress
+    status: completed
   - id: phase7-cleanup
     content: Remove old test/verify scripts, consolidate job configs to config/jobs/
-    status: pending
+    status: in_progress
   - id: phase8-polish
     content: Create LICENSE, CONTRIBUTING.md, docs/CONFIGURATION.md, docs/LOCAL_DEVELOPMENT.md (peer onboarding guide)
     status: pending
