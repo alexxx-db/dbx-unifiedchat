@@ -25,7 +25,7 @@ todos:
     status: completed
   - id: phase8-polish
     content: Create LICENSE, CONTRIBUTING.md, docs/CONFIGURATION.md, docs/LOCAL_DEVELOPMENT.md (peer onboarding guide)
-    status: in_progress
+    status: completed
 isProject: false
 ---
 
