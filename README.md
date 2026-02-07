@@ -3,7 +3,12 @@
 > A multi-agent system for intelligent cross-domain data queries using LangGraph, Databricks Genie, Lakebase, Model Serving built for Databricks Platform.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE.md)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.0.30-green.svg)](https://github.com/langchain-ai/langgraph)
+[![LangChain](https://img.shields.io/badge/LangChain-≥0.1.0-green.svg)](https://github.com/langchain-ai/langchain)
+[![MLflow](https://img.shields.io/badge/MLflow-≥3.6.0-orange.svg)](https://mlflow.org/)
+[![Databricks SDK](https://img.shields.io/badge/Databricks%20SDK-≥0.20.0-red.svg)](https://github.com/databricks/databricks-sdk-py)
+[![Pydantic](https://img.shields.io/badge/Pydantic-≥2.0.0-blue.svg)](https://github.com/pydantic/pydantic)
 
 ---
 
