@@ -16,18 +16,7 @@
 
 Organizations struggle to query data across multiple domains and data sources, requiring deep SQL expertise and knowledge of complex data schemas. **Databricks Unified Chat** solves this by providing an intelligent multi-agent system that routes natural language queries to the appropriate data sources, synthesizes results, and delivers comprehensive answers.
 
-Built on LangGraph and Databricks Genie, this solution enables business users to ask questions spanning multiple data domains without needing to understand the underlying data architecture or write complex SQL queries.
-
----
-
-## What Can You Build?
-
-* **Cross-Domain Data Queries** - Ask questions spanning multiple Genie spaces and get unified answers
-* **Semantic Query Routing** - Automatically route queries to the right data sources using vector search
-* **SQL Synthesis & Execution** - Generate and execute SQL queries across multiple domains
-* **Context-Aware Responses** - Receive intelligent answers with reasoning and data provenance
-* **Conversational Analytics** - Maintain conversation history and context across multiple queries
-* **Enterprise RAG System** - Leverage vector search for semantic understanding of your data catalog
+Built on LangGraph, Databricks Genie and Lakebase, this solution enables business users to ask questions spanning multiple data domains without needing to understand the underlying data architecture or write complex SQL queries.
 
 ---
 
@@ -35,17 +24,28 @@ Built on LangGraph and Databricks Genie, this solution enables business users to
 
 The system uses a multi-agent architecture powered by LangGraph:
 
-* **Supervisor Agent** - Orchestrates the workflow and coordinates between agents
-* **Thinking & Planning Agent** - Analyzes queries and creates execution plans
+* **Supervisor Agent (multi-purpose)** - Frontend agent that orchestrates the workflow and coordinates handoffs to other agents
+* **Thinking & Planning Agent** - Analyzes queries and creates execution plans based on the query intent and context
 * **Genie Agents** - Query individual Genie spaces for domain-specific data
-* **SQL Synthesis Agent** - Combines and synthesizes SQL across data sources
-* **SQL Execution Agent** - Executes queries and formats results
-* **Clarification Agent** - Handles ambiguous queries and requests user clarification
+* **SQL Synthesis Agent (table route)** - Combines and synthesizes SQL across table data sources using UC Functions (instructed retrieval)
+* **SQL Synthesis Agent (genie route)** - Combines and synthesizes SQL across genie space data sources using Genie agents as tools (parallel execution)
+* **SQL Execution Agent** - Executes queries and extracts results
+* **Summarize Agent** - Summarizes results and formats responses for the user
 
 The system leverages:
-* **Databricks Genie** for natural language to SQL conversion
-* **Vector Search** for semantic query routing and metadata retrieval
-* **MLflow** for model deployment and serving
+* **LangGraph** for agent orchestration and workflow management
+* **LangChain** for agent tools and integrations
+* **Lakebase** for state management and long/short-term memory
+* **Databricks Genie** as Agent/Tool for natural language to SQL conversion
+* **UC Functions** as Tools for multi-step instructed retrieval
+* **Databricks SDK** for Databricks platform integration
+* **Databricks SQL Warehouse** for query execution
+* **Model Serving** for model deployment and serving
+* **MLflow** for Agent observability, evaluation and model tracking
+* **Pydantic** for data validation and configuration
+* **Pytest** for testing framework
+* **PyYAML** for configuration management
+* **Vector Search** for semantic metadata retrieval
 * **Unity Catalog** for data governance and metadata management
 
 ### Key Technologies Applied:
