@@ -1179,12 +1179,15 @@ if instance_exists:
 # MAGIC     genie_route_plan: Optional[Dict[str, str]]
 # MAGIC     
 # MAGIC     # SQL Synthesis
-# MAGIC     sql_query: Optional[str]
+# MAGIC     sql_query: Optional[str]  # Keep for backward compatibility (first query)
+# MAGIC     sql_queries: Optional[List[str]]  # NEW: List of all SQL queries from multi-part questions
 # MAGIC     sql_synthesis_explanation: Optional[str]
 # MAGIC     synthesis_error: Optional[str]
+# MAGIC     has_sql: Optional[bool]  # Whether SQL was successfully extracted
 # MAGIC     
 # MAGIC     # Execution
-# MAGIC     execution_result: Optional[Dict[str, Any]]
+# MAGIC     execution_result: Optional[Dict[str, Any]]  # Keep for backward compatibility (first result)
+# MAGIC     execution_results: Optional[List[Dict[str, Any]]]  # NEW: List of all execution results
 # MAGIC     execution_error: Optional[str]
 # MAGIC     
 # MAGIC     # Summary
@@ -2285,6 +2288,46 @@ if instance_exists:
 # MAGIC         return self.synthesize_sql(plan)
 # MAGIC
 # MAGIC print("✓ SQLSynthesisGenieAgent class defined")
+# MAGIC
+# MAGIC # --------------------------------------------------------------------------
+# MAGIC # Utility Function: Extract Multiple SQL Queries
+# MAGIC # --------------------------------------------------------------------------
+# MAGIC def extract_all_sql_queries(content: str) -> List[str]:
+# MAGIC     """
+# MAGIC     Extract all SQL queries from markdown code blocks.
+# MAGIC     
+# MAGIC     This function finds all SQL code blocks in the content, supporting both:
+# MAGIC     - Explicit ```sql blocks
+# MAGIC     - Generic ``` blocks containing SQL keywords
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         content: The text content containing SQL code blocks
+# MAGIC         
+# MAGIC     Returns:
+# MAGIC         List of SQL query strings (empty list if none found)
+# MAGIC     """
+# MAGIC     sql_queries = []
+# MAGIC     
+# MAGIC     # Find all ```sql blocks (case-insensitive)
+# MAGIC     sql_pattern = r'```sql\s*(.*?)\s*```'
+# MAGIC     matches = re.findall(sql_pattern, content, re.IGNORECASE | re.DOTALL)
+# MAGIC     
+# MAGIC     if matches:
+# MAGIC         sql_queries.extend([m.strip() for m in matches if m.strip()])
+# MAGIC     else:
+# MAGIC         # Fallback: check for generic code blocks containing SQL keywords
+# MAGIC         generic_pattern = r'```\s*(.*?)\s*```'
+# MAGIC         matches = re.findall(generic_pattern, content, re.DOTALL)
+# MAGIC         for match in matches:
+# MAGIC             match = match.strip()
+# MAGIC             # Check if it looks like SQL (contains SQL keywords)
+# MAGIC             if match and any(kw in match.upper() for kw in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
+# MAGIC                 sql_queries.append(match)
+# MAGIC     
+# MAGIC     return sql_queries
+# MAGIC
+# MAGIC print("✓ extract_all_sql_queries utility function defined")
+# MAGIC
 # MAGIC class SQLExecutionAgent:
 # MAGIC     """
 # MAGIC     Agent responsible for executing SQL queries using Databricks SQL Warehouse.
@@ -2606,15 +2649,25 @@ if instance_exists:
 # MAGIC         print(f"✓ Summary stream complete ({len(summary)} chars)")
 # MAGIC         
 # MAGIC         # Append Option B downloadable tables if query execution was successful
+# MAGIC         # Support multiple results
+# MAGIC         execution_results = state.get('execution_results', [])
 # MAGIC         exec_result = state.get('execution_result', {})
-# MAGIC         if exec_result and exec_result.get('success'):
-# MAGIC             columns = exec_result.get('columns', [])
-# MAGIC             result = exec_result.get('result', [])
-# MAGIC             
-# MAGIC             if columns and result:
-# MAGIC                 option_b_tables = self._format_option_b_tables(columns, result, display_rows=100)
-# MAGIC                 summary += option_b_tables
-# MAGIC                 print(f"✓ Appended Option B downloadable tables ({len(option_b_tables)} chars)")
+# MAGIC         
+# MAGIC         if not execution_results and exec_result:
+# MAGIC             execution_results = [exec_result]
+# MAGIC         
+# MAGIC         for idx, result_item in enumerate(execution_results):
+# MAGIC             if result_item and result_item.get('success'):
+# MAGIC                 columns = result_item.get('columns', [])
+# MAGIC                 result = result_item.get('result', [])
+# MAGIC                 
+# MAGIC                 if columns and result:
+# MAGIC                     label_suffix = f" (Query {idx + 1})" if len(execution_results) > 1 else ""
+# MAGIC                     option_b_tables = self._format_option_b_tables(columns, result, display_rows=100)
+# MAGIC                     if len(execution_results) > 1:
+# MAGIC                         option_b_tables = option_b_tables.replace("## 📥 Downloadable Results", f"## 📥 Downloadable Results{label_suffix}")
+# MAGIC                     summary += option_b_tables
+# MAGIC                     print(f"✓ Appended Option B downloadable tables{label_suffix} ({len(option_b_tables)} chars)")
 # MAGIC         
 # MAGIC         return summary
 # MAGIC     
@@ -2714,63 +2767,145 @@ if instance_exists:
 # MAGIC
 # MAGIC """
 # MAGIC             
+# MAGIC             # NEW: Check for multiple SQL queries and results
+# MAGIC             sql_queries = state.get('sql_queries', [])
+# MAGIC             execution_results = state.get('execution_results', [])
+# MAGIC             
+# MAGIC             # Fallback to single query/result for backward compatibility
+# MAGIC             if not sql_queries and sql_query:
+# MAGIC                 sql_queries = [sql_query]
+# MAGIC             if not execution_results and exec_result:
+# MAGIC                 execution_results = [exec_result]
+# MAGIC             
 # MAGIC             # Add SQL synthesis info
-# MAGIC             if sql_query:
-# MAGIC                 prompt += f"""**SQL Generation:** ✅ Successful
+# MAGIC             if sql_queries:
+# MAGIC                 if len(sql_queries) == 1:
+# MAGIC                     # Single query (original behavior)
+# MAGIC                     prompt += f"""**SQL Generation:** ✅ Successful
 # MAGIC **SQL Query:** 
 # MAGIC ```sql
-# MAGIC {sql_query}
+# MAGIC {sql_queries[0]}
 # MAGIC ```
 # MAGIC
 # MAGIC """
+# MAGIC                 else:
+# MAGIC                     # Multiple queries
+# MAGIC                     prompt += f"""**SQL Generation:** ✅ Successful ({len(sql_queries)} queries for multi-part question)
+# MAGIC
+# MAGIC """
+# MAGIC                     for i, query in enumerate(sql_queries, 1):
+# MAGIC                         prompt += f"""**SQL Query {i}:** 
+# MAGIC ```sql
+# MAGIC {query}
+# MAGIC ```
+# MAGIC
+# MAGIC """
+# MAGIC                 
 # MAGIC                 if sql_explanation:
 # MAGIC                     prompt += f"""**SQL Synthesis Explanation:** {sql_explanation[:2000]}{'...' if len(sql_explanation) > 2000 else ''}
 # MAGIC
 # MAGIC """
 # MAGIC                 
-# MAGIC                 # Add execution info
-# MAGIC                 if exec_result.get('success'):
-# MAGIC                     row_count = exec_result.get('row_count', 0)
-# MAGIC                     columns = exec_result.get('columns', [])
-# MAGIC                     result = exec_result.get('result', [])
-# MAGIC                     
-# MAGIC                     # TOKEN PROTECTION: Sample results to prevent huge prompts
-# MAGIC                     # - Max 10 rows
-# MAGIC                     # - Max 10 columns per row
-# MAGIC                     # - Max 5000 characters for JSON
-# MAGIC                     MAX_PREVIEW_ROWS = 20
-# MAGIC                     MAX_PREVIEW_COLS = 20
-# MAGIC                     MAX_JSON_CHARS = 2000
-# MAGIC                     
-# MAGIC                     # Sample rows
-# MAGIC                     result_preview = result[:MAX_PREVIEW_ROWS] if len(result) > MAX_PREVIEW_ROWS else result
-# MAGIC                     
-# MAGIC                     # Sample columns (if result has too many columns)
-# MAGIC                     if result_preview and len(columns) > MAX_PREVIEW_COLS:
-# MAGIC                         # Keep only first MAX_PREVIEW_COLS columns
-# MAGIC                         sampled_cols = columns[:MAX_PREVIEW_COLS]
-# MAGIC                         result_preview = [
-# MAGIC                             {k: v for k, v in row.items() if k in sampled_cols}
-# MAGIC                             for row in result_preview
-# MAGIC                         ]
-# MAGIC                         col_display = ', '.join(sampled_cols) + f'... (+{len(columns) - MAX_PREVIEW_COLS} more columns)'
-# MAGIC                     else:
-# MAGIC                         col_display = ', '.join(columns[:10]) + ('...' if len(columns) > 10 else '')
-# MAGIC                     
-# MAGIC                     # Serialize to JSON
-# MAGIC                     result_json = self._safe_json_dumps(result_preview, indent=2)
-# MAGIC                     
-# MAGIC                     # Truncate JSON if too large
-# MAGIC                     if len(result_json) > MAX_JSON_CHARS:
-# MAGIC                         result_json = result_json[:MAX_JSON_CHARS] + f'\n... (truncated, {len(result_json) - MAX_JSON_CHARS} chars omitted)'
-# MAGIC                     
-# MAGIC                     prompt += f"""**Execution:** ✅ Successful
+# MAGIC                 # TOKEN PROTECTION: Sample results to prevent huge prompts
+# MAGIC                 MAX_PREVIEW_ROWS = 20
+# MAGIC                 MAX_PREVIEW_COLS = 20
+# MAGIC                 MAX_JSON_CHARS = 2000
+# MAGIC                 
+# MAGIC                 # Add execution info (single or multiple results)
+# MAGIC                 if execution_results:
+# MAGIC                     if len(execution_results) == 1:
+# MAGIC                         # Single result (original behavior with token protection)
+# MAGIC                         result = execution_results[0]
+# MAGIC                         if result.get('success'):
+# MAGIC                             row_count = result.get('row_count', 0)
+# MAGIC                             columns = result.get('columns', [])
+# MAGIC                             result_data = result.get('result', [])
+# MAGIC                             
+# MAGIC                             # Sample rows
+# MAGIC                             result_preview = result_data[:MAX_PREVIEW_ROWS] if len(result_data) > MAX_PREVIEW_ROWS else result_data
+# MAGIC                             
+# MAGIC                             # Sample columns (if result has too many columns)
+# MAGIC                             if result_preview and len(columns) > MAX_PREVIEW_COLS:
+# MAGIC                                 sampled_cols = columns[:MAX_PREVIEW_COLS]
+# MAGIC                                 result_preview = [
+# MAGIC                                     {k: v for k, v in row.items() if k in sampled_cols}
+# MAGIC                                     for row in result_preview
+# MAGIC                                 ]
+# MAGIC                                 col_display = ', '.join(sampled_cols) + f'... (+{len(columns) - MAX_PREVIEW_COLS} more columns)'
+# MAGIC                             else:
+# MAGIC                                 col_display = ', '.join(columns[:10]) + ('...' if len(columns) > 10 else '')
+# MAGIC                             
+# MAGIC                             # Serialize to JSON
+# MAGIC                             result_json = self._safe_json_dumps(result_preview, indent=2)
+# MAGIC                             
+# MAGIC                             # Truncate JSON if too large
+# MAGIC                             if len(result_json) > MAX_JSON_CHARS:
+# MAGIC                                 result_json = result_json[:MAX_JSON_CHARS] + f'\n... (truncated, {len(result_json) - MAX_JSON_CHARS} chars omitted)'
+# MAGIC                             
+# MAGIC                             prompt += f"""**Execution:** ✅ Successful
 # MAGIC **Rows:** {row_count} rows returned{f' (showing first {MAX_PREVIEW_ROWS})' if row_count > MAX_PREVIEW_ROWS else ''}
 # MAGIC **Columns:** {col_display}
 # MAGIC
 # MAGIC **Result Preview:** 
 # MAGIC {result_json}
 # MAGIC {f'... and {row_count - MAX_PREVIEW_ROWS} more rows' if row_count > MAX_PREVIEW_ROWS else ''}
+# MAGIC """
+# MAGIC                         else:
+# MAGIC                             prompt += f"""**Execution:** ❌ Failed
+# MAGIC **Error:** {result.get('error', 'Unknown error')}
+# MAGIC
+# MAGIC """
+# MAGIC                     else:
+# MAGIC                         # Multiple results
+# MAGIC                         all_successful = all(r.get('success') for r in execution_results)
+# MAGIC                         total_rows = sum(r.get('row_count', 0) for r in execution_results if r.get('success'))
+# MAGIC                         
+# MAGIC                         if all_successful:
+# MAGIC                             prompt += f"""**Execution:** ✅ All {len(execution_results)} queries executed successfully
+# MAGIC **Total Rows Returned:** {total_rows}
+# MAGIC
+# MAGIC """
+# MAGIC                         else:
+# MAGIC                             failed_count = sum(1 for r in execution_results if not r.get('success'))
+# MAGIC                             prompt += f"""**Execution:** ⚠️ Partial success ({len(execution_results) - failed_count} succeeded, {failed_count} failed)
+# MAGIC
+# MAGIC """
+# MAGIC                         
+# MAGIC                         # Add details for each result
+# MAGIC                         for i, result in enumerate(execution_results, 1):
+# MAGIC                             if result.get('success'):
+# MAGIC                                 row_count = result.get('row_count', 0)
+# MAGIC                                 columns = result.get('columns', [])
+# MAGIC                                 result_data = result.get('result', [])
+# MAGIC                                 
+# MAGIC                                 # Token protection per result
+# MAGIC                                 result_preview = result_data[:MAX_PREVIEW_ROWS] if len(result_data) > MAX_PREVIEW_ROWS else result_data
+# MAGIC                                 
+# MAGIC                                 if result_preview and len(columns) > MAX_PREVIEW_COLS:
+# MAGIC                                     sampled_cols = columns[:MAX_PREVIEW_COLS]
+# MAGIC                                     result_preview = [
+# MAGIC                                         {k: v for k, v in row.items() if k in sampled_cols}
+# MAGIC                                         for row in result_preview
+# MAGIC                                     ]
+# MAGIC                                     col_display = ', '.join(sampled_cols) + f'... (+{len(columns) - MAX_PREVIEW_COLS} more columns)'
+# MAGIC                                 else:
+# MAGIC                                     col_display = ', '.join(columns[:10]) + ('...' if len(columns) > 10 else '')
+# MAGIC                                 
+# MAGIC                                 result_json = self._safe_json_dumps(result_preview, indent=2)
+# MAGIC                                 if len(result_json) > MAX_JSON_CHARS:
+# MAGIC                                     result_json = result_json[:MAX_JSON_CHARS] + f'\n... (truncated)'
+# MAGIC                                 
+# MAGIC                                 prompt += f"""**Query {i} Result:**
+# MAGIC - Rows: {row_count}{f' (showing first {MAX_PREVIEW_ROWS})' if row_count > MAX_PREVIEW_ROWS else ''}
+# MAGIC - Columns: {col_display}
+# MAGIC - Data: {result_json}
+# MAGIC
+# MAGIC """
+# MAGIC                             else:
+# MAGIC                                 prompt += f"""**Query {i} Result:**
+# MAGIC - Status: ❌ Failed
+# MAGIC - Error: {result.get('error', 'Unknown error')}
+# MAGIC
 # MAGIC """
 # MAGIC                 elif execution_error:
 # MAGIC                     prompt += f"""**Execution:** ❌ Failed
@@ -2785,18 +2920,23 @@ if instance_exists:
 # MAGIC """
 # MAGIC         
 # MAGIC         prompt += """
-# MAGIC **Task:** Generate a detailed summary in natural language that:
+# MAGIC **Task:** Generate a comprehensive summary in natural language that:
 # MAGIC 1. Describes what the user asked for
 # MAGIC 2. Explains what the system did (planning, SQL generation, execution)
-# MAGIC 3. States the outcome (success with X rows, error, needs clarification, etc.)
-# MAGIC 4. print out SQL synthesis explanation if any SQL was generated
-# MAGIC 5. print out SQL if any SQL was generated; make it the code block. If multiple SQL queries were generated, print out them in separate code blocks.
-# MAGIC 6. print out the result itself (markdown formatted as a table). If multiple result sets were generated, print out them in separate tables.
-# MAGIC 7. summarize the insights from the result itself (markdown formatted as a list of bullets).
-# MAGIC 8. if multiple result sets were generated, summarize the insights from each result set in a separate list of bullets.
+# MAGIC 3. For multi-part questions with multiple queries:
+# MAGIC    - Explain each sub-question that was addressed
+# MAGIC    - Show each SQL query in its own code block with a clear label
+# MAGIC    - Present each query's results in a clear, readable format (preferably as a markdown table)
+# MAGIC    - Provide insights and analysis for each result
+# MAGIC    - Synthesize an overall conclusion combining insights from all queries
+# MAGIC 4. For single queries:
+# MAGIC    - Print out SQL synthesis explanation if any SQL was generated
+# MAGIC    - Print out the SQL query in a code block
+# MAGIC    - Print out the result in a readable format (preferably as a markdown table)
+# MAGIC    - Provide insights and analysis for the result
+# MAGIC 5. States the outcome (success with X rows, error, needs clarification, etc.)
 # MAGIC
-# MAGIC
-# MAGIC Keep it concise and user-friendly. 
+# MAGIC Use markdown formatting for readability. Keep it clear and user-friendly. 
 # MAGIC """
 # MAGIC         
 # MAGIC         return prompt
@@ -2895,7 +3035,8 @@ if instance_exists:
 # MAGIC def extract_execution_context(state: AgentState) -> dict:
 # MAGIC     """Extract minimal context for SQL execution."""
 # MAGIC     return {
-# MAGIC         "sql_query": state.get("sql_query")
+# MAGIC         "sql_query": state.get("sql_query"),
+# MAGIC         "sql_queries": state.get("sql_queries", [])
 # MAGIC     }
 # MAGIC
 # MAGIC def extract_summarize_context(state: AgentState) -> dict:
@@ -2909,7 +3050,9 @@ if instance_exists:
 # MAGIC     return {
 # MAGIC         "messages": truncate_message_history(messages, max_turns=5),
 # MAGIC         "sql_query": state.get("sql_query"),
+# MAGIC         "sql_queries": state.get("sql_queries", []),
 # MAGIC         "execution_result": state.get("execution_result"),
+# MAGIC         "execution_results": state.get("execution_results", []),
 # MAGIC         "execution_error": state.get("execution_error"),
 # MAGIC         "sql_synthesis_explanation": state.get("sql_synthesis_explanation"),
 # MAGIC         "synthesis_error": state.get("synthesis_error"),
@@ -3885,20 +4028,32 @@ if instance_exists:
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         if has_sql and sql_query and explanation:
-# MAGIC             print("✓ SQL query synthesized successfully")
-# MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
+# MAGIC         # NEW: Extract all SQL queries from the complete response
+# MAGIC         # Check both the extracted SQL and the full explanation for SQL blocks
+# MAGIC         full_content = explanation
+# MAGIC         if sql_query:
+# MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
+# MAGIC         
+# MAGIC         sql_queries = extract_all_sql_queries(full_content)
+# MAGIC         
+# MAGIC         if sql_queries:
+# MAGIC             # Multi-query support
+# MAGIC             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
+# MAGIC             for i, query in enumerate(sql_queries, 1):
+# MAGIC                 print(f"  Query {i} preview: {query[:100]}...")
+# MAGIC             
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
 # MAGIC             
 # MAGIC             # Emit detailed success events
-# MAGIC             writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query_preview": sql_query[:200], "content": f"💻 SQL Query Generated ({len(sql_query)} chars)"})
+# MAGIC             writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query_preview": sql_queries[0][:200], "content": f"💻 {len(sql_queries)} SQL Quer{'y' if len(sql_queries) == 1 else 'ies'} Generated"})
 # MAGIC             writer({"type": "agent_result", "agent": "sql_synthesis_table", "result": "success", "content": f"✅ SQL synthesis complete: {explanation[:150]}..."})
 # MAGIC             
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
-# MAGIC                 "sql_query": sql_query,
-# MAGIC                 "has_sql": has_sql,
+# MAGIC                 "sql_queries": sql_queries,
+# MAGIC                 "sql_query": sql_queries[0],  # For backward compatibility
+# MAGIC                 "has_sql": True,
 # MAGIC                 "sql_synthesis_explanation": explanation,
 # MAGIC                 "next_agent": "sql_execution",
 # MAGIC                 "messages": [
@@ -4025,22 +4180,33 @@ if instance_exists:
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         # Update explicit state
-# MAGIC         if has_sql and sql_query and explanation:
-# MAGIC             print("✓ SQL fragments combined successfully")
-# MAGIC             print(f"SQL Preview: {sql_query[:200]}...")
+# MAGIC         # NEW: Extract all SQL queries from the complete response
+# MAGIC         # Check both the extracted SQL and the full explanation for SQL blocks
+# MAGIC         full_content = explanation
+# MAGIC         if sql_query:
+# MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
+# MAGIC         
+# MAGIC         sql_queries = extract_all_sql_queries(full_content)
+# MAGIC         
+# MAGIC         if sql_queries:
+# MAGIC             # Multi-query support
+# MAGIC             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
+# MAGIC             for i, query in enumerate(sql_queries, 1):
+# MAGIC                 print(f"  Query {i} preview: {query[:100]}...")
+# MAGIC             
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
 # MAGIC             
 # MAGIC             # Emit detailed success events
-# MAGIC             writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query_preview": sql_query[:200], "content": f"💻 Combined SQL Query Generated ({len(sql_query)} chars)"})
+# MAGIC             writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query_preview": sql_queries[0][:200], "content": f"💻 {len(sql_queries)} SQL Quer{'y' if len(sql_queries) == 1 else 'ies'} Generated"})
 # MAGIC             writer({"type": "agent_result", "agent": "sql_synthesis_genie", "result": "success", "content": f"✅ SQL synthesis complete: {explanation[:150]}..."})
-# MAGIC             writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"🎯 Successfully combined SQL from {len(genie_route_plan)} Genie agents"})
+# MAGIC             writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"🎯 Successfully extracted {len(sql_queries)} SQL queries from {len(genie_route_plan)} Genie agents"})
 # MAGIC             
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
-# MAGIC                 "sql_query": sql_query,
-# MAGIC                 "has_sql": has_sql,
+# MAGIC                 "sql_queries": sql_queries,
+# MAGIC                 "sql_query": sql_queries[0],  # For backward compatibility
+# MAGIC                 "has_sql": True,
 # MAGIC                 "sql_synthesis_explanation": explanation,
 # MAGIC                 "next_agent": "sql_execution",
 # MAGIC                 "messages": [
@@ -4081,6 +4247,7 @@ if instance_exists:
 # MAGIC def sql_execution_node(state: AgentState) -> dict:
 # MAGIC     """
 # MAGIC     SQL execution node wrapping SQLExecutionAgent class.
+# MAGIC     Supports executing multiple SQL queries for multi-part questions.
 # MAGIC     Combines OOP modularity with explicit state management.
 # MAGIC     
 # MAGIC     OPTIMIZED: Uses minimal state extraction to reduce token usage
@@ -4095,53 +4262,80 @@ if instance_exists:
 # MAGIC     print("🚀 SQL EXECUTION AGENT (Token Optimized)")
 # MAGIC     print("="*80)
 # MAGIC     
-# MAGIC     # OPTIMIZATION: Extract only minimal context needed for execution
-# MAGIC     context = extract_execution_context(state)
-# MAGIC     print(f"📊 State optimization: Using {len(context)} fields (vs {len([k for k in state.keys() if state.get(k) is not None])} in full state)")
+# MAGIC     # NEW: Support multiple queries
+# MAGIC     sql_queries = state.get("sql_queries", [])
 # MAGIC     
-# MAGIC     sql_query = context.get("sql_query")
+# MAGIC     # Fallback to single query for backward compatibility
+# MAGIC     if not sql_queries:
+# MAGIC         single_query = state.get("sql_query")
+# MAGIC         if single_query:
+# MAGIC             sql_queries = [single_query]
 # MAGIC     
-# MAGIC     if not sql_query:
-# MAGIC         print("❌ No SQL query to execute")
+# MAGIC     if not sql_queries:
+# MAGIC         print("❌ No SQL queries to execute")
 # MAGIC         # Return error update
 # MAGIC         return {
-# MAGIC             "execution_error": "No SQL query provided"
+# MAGIC             "execution_error": "No SQL queries provided",
+# MAGIC             "next_agent": "summarize"
 # MAGIC         }
 # MAGIC     
-# MAGIC     # Emit validation start event
-# MAGIC     writer({"type": "sql_validation_start", "query": sql_query[:200]})
-# MAGIC     
-# MAGIC     # Emit execution start event
-# MAGIC     writer({"type": "sql_execution_start", "estimated_complexity": "standard"})
+# MAGIC     print(f"📊 Executing {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
 # MAGIC     
 # MAGIC     # Use OOP agent with SQL Warehouse
 # MAGIC     execution_agent = SQLExecutionAgent(warehouse_id=SQL_WAREHOUSE_ID)
-# MAGIC     result = execution_agent(sql_query)
+# MAGIC     execution_results = []
+# MAGIC     all_successful = True
 # MAGIC     
-# MAGIC     # Prepare updates based on result
+# MAGIC     # Execute each query
+# MAGIC     for i, query in enumerate(sql_queries, 1):
+# MAGIC         print(f"\n{'─'*80}")
+# MAGIC         print(f"Query {i} of {len(sql_queries)}")
+# MAGIC         print(f"{'─'*80}")
+# MAGIC         
+# MAGIC         # Emit validation start event
+# MAGIC         writer({"type": "sql_validation_start", "query": query[:200], "query_number": i})
+# MAGIC         
+# MAGIC         # Emit execution start event
+# MAGIC         writer({"type": "sql_execution_start", "estimated_complexity": "standard", "query_number": i})
+# MAGIC         
+# MAGIC         result = execution_agent.execute_sql(query)
+# MAGIC         result["query_number"] = i  # Track which query this result is from
+# MAGIC         execution_results.append(result)
+# MAGIC         
+# MAGIC         if not result["success"]:
+# MAGIC             all_successful = False
+# MAGIC             print(f"❌ Query {i} failed: {result.get('error')}")
+# MAGIC         else:
+# MAGIC             print(f"✓ Query {i} succeeded: {result['row_count']} rows")
+# MAGIC             # Emit execution complete event
+# MAGIC             writer({"type": "sql_execution_complete", "rows": result['row_count'], "columns": result['columns'], "query_number": i})
+# MAGIC     
+# MAGIC     # Prepare updates (both single and multiple for backward compatibility)
 # MAGIC     updates = {
-# MAGIC         "execution_result": result,
+# MAGIC         "execution_results": execution_results,
+# MAGIC         "execution_result": execution_results[0],  # For backward compatibility
 # MAGIC         "next_agent": "summarize",
 # MAGIC         "messages": []
 # MAGIC     }
 # MAGIC     
-# MAGIC     if result["success"]:
-# MAGIC         print(f"✓ Query executed successfully!")
-# MAGIC         print(f"📊 Rows returned: {result['row_count']}")
-# MAGIC         print(f"📋 Columns: {', '.join(result['columns'])}")
-# MAGIC         
-# MAGIC         # Emit execution complete event
-# MAGIC         writer({"type": "sql_execution_complete", "rows": result['row_count'], "columns": result['columns']})
+# MAGIC     if all_successful:
+# MAGIC         total_rows = sum(r["row_count"] for r in execution_results)
+# MAGIC         success_msg = f"Executed {len(sql_queries)} quer{'y' if len(sql_queries) == 1 else 'ies'} successfully. Total rows: {total_rows}"
+# MAGIC         print(f"\n✅ {success_msg}")
 # MAGIC         
 # MAGIC         updates["messages"].append(
-# MAGIC             SystemMessage(content=f"Execution successful: {result['row_count']} rows returned")
+# MAGIC             SystemMessage(content=success_msg)
 # MAGIC         )
 # MAGIC     else:
-# MAGIC         print(f"❌ SQL execution failed: {result.get('error', 'Unknown error')}")
-# MAGIC         updates["execution_error"] = result.get("error")
+# MAGIC         failed_count = sum(1 for r in execution_results if not r["success"])
+# MAGIC         success_count = len(sql_queries) - failed_count
+# MAGIC         error_msg = f"{failed_count} of {len(sql_queries)} queries failed"
 # MAGIC         
+# MAGIC         print(f"\n⚠️ Partial success: {success_count} succeeded, {failed_count} failed")
+# MAGIC         
+# MAGIC         updates["execution_error"] = error_msg
 # MAGIC         updates["messages"].append(
-# MAGIC             SystemMessage(content=f"Execution failed: {result.get('error')}")
+# MAGIC             SystemMessage(content=f"{success_count} queries succeeded, {failed_count} failed")
 # MAGIC         )
 # MAGIC     
 # MAGIC     return updates
