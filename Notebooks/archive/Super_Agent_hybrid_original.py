@@ -1138,7 +1138,7 @@ print("="*80)
 # MAGIC # Inline TypedDicts for Unified Agent (No kumc_poc imports)
 # MAGIC # ==============================================================================
 # MAGIC
-# MAGIC from typing import TypedDict, Optional, List, Dict, Any, Literal, Annotated
+# MAGIC from typing import TypedDict, Optional, List, Dict, Any, Literal, Annotated, Tuple
 # MAGIC from datetime import datetime
 # MAGIC import operator
 # MAGIC import uuid as uuid_module
@@ -1210,6 +1210,7 @@ print("="*80)
 # MAGIC     # SQL Synthesis
 # MAGIC     sql_query: Optional[str]  # Keep for backward compatibility (first query)
 # MAGIC     sql_queries: Optional[List[str]]  # NEW: List of all SQL queries from multi-part questions
+# MAGIC     sql_query_labels: Optional[List[str]]  # NEW: Per-query labels (e.g. "QUERY 1: Most Common Diagnoses")
 # MAGIC     sql_synthesis_explanation: Optional[str]
 # MAGIC     synthesis_error: Optional[str]
 # MAGIC     has_sql: Optional[bool]  # Whether SQL was successfully extracted
@@ -2321,39 +2322,129 @@ print("="*80)
 # MAGIC # --------------------------------------------------------------------------
 # MAGIC # Utility Function: Extract Multiple SQL Queries
 # MAGIC # --------------------------------------------------------------------------
-# MAGIC def extract_all_sql_queries(content: str) -> List[str]:
+# MAGIC SQL_KEYWORDS = {'SELECT', 'WITH', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'MERGE', 'REPLACE'}
+# MAGIC
+# MAGIC def _split_multi_query_block(block: str) -> Tuple[List[str], List[str]]:
 # MAGIC     """
-# MAGIC     Extract all SQL queries from markdown code blocks.
+# MAGIC     Split a single SQL block that may contain multiple semicolon-separated
+# MAGIC     queries into individual queries and their leading-comment labels.
 # MAGIC     
-# MAGIC     This function finds all SQL code blocks in the content, supporting both:
-# MAGIC     - Explicit ```sql blocks
-# MAGIC     - Generic ``` blocks containing SQL keywords
+# MAGIC     Strategy:
+# MAGIC       1. Split the block on ';' (the standard SQL statement terminator).
+# MAGIC       2. For each resulting segment, extract any leading SQL comment lines
+# MAGIC          (lines starting with '--') as the query label / title.
+# MAGIC          The first leading comment line becomes the label text (without '--').
+# MAGIC       3. Only keep segments that contain real SQL keywords.
 # MAGIC     
 # MAGIC     Args:
-# MAGIC         content: The text content containing SQL code blocks
+# MAGIC         block: A SQL string, possibly containing multiple ';'-separated statements,
+# MAGIC                each optionally preceded by comment-line labels such as:
+# MAGIC                  -- QUERY 1: Most Common Diagnoses
+# MAGIC                  -- Patient counts by year
+# MAGIC                  -- Top procedures
+# MAGIC     
+# MAGIC     Returns:
+# MAGIC         Tuple of (queries, labels) where:
+# MAGIC           - queries:  list of individual SQL query strings (with trailing ';')
+# MAGIC           - labels:   list of label strings aligned by index. Empty string when
+# MAGIC                       no leading comment was found for a query.
+# MAGIC     """
+# MAGIC     raw_segments = block.split(';')
+# MAGIC     
+# MAGIC     queries: List[str] = []
+# MAGIC     labels: List[str] = []
+# MAGIC     
+# MAGIC     for segment in raw_segments:
+# MAGIC         segment = segment.strip()
+# MAGIC         if not segment:
+# MAGIC             continue
+# MAGIC         
+# MAGIC         # Does this segment contain actual SQL?
+# MAGIC         segment_upper = segment.upper()
+# MAGIC         if not any(kw in segment_upper for kw in SQL_KEYWORDS):
+# MAGIC             continue
+# MAGIC         
+# MAGIC         # Walk lines: collect leading comment lines, find where SQL body starts
+# MAGIC         lines = segment.split('\n')
+# MAGIC         leading_comments: List[str] = []
+# MAGIC         sql_start_idx = 0
+# MAGIC         
+# MAGIC         for i, line in enumerate(lines):
+# MAGIC             stripped = line.strip()
+# MAGIC             if stripped.startswith('--'):
+# MAGIC                 # Strip the '--' prefix and any surrounding whitespace
+# MAGIC                 comment_text = stripped.lstrip('-').strip()
+# MAGIC                 if comment_text:
+# MAGIC                     leading_comments.append(comment_text)
+# MAGIC             elif stripped == '':
+# MAGIC                 # Skip blank lines between comments and SQL body
+# MAGIC                 continue
+# MAGIC             else:
+# MAGIC                 # First non-comment, non-blank line → SQL body starts here
+# MAGIC                 sql_start_idx = i
+# MAGIC                 break
+# MAGIC         else:
+# MAGIC             # Every line was a comment or blank → no actual SQL
+# MAGIC             continue
+# MAGIC         
+# MAGIC         sql_text = '\n'.join(lines[sql_start_idx:]).strip()
+# MAGIC         if not sql_text:
+# MAGIC             continue
+# MAGIC         
+# MAGIC         # Use the first leading comment as the label / title
+# MAGIC         label = leading_comments[0] if leading_comments else ""
+# MAGIC         
+# MAGIC         queries.append(sql_text.rstrip(';').strip() + ';')
+# MAGIC         labels.append(label)
+# MAGIC     
+# MAGIC     return queries, labels
+# MAGIC
+# MAGIC def extract_all_sql_queries(content: str) -> Tuple[List[str], List[str]]:
+# MAGIC     """
+# MAGIC     Extract all SQL queries from content, with support for:
+# MAGIC       - Multiple ```sql code blocks (each treated as a separate query)
+# MAGIC       - A single code block containing multiple ';'-separated queries
+# MAGIC       - Leading comment lines (-- ...) used as query labels / titles
+# MAGIC       - Raw SQL without code fences
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         content: The text content containing SQL (possibly in markdown code blocks)
 # MAGIC         
 # MAGIC     Returns:
-# MAGIC         List of SQL query strings (empty list if none found)
+# MAGIC         Tuple of (sql_queries, query_labels) where:
+# MAGIC           - sql_queries:  list of individual SQL query strings
+# MAGIC           - query_labels: list of label strings aligned with queries
 # MAGIC     """
-# MAGIC     sql_queries = []
+# MAGIC     raw_blocks: List[str] = []
 # MAGIC     
-# MAGIC     # Find all ```sql blocks (case-insensitive)
+# MAGIC     # 1. Find all ```sql blocks (case-insensitive)
 # MAGIC     sql_pattern = r'```sql\s*(.*?)\s*```'
 # MAGIC     matches = re.findall(sql_pattern, content, re.IGNORECASE | re.DOTALL)
 # MAGIC     
 # MAGIC     if matches:
-# MAGIC         sql_queries.extend([m.strip() for m in matches if m.strip()])
+# MAGIC         raw_blocks.extend([m.strip() for m in matches if m.strip()])
 # MAGIC     else:
-# MAGIC         # Fallback: check for generic code blocks containing SQL keywords
+# MAGIC         # 2. Fallback: generic code blocks that look like SQL
 # MAGIC         generic_pattern = r'```\s*(.*?)\s*```'
 # MAGIC         matches = re.findall(generic_pattern, content, re.DOTALL)
 # MAGIC         for match in matches:
 # MAGIC             match = match.strip()
-# MAGIC             # Check if it looks like SQL (contains SQL keywords)
-# MAGIC             if match and any(kw in match.upper() for kw in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
-# MAGIC                 sql_queries.append(match)
+# MAGIC             if match and any(kw in match.upper() for kw in SQL_KEYWORDS):
+# MAGIC                 raw_blocks.append(match)
 # MAGIC     
-# MAGIC     return sql_queries
+# MAGIC     # 3. Last resort: treat the raw content itself as SQL (no code fences)
+# MAGIC     if not raw_blocks and any(kw in content.upper() for kw in ['SELECT', 'FROM']):
+# MAGIC         raw_blocks = [content.strip()]
+# MAGIC     
+# MAGIC     # 4. Split each block on ';' to extract individual queries + labels
+# MAGIC     all_queries: List[str] = []
+# MAGIC     all_labels: List[str] = []
+# MAGIC     for block in raw_blocks:
+# MAGIC         queries, labels = _split_multi_query_block(block)
+# MAGIC         all_queries.extend(queries)
+# MAGIC         all_labels.extend(labels)
+# MAGIC     
+# MAGIC     return all_queries, all_labels
 # MAGIC
 # MAGIC print("✓ extract_all_sql_queries utility function defined")
 # MAGIC
@@ -2868,6 +2959,7 @@ print("="*80)
 # MAGIC             
 # MAGIC             # NEW: Check for multiple SQL queries and results
 # MAGIC             sql_queries = state.get('sql_queries', [])
+# MAGIC             query_labels = state.get('sql_query_labels', [])
 # MAGIC             execution_results = state.get('execution_results', [])
 # MAGIC             
 # MAGIC             # Fallback to single query/result for backward compatibility
@@ -2880,7 +2972,9 @@ print("="*80)
 # MAGIC             if sql_queries:
 # MAGIC                 if len(sql_queries) == 1:
 # MAGIC                     # Single query (original behavior)
-# MAGIC                     prompt += f"""**SQL Generation:** ✅ Successful
+# MAGIC                     label = query_labels[0] if query_labels else ""
+# MAGIC                     label_display = f" — {label}" if label else ""
+# MAGIC                     prompt += f"""**SQL Generation:** ✅ Successful{label_display}
 # MAGIC **SQL Query:** 
 # MAGIC ```sql
 # MAGIC {sql_queries[0]}
@@ -2893,7 +2987,9 @@ print("="*80)
 # MAGIC
 # MAGIC """
 # MAGIC                     for i, query in enumerate(sql_queries, 1):
-# MAGIC                         prompt += f"""**SQL Query {i}:** 
+# MAGIC                         label = query_labels[i-1] if i <= len(query_labels) and query_labels[i-1] else ""
+# MAGIC                         label_display = f" — {label}" if label else ""
+# MAGIC                         prompt += f"""**SQL Query {i}{label_display}:** 
 # MAGIC ```sql
 # MAGIC {query}
 # MAGIC ```
@@ -3135,7 +3231,8 @@ print("="*80)
 # MAGIC     """Extract minimal context for SQL execution."""
 # MAGIC     return {
 # MAGIC         "sql_query": state.get("sql_query"),
-# MAGIC         "sql_queries": state.get("sql_queries", [])
+# MAGIC         "sql_queries": state.get("sql_queries", []),
+# MAGIC         "sql_query_labels": state.get("sql_query_labels", [])
 # MAGIC     }
 # MAGIC
 # MAGIC def extract_summarize_context(state: AgentState) -> dict:
@@ -3150,6 +3247,7 @@ print("="*80)
 # MAGIC         "messages": truncate_message_history(messages, max_turns=5),
 # MAGIC         "sql_query": state.get("sql_query"),
 # MAGIC         "sql_queries": state.get("sql_queries", []),
+# MAGIC         "sql_query_labels": state.get("sql_query_labels", []),
 # MAGIC         "execution_result": state.get("execution_result"),
 # MAGIC         "execution_results": state.get("execution_results", []),
 # MAGIC         "execution_error": state.get("execution_error"),
@@ -4133,13 +4231,14 @@ print("="*80)
 # MAGIC         if sql_query:
 # MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
 # MAGIC         
-# MAGIC         sql_queries = extract_all_sql_queries(full_content)
+# MAGIC         sql_queries, query_labels = extract_all_sql_queries(full_content)
 # MAGIC         
 # MAGIC         if sql_queries:
 # MAGIC             # Multi-query support
 # MAGIC             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
 # MAGIC             for i, query in enumerate(sql_queries, 1):
-# MAGIC                 print(f"  Query {i} preview: {query[:100]}...")
+# MAGIC                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
+# MAGIC                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
 # MAGIC             
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
@@ -4151,6 +4250,7 @@ print("="*80)
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
 # MAGIC                 "sql_queries": sql_queries,
+# MAGIC                 "sql_query_labels": query_labels,
 # MAGIC                 "sql_query": sql_queries[0],  # For backward compatibility
 # MAGIC                 "has_sql": True,
 # MAGIC                 "sql_synthesis_explanation": explanation,
@@ -4285,13 +4385,14 @@ print("="*80)
 # MAGIC         if sql_query:
 # MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
 # MAGIC         
-# MAGIC         sql_queries = extract_all_sql_queries(full_content)
+# MAGIC         sql_queries, query_labels = extract_all_sql_queries(full_content)
 # MAGIC         
 # MAGIC         if sql_queries:
 # MAGIC             # Multi-query support
 # MAGIC             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
 # MAGIC             for i, query in enumerate(sql_queries, 1):
-# MAGIC                 print(f"  Query {i} preview: {query[:100]}...")
+# MAGIC                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
+# MAGIC                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
 # MAGIC             
 # MAGIC             if explanation:
 # MAGIC                 print(f"Agent Explanation: {explanation[:200]}...")
@@ -4304,6 +4405,7 @@ print("="*80)
 # MAGIC             # Return updates for successful synthesis
 # MAGIC             return {
 # MAGIC                 "sql_queries": sql_queries,
+# MAGIC                 "sql_query_labels": query_labels,
 # MAGIC                 "sql_query": sql_queries[0],  # For backward compatibility
 # MAGIC                 "has_sql": True,
 # MAGIC                 "sql_synthesis_explanation": explanation,
