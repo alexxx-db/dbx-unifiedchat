@@ -1684,24 +1684,30 @@ print("="*80)
 # MAGIC             sql_query = None
 # MAGIC             has_sql = False
 # MAGIC             
-# MAGIC             # Try to extract SQL from markdown if present
+# MAGIC             # Try to extract SQL from markdown - use findall to capture ALL code blocks
 # MAGIC             if "```sql" in final_content.lower():
-# MAGIC                 sql_match = re.search(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
-# MAGIC                 if sql_match:
-# MAGIC                     sql_query = sql_match.group(1).strip()
+# MAGIC                 # Find all ```sql blocks
+# MAGIC                 sql_blocks = re.findall(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
+# MAGIC                 if sql_blocks:
+# MAGIC                     # Join all SQL blocks with newlines to preserve multi-query structure
+# MAGIC                     sql_query = '\n\n'.join(block.strip() for block in sql_blocks if block.strip())
 # MAGIC                     has_sql = True
-# MAGIC                     # Remove SQL block from content to get explanation
+# MAGIC                     # Remove all SQL blocks from content to get explanation
 # MAGIC                     final_content = re.sub(r'```sql\s*.*?\s*```', '', final_content, flags=re.IGNORECASE | re.DOTALL)
 # MAGIC             elif "```" in final_content:
-# MAGIC                 sql_match = re.search(r'```\s*(.*?)\s*```', final_content, re.DOTALL)
-# MAGIC                 if sql_match:
-# MAGIC                     # Check if it looks like SQL
-# MAGIC                     potential_sql = sql_match.group(1).strip()
-# MAGIC                     if any(keyword in potential_sql.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
-# MAGIC                         sql_query = potential_sql
-# MAGIC                         has_sql = True
-# MAGIC                         # Remove SQL block from content to get explanation
-# MAGIC                         final_content = re.sub(r'```\s*.*?\s*```', '', final_content, flags=re.DOTALL)
+# MAGIC                 # Find all generic code blocks
+# MAGIC                 code_blocks = re.findall(r'```\s*(.*?)\s*```', final_content, re.DOTALL)
+# MAGIC                 # Filter for SQL-like blocks
+# MAGIC                 sql_blocks = [
+# MAGIC                     block.strip() for block in code_blocks 
+# MAGIC                     if block.strip() and any(keyword in block.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN', 'WITH'])
+# MAGIC                 ]
+# MAGIC                 if sql_blocks:
+# MAGIC                     # Join all SQL blocks
+# MAGIC                     sql_query = '\n\n'.join(sql_blocks)
+# MAGIC                     has_sql = True
+# MAGIC                     # Remove all code blocks from content to get explanation
+# MAGIC                     final_content = re.sub(r'```\s*.*?\s*```', '', final_content, flags=re.DOTALL)
 # MAGIC             
 # MAGIC             # Clean up explanation
 # MAGIC             explanation = final_content.strip()
@@ -2263,23 +2269,30 @@ print("="*80)
 # MAGIC             has_sql = False
 # MAGIC             explanation = final_content
 # MAGIC             
-# MAGIC             # Clean markdown if present and extract SQL
+# MAGIC             # Clean markdown if present and extract SQL - use findall to capture ALL code blocks
 # MAGIC             if "```sql" in final_content.lower():
-# MAGIC                 sql_match = re.search(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
-# MAGIC                 if sql_match:
-# MAGIC                     sql_query = sql_match.group(1).strip()
+# MAGIC                 # Find all ```sql blocks
+# MAGIC                 sql_blocks = re.findall(r'```sql\s*(.*?)\s*```', final_content, re.IGNORECASE | re.DOTALL)
+# MAGIC                 if sql_blocks:
+# MAGIC                     # Join all SQL blocks with newlines to preserve multi-query structure
+# MAGIC                     sql_query = '\n\n'.join(block.strip() for block in sql_blocks if block.strip())
 # MAGIC                     has_sql = True
-# MAGIC                     # Remove SQL block to get explanation
+# MAGIC                     # Remove all SQL blocks to get explanation
 # MAGIC                     explanation = re.sub(r'```sql\s*.*?\s*```', '', final_content, flags=re.IGNORECASE | re.DOTALL)
 # MAGIC             elif "```" in final_content:
-# MAGIC                 sql_match = re.search(r'```\s*(.*?)\s*```', final_content, re.DOTALL)
-# MAGIC                 if sql_match:
-# MAGIC                     potential_sql = sql_match.group(1).strip()
-# MAGIC                     if any(keyword in potential_sql.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
-# MAGIC                         sql_query = potential_sql
-# MAGIC                         has_sql = True
-# MAGIC                         # Remove SQL block to get explanation
-# MAGIC                         explanation = re.sub(r'```\s*.*?\s*```', '', final_content, flags=re.DOTALL)
+# MAGIC                 # Find all generic code blocks
+# MAGIC                 code_blocks = re.findall(r'```\s*(.*?)\s*```', final_content, re.DOTALL)
+# MAGIC                 # Filter for SQL-like blocks
+# MAGIC                 sql_blocks = [
+# MAGIC                     block.strip() for block in code_blocks 
+# MAGIC                     if block.strip() and any(keyword in block.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN', 'WITH'])
+# MAGIC                 ]
+# MAGIC                 if sql_blocks:
+# MAGIC                     # Join all SQL blocks
+# MAGIC                     sql_query = '\n\n'.join(sql_blocks)
+# MAGIC                     has_sql = True
+# MAGIC                     # Remove all code blocks to get explanation
+# MAGIC                     explanation = re.sub(r'```\s*.*?\s*```', '', final_content, flags=re.DOTALL)
 # MAGIC             else:
 # MAGIC                 # No markdown, check if the entire content is SQL
 # MAGIC                 if any(keyword in final_content.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'JOIN']):
@@ -2447,6 +2460,78 @@ print("="*80)
 # MAGIC     return all_queries, all_labels
 # MAGIC
 # MAGIC print("✓ extract_all_sql_queries utility function defined")
+# MAGIC
+# MAGIC # --------------------------------------------------------------------------
+# MAGIC # Helper Function: Extract SQL Queries from Agent Result
+# MAGIC # --------------------------------------------------------------------------
+# MAGIC def extract_sql_queries_from_agent_result(
+# MAGIC     result: dict,
+# MAGIC     agent_name: str = "agent"
+# MAGIC ) -> Tuple[List[str], List[str]]:
+# MAGIC     """
+# MAGIC     Extract SQL queries and labels from agent result dictionary.
+# MAGIC     
+# MAGIC     This helper provides a simple, robust extraction strategy:
+# MAGIC       1. Try result['sql'] field first (primary source)
+# MAGIC       2. Try result['explanation'] field if sql is empty (fallback)
+# MAGIC       3. Try combined content as last resort
+# MAGIC     
+# MAGIC     Takes first non-empty result, delegating all parsing complexity to
+# MAGIC     extract_all_sql_queries() which handles:
+# MAGIC       - Markdown code fences
+# MAGIC       - Semicolon splitting
+# MAGIC       - Label extraction from comments
+# MAGIC       - Multiple query detection
+# MAGIC     
+# MAGIC     Args:
+# MAGIC         result: Agent result dict with 'sql' and/or 'explanation' fields
+# MAGIC         agent_name: Name for logging (e.g., 'sql_synthesis_table')
+# MAGIC     
+# MAGIC     Returns:
+# MAGIC         Tuple of (queries, labels):
+# MAGIC           - queries: List of individual SQL query strings
+# MAGIC           - labels: List of label strings (from leading comments)
+# MAGIC           Returns ([], []) if extraction fails
+# MAGIC     
+# MAGIC     Example:
+# MAGIC         result = {
+# MAGIC             "sql": "-- Query 1\\nSELECT...; -- Query 2\\nSELECT...;",
+# MAGIC             "explanation": "Here are the queries...",
+# MAGIC             "has_sql": True
+# MAGIC         }
+# MAGIC         queries, labels = extract_sql_queries_from_agent_result(result, "table_agent")
+# MAGIC         # Returns: (["SELECT...", "SELECT..."], ["Query 1", "Query 2"])
+# MAGIC     """
+# MAGIC     sql_query = result.get("sql", "")
+# MAGIC     explanation = result.get("explanation", "")
+# MAGIC     
+# MAGIC     # Attempt 1: Extract from sql field (primary source)
+# MAGIC     if sql_query:
+# MAGIC         queries, labels = extract_all_sql_queries(sql_query)
+# MAGIC         if queries:
+# MAGIC             print(f"✓ [{agent_name}] Extracted {len(queries)} quer{'y' if len(queries) == 1 else 'ies'} from 'sql' field")
+# MAGIC             return queries, labels
+# MAGIC     
+# MAGIC     # Attempt 2: Extract from explanation (fallback)
+# MAGIC     if explanation:
+# MAGIC         queries, labels = extract_all_sql_queries(explanation)
+# MAGIC         if queries:
+# MAGIC             print(f"✓ [{agent_name}] Extracted {len(queries)} quer{'y' if len(queries) == 1 else 'ies'} from 'explanation' field")
+# MAGIC             return queries, labels
+# MAGIC     
+# MAGIC     # Attempt 3: Try combined content (last resort)
+# MAGIC     if sql_query or explanation:
+# MAGIC         combined = f"{explanation}\n\n{sql_query}" if explanation and sql_query else (explanation or sql_query)
+# MAGIC         queries, labels = extract_all_sql_queries(combined)
+# MAGIC         if queries:
+# MAGIC             print(f"✓ [{agent_name}] Extracted {len(queries)} quer{'y' if len(queries) == 1 else 'ies'} from combined content")
+# MAGIC             return queries, labels
+# MAGIC     
+# MAGIC     # No SQL found
+# MAGIC     print(f"⚠ [{agent_name}] No SQL queries extracted from result")
+# MAGIC     return [], []
+# MAGIC
+# MAGIC print("✓ extract_sql_queries_from_agent_result helper function defined")
 # MAGIC
 # MAGIC class SQLExecutionAgent:
 # MAGIC     """
@@ -4225,13 +4310,8 @@ print("="*80)
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         # NEW: Extract all SQL queries from the complete response
-# MAGIC         # Check both the extracted SQL and the full explanation for SQL blocks
-# MAGIC         full_content = explanation
-# MAGIC         if sql_query:
-# MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
-# MAGIC         
-# MAGIC         sql_queries, query_labels = extract_all_sql_queries(full_content)
+# MAGIC         # Extract all SQL queries using helper function
+# MAGIC         sql_queries, query_labels = extract_sql_queries_from_agent_result(result, "sql_synthesis_table")
 # MAGIC         
 # MAGIC         if sql_queries:
 # MAGIC             # Multi-query support
@@ -4379,13 +4459,8 @@ print("="*80)
 # MAGIC         explanation = result.get("explanation", "")
 # MAGIC         has_sql = result.get("has_sql", False)
 # MAGIC         
-# MAGIC         # NEW: Extract all SQL queries from the complete response
-# MAGIC         # Check both the extracted SQL and the full explanation for SQL blocks
-# MAGIC         full_content = explanation
-# MAGIC         if sql_query:
-# MAGIC             full_content = f"{explanation}\n\n```sql\n{sql_query}\n```"
-# MAGIC         
-# MAGIC         sql_queries, query_labels = extract_all_sql_queries(full_content)
+# MAGIC         # Extract all SQL queries using helper function
+# MAGIC         sql_queries, query_labels = extract_sql_queries_from_agent_result(result, "sql_synthesis_genie")
 # MAGIC         
 # MAGIC         if sql_queries:
 # MAGIC             # Multi-query support
