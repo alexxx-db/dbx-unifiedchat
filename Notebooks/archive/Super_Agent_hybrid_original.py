@@ -165,6 +165,35 @@ except Exception as e:
         raise
 
 if instance_exists:
+    # Check if instance is in RUNNING state before proceeding
+    print("\n" + "="*80)
+    print("CHECKING INSTANCE STATUS")
+    print("="*80)
+    
+    max_status_wait = 600  # 10 minutes max wait for RUNNING state
+    status_check_interval = 60  # Check every 1 minute
+    status_elapsed = 0
+    
+    while status_elapsed < max_status_wait:
+        instance = w.database.get_database_instance(LAKEBASE_INSTANCE_NAME)
+        instance_state = instance.state.value if instance.state else "UNKNOWN"
+        
+        print(f"Instance state: {instance_state}")
+        
+        if instance_state == "AVAILABLE":
+            print("✓ Instance is AVAILABLE and ready for table setup")
+            break
+        elif instance_state in ["FAILED", "DELETED"]:
+            raise RuntimeError(f"Instance is in {instance_state} state. Cannot proceed.")
+        else:
+            print(f"Instance {instance_state} not ready yet. Waiting 1 minute before rechecking...")
+            time.sleep(status_check_interval)
+            status_elapsed += status_check_interval
+            print(f"  Total wait time: {status_elapsed}s")
+    
+    if status_elapsed >= max_status_wait:
+        raise TimeoutError(f"Instance did not reach RUNNING state after {max_status_wait}s")
+
     print("\n" + "="*80)
     print("INITIALIZING LAKEBASE TABLES")
     print("="*80)
@@ -207,204 +236,204 @@ if instance_exists:
 # All functions use LANGUAGE SQL for better performance and compatibility.
 # """
 
-# print("="*80)
-# print("REGISTERING UNITY CATALOG FUNCTIONS")
-# print("="*80)
-# print(f"Target table: {TABLE_NAME}")
-# print(f"Functions will be created in: {CATALOG}.{SCHEMA}")
-# print("="*80)
+print("="*80)
+print("REGISTERING UNITY CATALOG FUNCTIONS")
+print("="*80)
+print(f"Target table: {TABLE_NAME}")
+print(f"Functions will be created in: {CATALOG}.{SCHEMA}")
+print("="*80)
 
-# # Optional: Drop existing functions if you need to recreate them
-# # Uncomment these lines if you need to drop and recreate the functions
-# # spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_summary')
-# # spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_table_overview')
-# # spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_column_detail')
-# # spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_details')
+# Optional: Drop existing functions if you need to recreate them
+# Uncomment these lines if you need to drop and recreate the functions
+# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_summary')
+# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_table_overview')
+# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_column_detail')
+# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_details')
 
-# # UC Function 1: get_space_summary (SQL scalar function)
-# spark.sql(f"""
-# CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_summary(
-#     space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query, or "null" to retrieve all spaces. Example: ["space_1", "space_2"] or "null"'
-# )
-# RETURNS STRING
-# LANGUAGE SQL
-# COMMENT 'Get high-level summary of Genie spaces. Returns JSON with space summaries including chunk_id, chunk_type, space_title, and content.'
-# RETURN
-#     SELECT COALESCE(
-#         to_json(
-#             map_from_entries(
-#                 collect_list(
-#                     struct(
-#                         space_id,
-#                         named_struct(
-#                             'chunk_id', chunk_id,
-#                             'chunk_type', chunk_type,
-#                             'space_title', space_title,
-#                             'content', searchable_content
-#                         )
-#                     )
-#                 )
-#             )
-#         ),
-#         '{{}}'
-#     ) as result
-#     FROM {TABLE_NAME}
-#     WHERE chunk_type = 'space_summary'
-#     AND (
-#         space_ids_json IS NULL 
-#         OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
-#         OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-#     )
-# """)
-# print("✓ Registered: get_space_summary")
+# UC Function 1: get_space_summary (SQL scalar function)
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_summary(
+    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query, or "null" to retrieve all spaces. Example: ["space_1", "space_2"] or "null"'
+)
+RETURNS STRING
+LANGUAGE SQL
+COMMENT 'Get high-level summary of Genie spaces. Returns JSON with space summaries including chunk_id, chunk_type, space_title, and content.'
+RETURN
+    SELECT COALESCE(
+        to_json(
+            map_from_entries(
+                collect_list(
+                    struct(
+                        space_id,
+                        named_struct(
+                            'chunk_id', chunk_id,
+                            'chunk_type', chunk_type,
+                            'space_title', space_title,
+                            'content', searchable_content
+                        )
+                    )
+                )
+            )
+        ),
+        '{{}}'
+    ) as result
+    FROM {TABLE_NAME}
+    WHERE chunk_type = 'space_summary'
+    AND (
+        space_ids_json IS NULL 
+        OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
+        OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+    )
+""")
+print("✓ Registered: get_space_summary")
 
-# # UC Function 2: get_table_overview (SQL scalar function with grouping)
-# spark.sql(f"""
-# CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_table_overview(
-#     space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-#     table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter, or "null" for all tables in the specified spaces. Example: ["table1", "table2"] or "null"'
-# )
-# RETURNS STRING
-# LANGUAGE SQL
-# COMMENT 'Get table-level metadata for specific Genie spaces. Returns JSON with table metadata including chunk_id, chunk_type, table_name, and content grouped by space.'
-# RETURN
-#     SELECT COALESCE(
-#         to_json(
-#             map_from_entries(
-#                 collect_list(
-#                     struct(
-#                         space_id,
-#                         named_struct(
-#                             'space_title', space_title,
-#                             'tables', tables
-#                         )
-#                     )
-#                 )
-#             )
-#         ),
-#         '{{}}'
-#     ) as result
-#     FROM (
-#         SELECT 
-#             space_id,
-#             first(space_title) as space_title,
-#             collect_list(
-#                 named_struct(
-#                     'chunk_id', chunk_id,
-#                     'chunk_type', chunk_type,
-#                     'table_name', table_name,
-#                     'content', searchable_content
-#                 )
-#             ) as tables
-#         FROM {TABLE_NAME}
-#         WHERE chunk_type = 'table_overview'
-#         AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-#         AND (
-#             table_names_json IS NULL 
-#             OR TRIM(LOWER(table_names_json)) IN ('null', 'none', '')
-#             OR array_contains(from_json(table_names_json, 'array<string>'), table_name)
-#         )
-#         GROUP BY space_id
-#     )
-# """)
-# print("✓ Registered: get_table_overview")
+# UC Function 2: get_table_overview (SQL scalar function with grouping)
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_table_overview(
+    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
+    table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter, or "null" for all tables in the specified spaces. Example: ["table1", "table2"] or "null"'
+)
+RETURNS STRING
+LANGUAGE SQL
+COMMENT 'Get table-level metadata for specific Genie spaces. Returns JSON with table metadata including chunk_id, chunk_type, table_name, and content grouped by space.'
+RETURN
+    SELECT COALESCE(
+        to_json(
+            map_from_entries(
+                collect_list(
+                    struct(
+                        space_id,
+                        named_struct(
+                            'space_title', space_title,
+                            'tables', tables
+                        )
+                    )
+                )
+            )
+        ),
+        '{{}}'
+    ) as result
+    FROM (
+        SELECT 
+            space_id,
+            first(space_title) as space_title,
+            collect_list(
+                named_struct(
+                    'chunk_id', chunk_id,
+                    'chunk_type', chunk_type,
+                    'table_name', table_name,
+                    'content', searchable_content
+                )
+            ) as tables
+        FROM {TABLE_NAME}
+        WHERE chunk_type = 'table_overview'
+        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+        AND (
+            table_names_json IS NULL 
+            OR TRIM(LOWER(table_names_json)) IN ('null', 'none', '')
+            OR array_contains(from_json(table_names_json, 'array<string>'), table_name)
+        )
+        GROUP BY space_id
+    )
+""")
+print("✓ Registered: get_table_overview")
 
-# # UC Function 3: get_column_detail (SQL scalar function with grouping)
-# spark.sql(f"""
-# CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_column_detail(
-#     space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-#     table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter (required, prefer single table). Example: ["table1"]',
-#     column_names_json STRING DEFAULT 'null' COMMENT 'JSON array of column names to filter, or "null" for all columns in the specified tables. Example: ["col1", "col2"] or "null"'
-# )
-# RETURNS STRING
-# LANGUAGE SQL
-# COMMENT 'Get column-level metadata for specific Genie spaces. Returns JSON with column metadata including chunk_id, chunk_type, table_name, column_name, and content grouped by space.'
-# RETURN
-#     SELECT COALESCE(
-#         to_json(
-#             map_from_entries(
-#                 collect_list(
-#                     struct(
-#                         space_id,
-#                         named_struct(
-#                             'space_title', space_title,
-#                             'columns', columns
-#                         )
-#                     )
-#                 )
-#             )
-#         ),
-#         '{{}}'
-#     ) as result
-#     FROM (
-#         SELECT 
-#             space_id,
-#             first(space_title) as space_title,
-#             collect_list(
-#                 named_struct(
-#                     'chunk_id', chunk_id,
-#                     'chunk_type', chunk_type,
-#                     'table_name', table_name,
-#                     'column_name', column_name,
-#                     'content', searchable_content
-#                 )
-#             ) as columns
-#         FROM {TABLE_NAME}
-#         WHERE chunk_type = 'column_detail'
-#         AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-#         AND array_contains(from_json(table_names_json, 'array<string>'), table_name)
-#         AND (
-#             column_names_json IS NULL 
-#             OR TRIM(LOWER(column_names_json)) IN ('null', 'none', '')
-#             OR array_contains(from_json(column_names_json, 'array<string>'), column_name)
-#         )
-#         GROUP BY space_id
-#     )
-# """)
-# print("✓ Registered: get_column_detail")
+# UC Function 3: get_column_detail (SQL scalar function with grouping)
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_column_detail(
+    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
+    table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter (required, prefer single table). Example: ["table1"]',
+    column_names_json STRING DEFAULT 'null' COMMENT 'JSON array of column names to filter, or "null" for all columns in the specified tables. Example: ["col1", "col2"] or "null"'
+)
+RETURNS STRING
+LANGUAGE SQL
+COMMENT 'Get column-level metadata for specific Genie spaces. Returns JSON with column metadata including chunk_id, chunk_type, table_name, column_name, and content grouped by space.'
+RETURN
+    SELECT COALESCE(
+        to_json(
+            map_from_entries(
+                collect_list(
+                    struct(
+                        space_id,
+                        named_struct(
+                            'space_title', space_title,
+                            'columns', columns
+                        )
+                    )
+                )
+            )
+        ),
+        '{{}}'
+    ) as result
+    FROM (
+        SELECT 
+            space_id,
+            first(space_title) as space_title,
+            collect_list(
+                named_struct(
+                    'chunk_id', chunk_id,
+                    'chunk_type', chunk_type,
+                    'table_name', table_name,
+                    'column_name', column_name,
+                    'content', searchable_content
+                )
+            ) as columns
+        FROM {TABLE_NAME}
+        WHERE chunk_type = 'column_detail'
+        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+        AND array_contains(from_json(table_names_json, 'array<string>'), table_name)
+        AND (
+            column_names_json IS NULL 
+            OR TRIM(LOWER(column_names_json)) IN ('null', 'none', '')
+            OR array_contains(from_json(column_names_json, 'array<string>'), column_name)
+        )
+        GROUP BY space_id
+    )
+""")
+print("✓ Registered: get_column_detail")
 
-# # UC Function 4: get_space_details (SQL scalar function - last resort)
-# spark.sql(f"""
-# CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_details(
-#     space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]. WARNING: Returns large metadata - use as LAST RESORT.'
-# )
-# RETURNS STRING
-# LANGUAGE SQL
-# COMMENT 'Get complete metadata for specific Genie spaces - use as LAST RESORT (token intensive). Returns JSON with complete space metadata including chunk_id, chunk_type, space_title, and all available metadata content.'
-# RETURN
-#     SELECT COALESCE(
-#         to_json(
-#             map_from_entries(
-#                 collect_list(
-#                     struct(
-#                         space_id,
-#                         named_struct(
-#                             'chunk_id', chunk_id,
-#                             'chunk_type', chunk_type,
-#                             'space_title', space_title,
-#                             'complete_metadata', searchable_content
-#                         )
-#                     )
-#                 )
-#             )
-#         ),
-#         '{{}}'
-#     ) as result
-#     FROM {TABLE_NAME}
-#     WHERE chunk_type = 'space_details'
-#     AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-# """)
-# print("✓ Registered: get_space_details")
+# UC Function 4: get_space_details (SQL scalar function - last resort)
+spark.sql(f"""
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_details(
+    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]. WARNING: Returns large metadata - use as LAST RESORT.'
+)
+RETURNS STRING
+LANGUAGE SQL
+COMMENT 'Get complete metadata for specific Genie spaces - use as LAST RESORT (token intensive). Returns JSON with complete space metadata including chunk_id, chunk_type, space_title, and all available metadata content.'
+RETURN
+    SELECT COALESCE(
+        to_json(
+            map_from_entries(
+                collect_list(
+                    struct(
+                        space_id,
+                        named_struct(
+                            'chunk_id', chunk_id,
+                            'chunk_type', chunk_type,
+                            'space_title', space_title,
+                            'complete_metadata', searchable_content
+                        )
+                    )
+                )
+            )
+        ),
+        '{{}}'
+    ) as result
+    FROM {TABLE_NAME}
+    WHERE chunk_type = 'space_details'
+    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+""")
+print("✓ Registered: get_space_details")
 
-# print("\n" + "="*80)
-# print("✅ ALL 4 UC FUNCTIONS REGISTERED SUCCESSFULLY!")
-# print("="*80)
-# print("Functions available for SQL Synthesis Agent:")
-# print(f"  1. {CATALOG}.{SCHEMA}.get_space_summary")
-# print(f"  2. {CATALOG}.{SCHEMA}.get_table_overview")
-# print(f"  3. {CATALOG}.{SCHEMA}.get_column_detail")
-# print(f"  4. {CATALOG}.{SCHEMA}.get_space_details")
-# print("="*80)
+print("\n" + "="*80)
+print("✅ ALL 4 UC FUNCTIONS REGISTERED SUCCESSFULLY!")
+print("="*80)
+print("Functions available for SQL Synthesis Agent:")
+print(f"  1. {CATALOG}.{SCHEMA}.get_space_summary")
+print(f"  2. {CATALOG}.{SCHEMA}.get_table_overview")
+print(f"  3. {CATALOG}.{SCHEMA}.get_column_detail")
+print(f"  4. {CATALOG}.{SCHEMA}.get_space_details")
+print("="*80)
 
 # COMMAND ----------
 
@@ -499,7 +528,7 @@ if instance_exists:
 # MAGIC # When deployed, this will be overridden by the config passed to log_model()
 # MAGIC development_config = {
 # MAGIC     # Unity Catalog Configuration
-# MAGIC     "catalog_name": "yyang",
+# MAGIC     "catalog_name": "serverless_dbx_unifiedchat_catalog",
 # MAGIC     "schema_name": "multi_agent_genie",
 # MAGIC     
 # MAGIC     # LLM Endpoint Configuration - Diversified by Agent Role
@@ -522,13 +551,13 @@ if instance_exists:
 # MAGIC     
 # MAGIC     # Genie Space IDs
 # MAGIC     "genie_space_ids": [
-# MAGIC         "01f0eab621401f9faa11e680f5a2bcd0",
-# MAGIC         "01f0eababd9f1bcab5dea65cf67e48e3",
-# MAGIC         "01f0eac186d11b9897bc1d43836cc4e1"
+# MAGIC         "01f106e1239d14b28d6ab46f9c15e540",
+# MAGIC         "01f106e121e7173d8cf84bb80e842d6c",
+# MAGIC         "01f106e120b718e084598e92dcf14d4e"
 # MAGIC     ],
 # MAGIC     
 # MAGIC     # SQL Warehouse ID
-# MAGIC     "sql_warehouse_id": "148ccb90800933a1",
+# MAGIC     "sql_warehouse_id": "a4ed2ccbda385db9",
 # MAGIC     
 # MAGIC     # Table Metadata Enrichment
 # MAGIC     "sample_size": 20,
@@ -5603,7 +5632,16 @@ result1 = AGENT.predict(ResponsesAgentRequest(
 
 # COMMAND ----------
 
+# DBTITLE 1,multi-part question example
+# Example of multi-part question: Start a new conversation
+thread_id = str(uuid4())
+print(f"Starting conversation with thread_id: {thread_id}")
 
+# First message
+result1 = AGENT.predict(ResponsesAgentRequest(
+    input=[{"role": "user", "content": "What diagnoses are most common? Which procedures are performed together?"}],
+    custom_inputs={"thread_id": thread_id}
+))
 
 # COMMAND ----------
 
