@@ -515,6 +515,15 @@ First, determine if this is a META-QUESTION about the system itself:
 - Questions about available tables, data sources, spaces, schemas
 - Questions about system capabilities, what data is available
 - Questions about the structure or organization of data
+- Questions asking for EXAMPLE QUERIES or SAMPLE QUESTIONS they can ask (e.g., "give me 10 example questions I can ask", "what kinds of questions can I ask?", "show me sample questions", "what can I query?")
+
+Examples of meta-questions (all should set is_meta_question=true):
+- "What tables are available?"
+- "Give me 10 example questions I can ask"
+- "What kinds of questions can I ask this system?"
+- "Show me sample queries I can run"
+- "What data do you have access to?"
+- "What can I query here?"
 
 If it's a meta-question, you MUST:
 1. Set "is_meta_question": true
