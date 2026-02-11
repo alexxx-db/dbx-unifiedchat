@@ -55,6 +55,19 @@ print(f"Max Unique Values: {max_unique_values}")
 
 # COMMAND ----------
 
+# DBTITLE 1,Ensure Catalog and Schema Exist
+# Each serverless task runs in its own session — need to ensure catalog/schema are accessible
+try:
+    spark.sql(f"CREATE CATALOG IF NOT EXISTS `{catalog_name}`")
+except Exception:
+    pass  # catalog may already exist or require managed location
+spark.sql(f"USE CATALOG `{catalog_name}`")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{schema_name}`")
+spark.sql(f"USE SCHEMA `{schema_name}`")
+print(f"✓ Using {catalog_name}.{schema_name}")
+
+# COMMAND ----------
+
 # DBTITLE 1,Helper Functions
 
 def get_table_metadata(table_identifier: str) -> pd.DataFrame:
@@ -529,11 +542,15 @@ def json_serializer(obj):
 # Convert to Spark DataFrame
 enriched_docs_json = [json.dumps(doc, default=json_serializer) for doc in all_enriched_docs]
 
-df_enriched = spark.createDataFrame(
-    [(i, doc_json, doc['space_id'], doc['space_title']) 
-     for i, (doc_json, doc) in enumerate(zip(enriched_docs_json, all_enriched_docs))],
-    schema="id INT, enriched_doc STRING, space_id STRING, space_title STRING"
-)
+if not all_enriched_docs:
+    print("⚠ No enriched docs to save — Genie spaces may have no table metadata.")
+    df_enriched = spark.createDataFrame([], schema="id INT, enriched_doc STRING, space_id STRING, space_title STRING")
+else:
+    df_enriched = spark.createDataFrame(
+        [(i, doc_json, doc['space_id'], doc['space_title']) 
+         for i, (doc_json, doc) in enumerate(zip(enriched_docs_json, all_enriched_docs))],
+        schema="id INT, enriched_doc STRING, space_id STRING, space_title STRING"
+    )
 
 # Save to Delta table
 df_enriched.write.mode("overwrite").saveAsTable(enriched_docs_table)
@@ -542,7 +559,8 @@ print(f"\n✓ Saved enriched docs to: {enriched_docs_table}")
 print(f"  Total records: {df_enriched.count()}")
 
 # Display sample
-display(spark.table(enriched_docs_table))
+if df_enriched.count() > 0:
+    display(spark.table(enriched_docs_table))
 
 # COMMAND ----------
 
@@ -811,8 +829,28 @@ for chunk in all_chunks:
 for chunk_type, count in chunk_type_counts.items():
     print(f"  - {chunk_type}: {count} chunks")
 
-# Convert to Spark DataFrame
-df_chunks = spark.createDataFrame(all_chunks)
+# Convert to Spark DataFrame (guard against empty data)
+if not all_chunks:
+    print("⚠ No chunks were created — Genie spaces may have no table metadata.")
+    print("  Saving empty chunks table with explicit schema...")
+    from pyspark.sql.types import StructType, StructField, StringType, BooleanType, IntegerType
+    empty_schema = StructType([
+        StructField("chunk_id", IntegerType()),
+        StructField("chunk_type", StringType()),
+        StructField("space_id", StringType()),
+        StructField("space_title", StringType()),
+        StructField("table_name", StringType()),
+        StructField("column_name", StringType()),
+        StructField("searchable_content", StringType()),
+        StructField("is_categorical", BooleanType()),
+        StructField("is_temporal", BooleanType()),
+        StructField("is_identifier", BooleanType()),
+        StructField("has_value_dictionary", BooleanType()),
+        StructField("metadata_json", StringType()),
+    ])
+    df_chunks = spark.createDataFrame([], schema=empty_schema)
+else:
+    df_chunks = spark.createDataFrame(all_chunks)
 
 # Save to Delta table
 chunks_table_name = f"{enriched_docs_table}_chunks"
