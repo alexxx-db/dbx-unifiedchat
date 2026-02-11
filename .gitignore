@@ -71,6 +71,9 @@ Notebooks/agent.py.bak
 mlruns/
 mlartifacts/
 
+# genie exports
+genie_exports/
+
 # Logs
 *.log
 logs/
