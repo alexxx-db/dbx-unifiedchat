@@ -12,8 +12,10 @@ const router = createRouter({ routeTree });
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      suspense: true,
+      // Suspense disabled - causes issues with TanStack Router in dev
+      suspense: false,
       refetchOnWindowFocus: false,
+      retry: 1,
     },
   },
 });

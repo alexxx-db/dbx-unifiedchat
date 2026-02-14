@@ -15,21 +15,21 @@ const navItems = [
 
 function SidebarLayout() {
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-50">
       {/* Sidebar */}
-      <aside className="w-64 bg-card border-r border-border">
+      <aside className="w-64 bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700">
         <div className="p-6">
           <h1 className="text-2xl font-bold mb-2">Tables to Genies</h1>
-          <p className="text-sm text-muted-foreground mb-6">Create Genie rooms from UC tables</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">Create Genie rooms from UC tables</p>
           
           <nav className="space-y-2">
             {navItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
-                className="flex items-center gap-3 px-4 py-2 rounded-md hover:bg-accent transition-colors"
+                className="flex items-center gap-3 px-4 py-2 rounded-md hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-300"
                 activeProps={{
-                  className: 'bg-primary text-primary-foreground hover:bg-primary/90',
+                  className: 'bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-700',
                 }}
               >
                 {item.icon}
@@ -41,7 +41,7 @@ function SidebarLayout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto bg-white dark:bg-slate-950">
         <div className="container mx-auto p-8">
           <Outlet />
         </div>
