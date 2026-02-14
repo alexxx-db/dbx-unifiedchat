@@ -12,6 +12,7 @@ import dash
 from dash import Dash, html, dcc, callback, Input, Output, State, ctx
 import dash_bootstrap_components as dbc
 import os
+import sys
 
 # Initialize app with bootstrap theme
 app = Dash(
@@ -21,6 +22,30 @@ app = Dash(
     suppress_callback_exceptions=True
 )
 server = app.server
+
+# Add a test endpoint to verify connectivity
+@server.route('/health')
+def health():
+    """Health check endpoint."""
+    return {'status': 'ok', 'message': 'Dash app is running'}, 200
+
+@server.route('/test-databricks')
+def test_databricks():
+    """Test Databricks connectivity."""
+    try:
+        from uc_browser import UCBrowser
+        uc = UCBrowser()
+        catalogs = uc.list_catalogs()
+        return {
+            'status': 'ok',
+            'catalogs_count': len(catalogs),
+            'catalogs': [c['name'] for c in catalogs[:5]]
+        }, 200
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e)
+        }, 500
 
 # Import backend modules (will create these next)
 from uc_browser import UCBrowser
@@ -150,7 +175,16 @@ def create_catalog_browser_page():
                 dbc.Card([
                     dbc.CardHeader(html.H4("Browse Unity Catalog")),
                     dbc.CardBody([
-                        dbc.Button("Load Catalogs", id="load-catalogs-btn", color="primary", className="mb-3"),
+                        dbc.InputGroup([
+                            dbc.Input(
+                                id="catalog-search-input",
+                                placeholder="Search catalogs (contains ~2700)...",
+                                type="text"
+                            ),
+                            dbc.Button("Search", id="search-catalogs-btn", color="info"),
+                        ], className="mb-3"),
+                        dbc.Button("Load Default Catalogs (max 100)", id="load-catalogs-btn", color="primary", className="mb-3"),
+                        html.P("Note: Loading may take 30-60 seconds. You can also search for specific catalogs.", className="text-muted small"),
                         dcc.Loading(
                             id="loading-catalogs",
                             children=[html.Div(id="catalog-tree")],
@@ -175,22 +209,79 @@ def create_catalog_browser_page():
     prevent_initial_call=True
 )
 def load_catalog_tree(n_clicks):
-    """Load the full catalog hierarchy."""
+    """Load the first 100 catalogs with a hierarchy."""
     if not n_clicks:
         return html.Div()
     
     try:
-        hierarchy = uc_browser.get_table_hierarchy()
+        import sys
+        import threading
+        import time
         
+        result = {'tree': None, 'error': None, 'status': 'loading'}
+        
+        def load_in_thread():
+            try:
+                print(f"[DEBUG] Loading catalog hierarchy...", file=sys.stderr, flush=True)
+                hierarchy = uc_browser.get_table_hierarchy()
+                print(f"[DEBUG] Got hierarchy with {len(hierarchy)} catalogs", file=sys.stderr, flush=True)
+                result['tree'] = hierarchy
+                result['status'] = 'complete'
+            except Exception as e:
+                print(f"[ERROR] Failed to load catalogs: {e}", file=sys.stderr, flush=True)
+                import traceback
+                print(traceback.format_exc(), file=sys.stderr, flush=True)
+                result['error'] = str(e)
+                result['status'] = 'error'
+        
+        # Run with timeout
+        thread = threading.Thread(target=load_in_thread)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=60)  # 60 second timeout for full hierarchy
+        
+        if thread.is_alive():
+            print(f"[ERROR] Catalog loading timed out after 60 seconds", file=sys.stderr, flush=True)
+            return html.Div([
+                dbc.Alert(
+                    [
+                        html.H5("Loading Timeout"),
+                        html.P("Catalog loading took too long (>60 seconds). The workspace has many catalogs (~2700)."),
+                        html.P("Try searching for specific catalogs instead of loading all.")
+                    ],
+                    color="warning"
+                )
+            ])
+        
+        if result['status'] == 'error':
+            return html.Div([
+                dbc.Alert(
+                    [
+                        html.H5("Error Loading Catalogs"),
+                        html.P(f"Failed: {result['error']}"),
+                        html.P("Please check your Databricks credentials.")
+                    ],
+                    color="danger"
+                )
+            ])
+        
+        hierarchy = result['tree']
+        
+        if not hierarchy:
+            return html.Div([
+                dbc.Alert(
+                    "No catalogs found. Please check Databricks authentication.",
+                    color="warning"
+                )
+            ])
+        
+        # Build tree UI
         tree_items = []
         for cat_name, cat_data in hierarchy.items():
-            # Catalog level
             schemas_items = []
             for schema_name, schema_data in cat_data['schemas'].items():
-                # Schema level
                 tables_items = []
                 for table_name, table_data in schema_data['tables'].items():
-                    # Table level with checkbox
                     fqn = table_data['fqn']
                     tables_items.append(
                         html.Li([
@@ -203,24 +294,49 @@ def load_catalog_tree(n_clicks):
                         ])
                     )
                 
-                schemas_items.append(
+                if tables_items:  # Only show schema if it has tables
+                    schemas_items.append(
+                        html.Details([
+                            html.Summary(f"📁 {schema_name} ({len(tables_items)} tables)"),
+                            html.Ul(tables_items, style={'list-style': 'none'})
+                        ], open=False)
+                    )
+            
+            if schemas_items:  # Only show catalog if it has schemas
+                tree_items.append(
                     html.Details([
-                        html.Summary(f"📁 {schema_name} ({len(tables_items)} tables)"),
-                        html.Ul(tables_items, style={'list-style': 'none'})
+                        html.Summary(f"🗄️ {cat_name} ({len(schemas_items)} schemas with tables)"),
+                        html.Div(schemas_items)
                     ], open=False)
                 )
-            
-            tree_items.append(
-                html.Details([
-                    html.Summary(f"🗄️ {cat_name} ({len(cat_data['schemas'])} schemas)"),
-                    html.Div(schemas_items)
-                ], open=False)
-            )
         
-        return html.Div(tree_items)
+        if not tree_items:
+            return html.Div([
+                dbc.Alert(
+                    f"Loaded {len(hierarchy)} catalogs but none have accessible tables.",
+                    color="info"
+                )
+            ])
+        
+        return html.Div([
+            dbc.Alert(f"✓ Loaded {len(tree_items)} catalogs with tables", color="success"),
+            html.Div(tree_items)
+        ])
         
     except Exception as e:
-        return html.Div(f"Error: {e}", style={'color': 'red'})
+        import traceback
+        import sys
+        print(f"[ERROR] Unexpected error in load_catalog_tree: {e}", file=sys.stderr, flush=True)
+        print(traceback.format_exc(), file=sys.stderr, flush=True)
+        return html.Div([
+            dbc.Alert(
+                [
+                    html.H5("Unexpected Error"),
+                    html.P(f"An error occurred: {str(e)}")
+                ],
+                color="danger"
+            )
+        ])
 
 @callback(
     Output('selected-tables-store', 'data'),
@@ -628,9 +744,9 @@ def create_navigation(back_clicks):
 # ============================================================================
 
 if __name__ == '__main__':
-    app.run_server(
+    app.run(
         host='0.0.0.0',
-        port=8080,
+        port=8084,
         debug=True
     )
 

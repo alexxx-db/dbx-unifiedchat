@@ -3,31 +3,52 @@ Unity Catalog browser module.
 Provides methods to list catalogs, schemas, tables, and columns.
 """
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.core import Config
+from databricks.sdk.core import Config, DatabricksError
 from typing import List, Dict, Any
 import os
+import sys
 
 
 class UCBrowser:
     """Unity Catalog browser using Databricks SDK."""
     
     def __init__(self):
-        # Use Config() for automatic credential detection
-        self.config = Config()
-        self.client = WorkspaceClient(config=self.config)
+        try:
+            # Use PROD profile explicitly
+            print(f"[INFO] Initializing Databricks client with PROD profile", file=sys.stderr, flush=True)
+            self.config = Config(profile="PROD")
+            self.client = WorkspaceClient(config=self.config)
+            # Test connection
+            self.client.workspace.get_status("/")
+            print(f"[INFO] Connected to Databricks PROD successfully", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize Databricks client: {e}", file=sys.stderr, flush=True)
+            self.client = None
+            self.config = None
     
     def list_catalogs(self) -> List[Dict[str, Any]]:
         """List all catalogs in the workspace."""
+        if not self.client:
+            print(f"[ERROR] Databricks client not initialized", file=sys.stderr, flush=True)
+            raise Exception("Databricks client not initialized. Check your credentials and configuration.")
         try:
-            catalogs = list(self.client.catalogs.list())
-            return [{
-                'name': cat.name,
-                'comment': cat.comment or '',
-                'owner': cat.owner or '',
-            } for cat in catalogs]
+            # Limit to first 100 catalogs to improve performance
+            # In production, may want to add filtering or pagination UI
+            catalogs = []
+            for i, cat in enumerate(self.client.catalogs.list()):
+                if i >= 100:  # Limit to first 100 catalogs
+                    print(f"[INFO] Limiting to 100 catalogs (found more)", file=sys.stderr, flush=True)
+                    break
+                catalogs.append({
+                    'name': cat.name,
+                    'comment': cat.comment or '',
+                    'owner': cat.owner or '',
+                })
+            print(f"[INFO] Listed {len(catalogs)} catalogs", file=sys.stderr, flush=True)
+            return catalogs
         except Exception as e:
-            print(f"Error listing catalogs: {e}")
-            return []
+            print(f"Error listing catalogs: {e}", file=sys.stderr, flush=True)
+            raise
     
     def list_schemas(self, catalog_name: str) -> List[Dict[str, Any]]:
         """List all schemas in a catalog."""
@@ -87,28 +108,63 @@ class UCBrowser:
         """
         Get full catalog > schema > tables hierarchy.
         Returns nested dict for tree view rendering.
+        Includes timeout and error handling to prevent hanging.
         """
-        hierarchy = {}
+        import signal
         
-        catalogs = self.list_catalogs()
-        for catalog in catalogs:
-            cat_name = catalog['name']
-            hierarchy[cat_name] = {
-                'meta': catalog,
-                'schemas': {}
-            }
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Catalog hierarchy retrieval timed out after 30 seconds")
+        
+        # Set timeout for the entire operation
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(30)
+        
+        try:
+            hierarchy = {}
             
-            schemas = self.list_schemas(cat_name)
-            for schema in schemas:
-                schema_name = schema['name']
-                hierarchy[cat_name]['schemas'][schema_name] = {
-                    'meta': schema,
-                    'tables': {}
+            print(f"[DEBUG] Listing catalogs...", file=sys.stderr, flush=True)
+            catalogs = self.list_catalogs()
+            print(f"[DEBUG] Found {len(catalogs)} catalogs", file=sys.stderr, flush=True)
+            
+            for catalog in catalogs:
+                cat_name = catalog['name']
+                print(f"[DEBUG] Processing catalog: {cat_name}", file=sys.stderr, flush=True)
+                hierarchy[cat_name] = {
+                    'meta': catalog,
+                    'schemas': {}
                 }
                 
-                tables = self.list_tables(cat_name, schema_name)
-                for table in tables:
-                    table_name = table['name']
-                    hierarchy[cat_name]['schemas'][schema_name]['tables'][table_name] = table
-        
-        return hierarchy
+                try:
+                    schemas = self.list_schemas(cat_name)
+                    print(f"[DEBUG] Found {len(schemas)} schemas in {cat_name}", file=sys.stderr, flush=True)
+                    
+                    for schema in schemas:
+                        schema_name = schema['name']
+                        hierarchy[cat_name]['schemas'][schema_name] = {
+                            'meta': schema,
+                            'tables': {}
+                        }
+                        
+                        try:
+                            tables = self.list_tables(cat_name, schema_name)
+                            print(f"[DEBUG] Found {len(tables)} tables in {cat_name}.{schema_name}", file=sys.stderr, flush=True)
+                            
+                            for table in tables:
+                                table_name = table['name']
+                                hierarchy[cat_name]['schemas'][schema_name]['tables'][table_name] = table
+                        except Exception as e:
+                            print(f"[ERROR] Failed to list tables in {cat_name}.{schema_name}: {e}", file=sys.stderr, flush=True)
+                            continue
+                            
+                except Exception as e:
+                    print(f"[ERROR] Failed to list schemas in {cat_name}: {e}", file=sys.stderr, flush=True)
+                    continue
+            
+            print(f"[DEBUG] Hierarchy retrieved successfully", file=sys.stderr, flush=True)
+            return hierarchy
+            
+        except TimeoutError as e:
+            print(f"[ERROR] {e}", file=sys.stderr, flush=True)
+            raise
+        finally:
+            signal.alarm(0)  # Cancel the alarm

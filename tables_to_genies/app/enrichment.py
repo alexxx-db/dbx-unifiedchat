@@ -9,14 +9,21 @@ from typing import List, Dict, Any
 import os
 import pandas as pd
 import threading
+import sys
 
 
 class EnrichmentRunner:
     """Runs metadata enrichment on selected tables."""
     
     def __init__(self):
-        self.config = Config()
-        self.client = WorkspaceClient(config=self.config)
+        try:
+            print(f"[INFO] Initializing EnrichmentRunner with PROD profile", file=sys.stderr, flush=True)
+            self.config = Config(profile="PROD")
+            self.client = WorkspaceClient(config=self.config)
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize EnrichmentRunner: {e}", file=sys.stderr, flush=True)
+            self.config = None
+            self.client = None
         
         # Get SQL warehouse ID from environment or config
         self.warehouse_id = os.getenv('DATABRICKS_WAREHOUSE_ID', 'a4ed2ccbda385db9')

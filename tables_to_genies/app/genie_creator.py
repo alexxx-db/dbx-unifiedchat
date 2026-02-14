@@ -6,14 +6,21 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 from typing import List, Dict, Any
 import threading
+import sys
 
 
 class GenieCreator:
     """Creates Genie rooms from table selections."""
     
     def __init__(self):
-        self.config = Config()
-        self.client = WorkspaceClient(config=self.config)
+        try:
+            print(f"[INFO] Initializing GenieCreator with PROD profile", file=sys.stderr, flush=True)
+            self.config = Config(profile="PROD")
+            self.client = WorkspaceClient(config=self.config)
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize GenieCreator: {e}", file=sys.stderr, flush=True)
+            self.config = None
+            self.client = None
         
         # Get SQL warehouse ID
         self.warehouse_id = "a4ed2ccbda385db9"
