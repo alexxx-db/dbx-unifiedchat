@@ -365,11 +365,11 @@ async def get_graph_build_logs():
 
 @api.post("/graph/build", response_model=GraphBuildStatusOut, operation_id="buildGraph")
 async def build_graph():
-    """Build table relationship graph."""
+    """Build table relationship graph using GraphRAG approach."""
     global _graph_data, _graph_build_logs
     
     _graph_build_logs = []
-    _add_graph_log("Starting graph build process...")
+    _add_graph_log("Starting GraphRAG-based graph build process...")
     
     _add_graph_log("Fetching enrichment results from Unity Catalog...")
     enrichment_results = await list_enrichment_results()
@@ -380,69 +380,102 @@ async def build_graph():
     _add_graph_log(f"Found {len(enrichment_results)} enriched tables.")
     
     try:
-        # Simplified graph building (full GraphRAG implementation in graph_builder.py)
-        import networkx as nx
+        # Import GraphRAG module
+        import sys
+        import os
+        from pathlib import Path
         
-        _add_graph_log("Initializing NetworkX graph...")
-        G = nx.Graph()
+        # Get the absolute path to the workspace root
+        # Current file: /Users/yang.yang/CursorProjects/KUMC_POC_hlsfieldtemp/tables_to_genies_apx/src/tables_genies/backend/router.py
+        current_file = Path(__file__).resolve()
+        root_path = current_file.parents[5] # Go up 6 levels to reach KUMC_POC_hlsfieldtemp
+        graphrag_path = root_path / "tables_to_genies" / "graphrag"
         
-        # Add nodes
-        _add_graph_log("Adding table nodes to graph...")
+        _add_graph_log(f"Debug: root_path={root_path}")
+        _add_graph_log(f"Debug: graphrag_path={graphrag_path}")
+        
+        if not graphrag_path.exists():
+            # Try alternative path if root detection is off
+            # Let's check if we are in a container or different structure
+            _add_graph_log(f"Warning: Path not found at {graphrag_path}, trying relative search...")
+            # Fallback to searching for the directory
+            possible_roots = [Path.cwd(), Path.home() / "CursorProjects/KUMC_POC_hlsfieldtemp"]
+            for pr in possible_roots:
+                gp = pr / "tables_to_genies" / "graphrag"
+                if gp.exists():
+                    graphrag_path = gp
+                    _add_graph_log(f"Found GraphRAG at: {graphrag_path}")
+                    break
+        
+        if not graphrag_path.exists():
+            _add_graph_log(f"Error: GraphRAG path does not exist: {graphrag_path}", level="error")
+            raise HTTPException(status_code=500, detail=f"GraphRAG path not found: {graphrag_path}")
+            
+        if str(graphrag_path) not in sys.path:
+            sys.path.insert(0, str(graphrag_path))
+        
+        try:
+            from build_table_graph import GraphRAGTableGraphBuilder
+        except ImportError as ie:
+            _add_graph_log(f"ImportError: {str(ie)}. Current sys.path: {sys.path}", level="error")
+            raise ie
+        
+        _add_graph_log("Initializing GraphRAG Table Graph Builder...")
+        builder = GraphRAGTableGraphBuilder()
+        
+        # Convert enrichment results to dict format expected by GraphRAG module
+        _add_graph_log("Preparing table metadata for entity extraction...")
+        enriched_tables_data = []
         for result in enrichment_results:
             parts = result.fqn.split('.')
-            G.add_node(result.fqn, **{
-                'id': result.fqn,
-                'label': parts[2],
+            enriched_tables_data.append({
+                'fqn': result.fqn,
                 'catalog': parts[0],
                 'schema': parts[1],
+                'table': parts[2],
                 'column_count': result.column_count,
-                'community': 0
+                'columns': [{'name': col} for col in result.columns],
+                'enriched': result.enriched
             })
-        _add_graph_log(f"Added {G.number_of_nodes()} nodes.")
         
-        # Add edges (same schema and column overlap)
-        _add_graph_log("Analyzing table relationships...")
-        nodes = list(G.nodes(data=True))
-        for i, (node1, data1) in enumerate(nodes):
-            for node2, data2 in nodes[i+1:]:
-                weight = 0
-                edge_types = []
-                
-                # Same schema = strong relationship
-                if data1['schema'] == data2['schema']:
-                    weight += 5
-                    edge_types.append('same_schema')
-                
-                # Column overlap detection
-                res1 = next((r for r in enrichment_results if r.fqn == node1), None)
-                res2 = next((r for r in enrichment_results if r.fqn == node2), None)
-                
-                if res1 and res2:
-                    cols1 = set(res1.columns)
-                    cols2 = set(res2.columns)
-                    overlap = cols1 & cols2
-                    if overlap:
-                        weight += len(overlap) * 2
-                        edge_types.append('column_overlap')
-                        _add_graph_log(f"Found relationship: {data1['label']} <-> {data2['label']} ({len(overlap)} columns overlap)")
-                
-                if weight > 0:
-                    G.add_edge(node1, node2, weight=weight, edge_type=','.join(edge_types))
+        # Extract entities
+        _add_graph_log("Extracting entities (tables, columns, schemas)...")
+        entities = builder.extract_entities(enriched_tables_data)
+        _add_graph_log(f"Extracted {len(entities['tables'])} table entities across {len(entities['schemas'])} schemas.")
         
-        _add_graph_log(f"Identified {G.number_of_edges()} relationships.")
+        # Detect relationships
+        _add_graph_log("Detecting relationships (schema co-location, column overlap, FK hints)...")
+        relationships = builder.detect_relationships(entities)
+        _add_graph_log(f"Detected {len(relationships)} potential relationships.")
+        
+        # Build graph with community detection
+        _add_graph_log("Building graph with community detection (Louvain algorithm)...")
+        G = builder.build_graph(enriched_tables_data)
+        _add_graph_log(f"Graph constructed: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
+        
+        # Log sample relationships
+        for rel in relationships[:5]:
+            source_name = rel['source'].split('.')[-1]
+            target_name = rel['target'].split('.')[-1]
+            _add_graph_log(f"  {source_name} <-> {target_name} (weight: {rel['weight']}, types: {rel['types']})")
+        
+        if len(relationships) > 5:
+            _add_graph_log(f"  ... and {len(relationships) - 5} more relationships")
+        
+        # Detect communities
+        _add_graph_log("Running community detection...")
+        num_communities = len(set(G.nodes[n].get('community', 0) for n in G.nodes()))
+        _add_graph_log(f"Identified {num_communities} distinct communities.")
         
         # Convert to Cytoscape format
         _add_graph_log("Formatting graph for visualization...")
-        elements = []
-        for node, data in G.nodes(data=True):
-            elements.append({'data': {'id': node, **data}})
-        for source, target, data in G.edges(data=True):
-            elements.append({'data': {'source': source, 'target': target, **data}})
+        graph_output = builder.to_cytoscape_format()
         
         _graph_data = GraphDataOut(
-            elements=elements,
-            node_count=G.number_of_nodes(),
-            edge_count=G.number_of_edges()
+            elements=graph_output['elements'],
+            node_count=graph_output['node_count'],
+            edge_count=graph_output['edge_count'],
+            communities=graph_output.get('communities')
         )
         
         _add_graph_log("Graph build completed successfully.", level="success")
