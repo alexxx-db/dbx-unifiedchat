@@ -40,6 +40,25 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Activate virtual environment for Python dependencies
+echo ""
+echo "🐍 Activating virtual environment..."
+VENV_PATH="$PROJECT_ROOT/../.venv"
+if [ -f "$VENV_PATH/bin/activate" ]; then
+    source "$VENV_PATH/bin/activate"
+    echo "✅ Virtual environment activated ($VENV_PATH)"
+
+    # Verify key packages are available
+    if python3 -c "import community; import networkx; print('✅ Graph analysis packages ready')" 2>/dev/null; then
+        echo "✅ Graph analysis packages ready"
+    else
+        echo "⚠️  Warning: Graph analysis packages not available"
+    fi
+else
+    echo "⚠️  Warning: Virtual environment not found at $VENV_PATH"
+    echo "   Make sure to run setup_venv.sh from the project root first"
+fi
+
 # Start Backend (FastAPI on port 8000)
 echo ""
 echo "📦 Starting FastAPI backend on http://localhost:8000"
