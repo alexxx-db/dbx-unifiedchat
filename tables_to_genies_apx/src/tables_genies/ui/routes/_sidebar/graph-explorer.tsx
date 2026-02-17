@@ -41,7 +41,17 @@ export const Route = createFileRoute('/_sidebar/graph-explorer')({
 });
 
 function GraphExplorerContent() {
-  const [graphBuilt, setGraphBuilt] = useState(false);
+  // Load persisted state from localStorage
+  const loadGraphBuiltState = () => {
+    try {
+      const saved = localStorage.getItem('graph-explorer-built');
+      return saved === 'true';
+    } catch {
+      return false;
+    }
+  };
+
+  const [graphBuilt, setGraphBuilt] = useState(loadGraphBuiltState());
   const buildGraphMutation = useBuildGraph();
   const navigate = useNavigate();
 
@@ -58,6 +68,7 @@ function GraphExplorerContent() {
   const handleBuildGraph = async () => {
     await buildGraphMutation.mutateAsync();
     setGraphBuilt(true);
+    localStorage.setItem('graph-explorer-built', 'true');
   };
 
   return (
@@ -272,6 +283,18 @@ function GraphVisualization() {
   const createRoomMutation = useCreateGenieRoom();
   const deleteRoomMutation = useDeleteGenieRoom();
   
+  // Load persisted visualization state
+  const loadPersistedState = () => {
+    try {
+      const saved = localStorage.getItem('graph-explorer-state');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const persistedState = loadPersistedState();
+  
   const [hoveredNode, setHoveredNode] = useState<any>(null);
   const hoverIntentRef = useRef<boolean>(false);
   
@@ -281,10 +304,10 @@ function GraphVisualization() {
   const [newRoomName, setNewRoomName] = useState('');
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
 
-  const [showStructuralEdges, setShowStructuralEdges] = useState(true);
-  const [showSemanticEdges, setShowSemanticEdges] = useState(true);
-  const [highlightedCommunity, setHighlightedCommunity] = useState<string | null>(null);
-  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  const [showStructuralEdges, setShowStructuralEdges] = useState(persistedState.showStructuralEdges ?? true);
+  const [showSemanticEdges, setShowSemanticEdges] = useState(persistedState.showSemanticEdges ?? true);
+  const [highlightedCommunity, setHighlightedCommunity] = useState<string | null>(persistedState.highlightedCommunity || null);
+  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(persistedState.expandedRoomId || null);
 
   // Store full room data locally since list API only returns summary
   const [fullRoomData, setFullRoomData] = useState<Record<string, { id: string; name: string; tables: string[] }>>({});
@@ -295,6 +318,43 @@ function GraphVisualization() {
   
   // Store React Flow instance
   const reactFlowInstanceRef = useRef<any>(null);
+
+  // Persist state changes to localStorage
+  const persistState = useCallback((updates: any) => {
+    try {
+      const currentState = {
+        showStructuralEdges,
+        showSemanticEdges,
+        highlightedCommunity,
+        expandedRoomId,
+        ...updates
+      };
+      localStorage.setItem('graph-explorer-state', JSON.stringify(currentState));
+    } catch (error) {
+      console.warn('Failed to persist graph explorer state:', error);
+    }
+  }, [showStructuralEdges, showSemanticEdges, highlightedCommunity, expandedRoomId]);
+
+  // Persisted state setters
+  const setShowStructuralEdgesPersisted = useCallback((value: boolean) => {
+    setShowStructuralEdges(value);
+    persistState({ showStructuralEdges: value });
+  }, [persistState]);
+
+  const setShowSemanticEdgesPersisted = useCallback((value: boolean) => {
+    setShowSemanticEdges(value);
+    persistState({ showSemanticEdges: value });
+  }, [persistState]);
+
+  const setHighlightedCommunityPersisted = useCallback((value: string | null) => {
+    setHighlightedCommunity(value);
+    persistState({ highlightedCommunity: value });
+  }, [persistState]);
+
+  const setExpandedRoomIdPersisted = useCallback((value: string | null) => {
+    setExpandedRoomId(value);
+    persistState({ expandedRoomId: value });
+  }, [persistState]);
 
   // Populate fullRoomData from API on mount/update
   useMemo(() => {
