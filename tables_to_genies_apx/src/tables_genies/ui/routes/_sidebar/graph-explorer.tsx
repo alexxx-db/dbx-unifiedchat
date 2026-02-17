@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Suspense, useState, useCallback, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useBuildGraph, useGetGraphData, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom } from '@/lib/api';
+import { useBuildGraph, useGetGraphData, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom, useGenerateFromCommunities } from '@/lib/api';
 import { selector } from '@/lib/selector';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Terminal, X, ChevronDown, ChevronRight, Plus, Layers, Info, Minus } from 'lucide-react';
+import { ArrowLeft, Terminal, X, ChevronDown, ChevronRight, Plus, Layers, Info, Minus, Sparkles, Trash2 } from 'lucide-react';
 import { 
   ReactFlow, 
   Background, 
@@ -72,7 +72,7 @@ function GraphExplorerContent() {
   // Poll logs while building
   const { data: logs } = useGetGraphBuildLogs({
     query: {
-      refetchInterval: (query) => {
+      refetchInterval: () => {
         return buildGraphMutation.isPending ? 1000 : false;
       },
       enabled: buildGraphMutation.isPending || graphBuilt
@@ -93,9 +93,13 @@ function GraphExplorerContent() {
             <CardTitle>Build Table Relationship Graph</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button onClick={handleBuildGraph} disabled={buildGraphMutation.isPending}>
-              {buildGraphMutation.isPending ? 'Building...' : 'Build Graph'}
-            </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleBuildGraph} 
+                  disabled={buildGraphMutation.isPending}
+                >
+                  {buildGraphMutation.isPending ? 'Building...' : 'Build Graph'}
+                </Button>
 
             {buildGraphMutation.isPending && (
               <div className="mt-4 space-y-2">
@@ -213,7 +217,7 @@ function TableNode({ data, selected }: { data: any, selected?: boolean }) {
 }
 
 // Custom edge component for structural edges
-function StructuralEdge({ id, sourceX, sourceY, targetX, targetY, style, markerEnd, data }: any) {
+function StructuralEdge({ sourceX, sourceY, targetX, targetY, style, markerEnd, data }: any) {
   const [edgePath, labelX, labelY] = getStraightPath({
     sourceX,
     sourceY,
@@ -292,10 +296,11 @@ const edgeTypes: EdgeTypes = {
 
 function GraphVisualization() {
   const queryClient = useQueryClient();
-  const { data: graphData } = useGetGraphDataSuspense(selector());
-  const { data: genieRooms = [] } = useListGenieRoomsSuspense(selector());
+  const { data: graphData } = useGetGraphDataSuspense({ query: selector() } as any);
+  const { data: genieRooms = [] } = useListGenieRoomsSuspense({ query: selector() } as any);
   const createRoomMutation = useCreateGenieRoom();
   const deleteRoomMutation = useDeleteGenieRoom();
+  const generateFromCommunitiesMutation = useGenerateFromCommunities();
   
   // Load persisted visualization state
   const loadPersistedState = () => {
@@ -321,10 +326,10 @@ function GraphVisualization() {
   const [showStructuralEdges, setShowStructuralEdges] = useState(persistedState.showStructuralEdges ?? true);
   const [showSemanticEdges, setShowSemanticEdges] = useState(persistedState.showSemanticEdges ?? true);
   const [highlightedCommunity, setHighlightedCommunity] = useState<string | null>(persistedState.highlightedCommunity || null);
-  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(persistedState.expandedRoomId || null);
+  const [expandedRoomName, setExpandedRoomName] = useState<string | null>(persistedState.expandedRoomName || null);
 
   // Store full room data locally since list API only returns summary
-  const [fullRoomData, setFullRoomData] = useState<Record<string, { id: string; name: string; tables: string[] }>>({});
+  const [fullRoomData, setFullRoomData] = useState<any>({});
 
   // Hover state for rooms and tables
   const [hoveredRoomId, setHoveredRoomId] = useState<string | null>(null);
@@ -333,42 +338,42 @@ function GraphVisualization() {
   // Store React Flow instance
   const reactFlowInstanceRef = useRef<any>(null);
 
-  // Persist state changes to localStorage
-  const persistState = useCallback((updates: any) => {
-    try {
-      const currentState = {
-        showStructuralEdges,
-        showSemanticEdges,
-        highlightedCommunity,
-        expandedRoomId,
-        ...updates
-      };
-      localStorage.setItem('graph-explorer-state', JSON.stringify(currentState));
-    } catch (error) {
-      console.warn('Failed to persist graph explorer state:', error);
-    }
-  }, [showStructuralEdges, showSemanticEdges, highlightedCommunity, expandedRoomId]);
+  // Persist state changes to localStorage (currently not used, but may be re-enabled later for auto-persisting state)
+  // const persistState = useCallback((updates: any) => {
+  //   try {
+  //     const currentState = {
+  //       showStructuralEdges,
+  //       showSemanticEdges,
+  //       highlightedCommunity,
+  //       expandedRoomName,
+  //       ...updates
+  //     };
+  //     localStorage.setItem('graph-explorer-state', JSON.stringify(currentState));
+  //   } catch (error) {
+  //     console.warn('Failed to persist graph explorer state:', error);
+  //   }
+  // }, [showStructuralEdges, showSemanticEdges, highlightedCommunity, expandedRoomName]);
 
-  // Persisted state setters
-  const setShowStructuralEdgesPersisted = useCallback((value: boolean) => {
-    setShowStructuralEdges(value);
-    persistState({ showStructuralEdges: value });
-  }, [persistState]);
+  // Persisted state setters (kept for future use if needed)
+  // const setShowStructuralEdgesPersisted = useCallback((value: boolean) => {
+  //   setShowStructuralEdges(value);
+  //   persistState({ showStructuralEdges: value });
+  // }, [persistState]);
 
-  const setShowSemanticEdgesPersisted = useCallback((value: boolean) => {
-    setShowSemanticEdges(value);
-    persistState({ showSemanticEdges: value });
-  }, [persistState]);
+  // const setShowSemanticEdgesPersisted = useCallback((value: boolean) => {
+  //   setShowSemanticEdges(value);
+  //   persistState({ showSemanticEdges: value });
+  // }, [persistState]);
 
-  const setHighlightedCommunityPersisted = useCallback((value: string | null) => {
-    setHighlightedCommunity(value);
-    persistState({ highlightedCommunity: value });
-  }, [persistState]);
+  // const setHighlightedCommunityPersisted = useCallback((value: string | null) => {
+  //   setHighlightedCommunity(value);
+  //   persistState({ highlightedCommunity: value });
+  // }, [persistState]);
 
-  const setExpandedRoomIdPersisted = useCallback((value: string | null) => {
-    setExpandedRoomId(value);
-    persistState({ expandedRoomId: value });
-  }, [persistState]);
+  // const setExpandedRoomNamePersisted = useCallback((value: string | null) => {
+  //   setExpandedRoomName(value);
+  //   persistState({ expandedRoomName: value });
+  // }, [persistState]);
 
   // Populate fullRoomData from API on mount/update
   useMemo(() => {
@@ -382,7 +387,7 @@ function GraphVisualization() {
         };
       }
     });
-    setFullRoomData(prev => ({ ...prev, ...newFullRoomData }));
+    setFullRoomData((prev: any) => ({ ...prev, ...newFullRoomData }));
   }, [genieRooms]);
 
   // Room mapping with colors and symbols - Deduplicated by name (since "updates" create new rooms)
@@ -401,12 +406,15 @@ function GraphVisualization() {
       }
     });
 
-    return Object.values(uniqueRooms).map((room, idx) => ({
-      ...room,
-      table_fqns: room.tables || [], // Map backend 'tables' to frontend 'table_fqns'
-      color: ROOM_COLORS[idx % ROOM_COLORS.length],
-      symbol: String.fromCharCode(65 + (idx % 26)), // A, B, C...
-    }));
+    // Sort rooms by name for stable ordering
+    return Object.values(uniqueRooms)
+      .sort((a: any, b: any) => a.name.localeCompare(b.name))
+      .map((room, idx) => ({
+        ...room,
+        table_fqns: room.tables || [], // Map backend 'tables' to frontend 'table_fqns'
+        color: ROOM_COLORS[idx % ROOM_COLORS.length],
+        symbol: String.fromCharCode(65 + (idx % 26)), // A, B, C...
+      }));
   }, [genieRooms]);
 
   // Map table FQNs to rooms
@@ -502,8 +510,8 @@ function GraphVisualization() {
   // Apply filtering and highlighting to nodes and edges
   const { filteredNodes, filteredEdges } = useMemo(() => {
     // Get table IDs for the hovered room
-    const hoveredRoomTableIds = hoveredRoomId && fullRoomData[hoveredRoomId] 
-      ? new Set(fullRoomData[hoveredRoomId].tables) 
+    const hoveredRoomTableIds = hoveredRoomId && (fullRoomData as any)[hoveredRoomId] 
+      ? new Set((fullRoomData as any)[hoveredRoomId].tables as string[]) 
       : null;
 
     const nodes = initialNodes.map(node => {
@@ -521,20 +529,20 @@ function GraphVisualization() {
         data: {
           ...node.data,
           isDimmed: isDimmed || (hoveredRoomTableIds && !isInHoveredRoom) || (hoveredTableFqn && !isHoveredTable),
-          isHighlighted: isHighlighted || isInHoveredRoom || isHoveredTable,
+          isHighlighted: !!(isHighlighted || isInHoveredRoom || isHoveredTable),
         }
       };
     });
 
     const edges = initialEdges.filter(edge => {
-      if (edge.data.isSemantic && !showSemanticEdges) return false;
-      if (!edge.data.isSemantic && !showStructuralEdges) return false;
+      if (edge.data?.isSemantic && !showSemanticEdges) return false;
+      if (!edge.data?.isSemantic && !showStructuralEdges) return false;
       return true;
     }).map(edge => {
       if (!highlightedCommunity) return edge;
       
-      const sourceNode = nodes.find(n => n.id === edge.source);
-      const targetNode = nodes.find(n => n.id === edge.target);
+      const sourceNode = nodes.find(n => n.id === edge.source) as any;
+      const targetNode = nodes.find(n => n.id === edge.target) as any;
       const inCommunity = sourceNode?.data.schema === highlightedCommunity && 
                           targetNode?.data.schema === highlightedCommunity;
       
@@ -612,10 +620,11 @@ function GraphVisualization() {
       }, {
         onSuccess: (newRoom) => {
           // Store full room data locally
-          setFullRoomData(prev => ({
-            ...prev,
-            [newRoom.id]: { id: newRoom.id, name: newRoom.name, tables: newRoom.tables }
-          }));
+          setFullRoomData((prev: any) => {
+            const newData = { ...prev };
+            newData[newRoom.id] = { id: newRoom.id, name: newRoom.name, tables: newRoom.tables };
+            return newData;
+          });
           queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
           // Force immediate refetch
           queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
@@ -623,7 +632,7 @@ function GraphVisualization() {
           setSelectedRoomId('');
           setShowSelectionPanel(false);
           setSelectedNodes([]);
-          setExpandedRoomId(null); // Reset expansion state
+          // Keep expansion state for better UX
         }
       });
     } else if (selectedRoomId && selectedRoomId !== 'new') {
@@ -652,19 +661,19 @@ function GraphVisualization() {
         }, {
           onSuccess: (updatedRoom) => {
             // Store full room data locally
-            setFullRoomData(prev => ({
-              ...prev,
-              [updatedRoom.id]: { id: updatedRoom.id, name: updatedRoom.name, tables: updatedRoom.tables },
-              // Remove the old room data
-              [selectedRoomId]: undefined
-            }));
+            setFullRoomData((prev: any) => {
+              const newData = { ...prev };
+              newData[updatedRoom.id] = { id: updatedRoom.id, name: updatedRoom.name, tables: updatedRoom.tables };
+              delete newData[selectedRoomId];
+              return newData;
+            });
             queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
             // Force immediate refetch
             queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
             setSelectedRoomId('');
             setShowSelectionPanel(false);
             setSelectedNodes([]);
-            setExpandedRoomId(null); // Reset expansion state
+            // Keep expansion state for better UX
           }
         });
       }
@@ -672,7 +681,7 @@ function GraphVisualization() {
   }, [selectedNodes, selectedRoomId, newRoomName, createRoomMutation, deleteRoomMutation, genieRooms, queryClient]);
 
   const handleRemoveTableFromRoom = useCallback(async (roomId: string, tableFqn: string) => {
-    const room = fullRoomData[roomId];
+    const room = (fullRoomData as any)[roomId];
     if (!room) return;
 
     // Remove the specific table from the room's table list
@@ -684,7 +693,7 @@ function GraphVisualization() {
         roomId: roomId
       });
       // Remove from local data
-      setFullRoomData(prev => {
+      setFullRoomData((prev: any) => {
         const newData = { ...prev };
         delete newData[roomId];
         return newData;
@@ -707,7 +716,7 @@ function GraphVisualization() {
       setHoveredTableFqn(null);
 
       // Store the updated room data locally
-      setFullRoomData(prev => ({
+      setFullRoomData((prev: any) => ({
         ...prev,
         [result.id]: { id: result.id, name: result.name, tables: result.tables },
         // Remove the old room data
@@ -720,6 +729,25 @@ function GraphVisualization() {
     queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
   }, [fullRoomData, deleteRoomMutation, createRoomMutation, queryClient]);
 
+  const handleGenerateFromCommunities = useCallback(async () => {
+    await generateFromCommunitiesMutation.mutateAsync(undefined, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
+        queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
+      }
+    });
+  }, [generateFromCommunitiesMutation, queryClient]);
+
+  const handleDeleteRoom = useCallback(async (roomId: string, roomName: string) => {
+    await deleteRoomMutation.mutateAsync({ roomId }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
+        queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
+        if (expandedRoomName === roomName) setExpandedRoomName(null);
+      }
+    });
+  }, [deleteRoomMutation, queryClient, expandedRoomName]);
+
   const onPaneClick = useCallback(() => {
     setSelectedNodes([]);
     setShowSelectionPanel(false);
@@ -729,7 +757,7 @@ function GraphVisualization() {
     setHoveredRoomId(null);
   }, []);
 
-  const semanticEdgeCount = initialEdges.filter(e => e.data.isSemantic).length;
+  const semanticEdgeCount = initialEdges.filter(e => e.data?.isSemantic).length;
 
   return (
     <Card>
@@ -765,7 +793,7 @@ function GraphVisualization() {
             <Controls />
             <MiniMap 
               nodeColor={(node) => {
-                const schema = node.data?.schema;
+                const schema = node.data?.schema as string;
                 return SCHEMA_COLORS[schema] || SCHEMA_COLORS.default;
               }}
               maskColor="rgba(0, 0, 0, 0.1)"
@@ -794,7 +822,7 @@ function GraphVisualization() {
                       className={`flex items-center gap-2 cursor-pointer p-1 rounded transition-colors ${highlightedCommunity === schema ? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-200' : 'hover:bg-slate-100 dark:hover:bg-slate-700'}`}
                       onClick={() => setHighlightedCommunity(schema === highlightedCommunity ? null : schema)}
                     >
-                      <div className="w-3 h-3 rounded shrink-0" style={{ backgroundColor: color }}></div>
+                      <div className="w-3 h-3 rounded shrink-0" style={{ backgroundColor: color as string }}></div>
                       <span className="text-xs truncate">{schema}</span>
                     </div>
                   )
@@ -834,30 +862,54 @@ function GraphVisualization() {
 
             {/* Room Panel */}
             <Panel position="top-right" className="bg-white dark:bg-slate-800 rounded-lg shadow-lg p-3 text-sm mr-2 mt-28 max-w-[250px]">
-              <div className="font-semibold mb-2">Genie Rooms</div>
+              <div className="font-semibold mb-2 flex items-center justify-between gap-2">
+                <span>Genie Rooms</span>
+                <Button 
+                  variant="ghost" 
+                  size="xs"
+                  className="h-7 w-7 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:text-purple-400 dark:hover:text-purple-300 dark:hover:bg-purple-900/20"
+                  onClick={handleGenerateFromCommunities}
+                  disabled={generateFromCommunitiesMutation.isPending}
+                  title="Generate rooms from communities (AI)"
+                >
+                  <Sparkles size={16} className={generateFromCommunitiesMutation.isPending ? 'animate-pulse' : ''} />
+                </Button>
+              </div>
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {roomMap.map((room) => (
                   <div key={room.id} className="border rounded-md overflow-hidden">
-                    <button 
-                      className="w-full flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                      onClick={() => setExpandedRoomId(expandedRoomId === room.id ? null : room.id)}
-                      onMouseEnter={() => setHoveredRoomId(room.id)}
-                      onMouseLeave={() => setHoveredRoomId(null)}
-                    >
-                      <div 
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white font-bold"
-                        style={{ backgroundColor: room.color }}
+                    <div className="w-full flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors group/room">
+                      <button 
+                        className="flex-1 flex items-center gap-2 text-left overflow-hidden"
+                        onClick={() => setExpandedRoomName(expandedRoomName === room.name ? null : room.name)}
+                        onMouseEnter={() => setHoveredRoomId(room.id)}
+                        onMouseLeave={() => setHoveredRoomId(null)}
                       >
-                        {room.symbol}
-                      </div>
-                      <span className="text-xs font-medium truncate flex-1 text-left">{room.name}</span>
-                      <span className="text-[10px] text-slate-500">{fullRoomData[room.id]?.tables?.length || room.table_count || 0}</span>
-                      {expandedRoomId === room.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    </button>
-                    {expandedRoomId === room.id && (
+                        <div 
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0"
+                          style={{ backgroundColor: room.color }}
+                        >
+                          {room.symbol}
+                        </div>
+                        <span className="text-xs font-medium truncate flex-1">{room.name}</span>
+                        <span className="text-[10px] text-slate-500 shrink-0">{(fullRoomData as any)[room.id]?.tables?.length || room.table_count || 0}</span>
+                        {expandedRoomName === room.name ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteRoom(room.id, room.name);
+                        }}
+                        className="opacity-0 group-hover/room:opacity-100 text-slate-400 hover:text-red-500 transition-all p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                        title="Delete room"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {expandedRoomName === room.name && (
                       <div className="bg-slate-50 dark:bg-slate-900/50 p-2 border-t text-[10px] space-y-1">
-                        {fullRoomData[room.id] ? (
-                          fullRoomData[room.id].tables.map((fqn: string) => (
+                        {(fullRoomData as any)[room.id] ? (
+                          (fullRoomData as any)[room.id].tables.map((fqn: string) => (
                             <div 
                               key={fqn} 
                               className="flex items-center justify-between gap-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded px-1 py-0.5 transition-colors"
@@ -921,7 +973,7 @@ function GraphVisualization() {
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">
-                      {hoveredNode.data.label}
+                      {hoveredNode.data.label as React.ReactNode}
                     </h3>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                       {hoveredNode.id}
@@ -1005,7 +1057,7 @@ function GraphVisualization() {
                     className="flex items-center justify-between text-sm bg-slate-50 dark:bg-slate-700 rounded px-3 py-2"
                   >
                     <span className="text-slate-900 dark:text-slate-100 truncate">
-                      {node.data.label}
+                      {node.data.label as React.ReactNode}
                     </span>
                     <button
                       onClick={() => handleRemoveFromSelection(node.id)}

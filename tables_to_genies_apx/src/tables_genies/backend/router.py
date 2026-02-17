@@ -618,6 +618,56 @@ async def get_graph_data():
 # GENIE ROOM ROUTES
 # ============================================================================
 
+@api.post("/genie/generate-from-communities", response_model=List[GenieRoomOut], operation_id="generateFromCommunities")
+async def generate_from_communities():
+    """Generate Genie rooms based on graph communities."""
+    global _genie_rooms
+    
+    if not _graph_data:
+        raise HTTPException(status_code=400, detail="Graph must be built first to detect communities")
+    
+    # Group tables by community
+    community_groups = {}
+    for elem in _graph_data.elements:
+        if "source" not in elem["data"]: # It's a node
+            community_id = elem["data"].get("community", 0)
+            table_fqn = elem["data"]["id"]
+            
+            if community_id not in community_groups:
+                community_groups[community_id] = []
+            community_groups[community_id].append(table_fqn)
+    
+    # Create rooms for each community
+    new_rooms = []
+    for community_id, tables in community_groups.items():
+        # Generate a descriptive name for the community if possible, or use a default
+        room_name = f"Community {community_id} Room"
+        
+        # Try to find a better name from the tables (e.g., most common schema or a keyword)
+        schemas = [t.split('.')[1] for t in tables]
+        if schemas:
+            most_common_schema = max(set(schemas), key=schemas.count)
+            room_name = f"{most_common_schema.replace('_', ' ').title()} Community {community_id}"
+
+        room = GenieRoomOut(
+            id=f"room-comm-{community_id}-{str(uuid.uuid4())[:4]}",
+            name=room_name,
+            tables=tables,
+            table_count=len(tables)
+        )
+        new_rooms.append(room)
+    
+    # Replace or append? User said "populate the Panel", usually means replace or add to.
+    # Let's append but avoid duplicates by name
+    existing_names = {r.name for r in _genie_rooms}
+    for nr in new_rooms:
+        if nr.name not in existing_names:
+            _genie_rooms.append(nr)
+            existing_names.add(nr.name)
+            
+    return _genie_rooms
+
+
 @api.post("/genie/rooms", response_model=GenieRoomOut, operation_id="createGenieRoom")
 async def create_genie_room(room_in: GenieRoomIn):
     """Create a Genie room definition."""
@@ -635,6 +685,21 @@ async def create_genie_room(room_in: GenieRoomIn):
 async def list_genie_rooms():
     """List all planned Genie rooms."""
     return _genie_rooms
+
+
+@api.patch("/genie/rooms/{room_id}", response_model=GenieRoomOut, operation_id="updateGenieRoom")
+async def update_genie_room(room_id: str, room_update: GenieRoomUpdateIn):
+    """Update a Genie room definition."""
+    global _genie_rooms
+    for room in _genie_rooms:
+        if room.id == room_id:
+            if room_update.name is not None:
+                room.name = room_update.name
+            if room_update.table_fqns is not None:
+                room.tables = room_update.table_fqns
+                room.table_count = len(room_update.table_fqns)
+            return room
+    raise HTTPException(status_code=404, detail="Room not found")
 
 
 @api.delete("/genie/rooms/{room_id}", operation_id="deleteGenieRoom")

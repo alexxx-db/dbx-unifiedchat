@@ -223,6 +223,12 @@ class GenieRoomIn(BaseModel):
     table_fqns: List[str] = Field(..., min_items=1)
 
 
+class GenieRoomUpdateIn(BaseModel):
+    """Input for updating a Genie room definition."""
+    name: Optional[str] = None
+    table_fqns: Optional[List[str]] = None
+
+
 class GenieRoomOut(BaseModel):
     """Full Genie room output."""
     id: str

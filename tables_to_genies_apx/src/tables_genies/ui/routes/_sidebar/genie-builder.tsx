@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Suspense, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useGetGraphDataSuspense, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom } from '@/lib/api';
+import { useGetGraphDataSuspense, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom, useUpdateGenieRoom } from '@/lib/api';
 import { selector } from '@/lib/selector';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, X, Database, Sparkles, Plus, Trash2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, X, Database, Sparkles, Plus, Trash2, CheckCircle2, Edit2, Check } from 'lucide-react';
 
 export const Route = createFileRoute('/_sidebar/genie-builder')({
   component: () => (
@@ -39,11 +39,22 @@ function GenieBuilderView() {
   const { data: rooms } = useListGenieRoomsSuspense(selector());
   const [selectedTableFqns, setSelectedTableFqns] = useState<string[]>([]);
   const [roomName, setRoomName] = useState('');
+  const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
+  const [editingRoomName, setEditingRoomName] = useState('');
   
   const createRoomMutation = useCreateGenieRoom({
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['/api/genie/rooms'] });
+      }
+    }
+  });
+
+  const updateRoomMutation = useUpdateGenieRoom({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['/api/genie/rooms'] });
+        setEditingRoomId(null);
       }
     }
   });
@@ -78,6 +89,19 @@ function GenieBuilderView() {
     await deleteRoomMutation.mutateAsync({
       roomId: roomId
     });
+  };
+
+  const handleUpdateRoomName = async (roomId: string) => {
+    if (!editingRoomName.trim()) return;
+    await updateRoomMutation.mutateAsync({
+      roomId,
+      data: { name: editingRoomName.trim() }
+    });
+  };
+
+  const startEditing = (room: any) => {
+    setEditingRoomId(room.id);
+    setEditingRoomName(room.name);
   };
 
   return (
@@ -209,9 +233,41 @@ function GenieBuilderView() {
                                          text-white text-xs font-bold flex items-center justify-center">
                             {index + 1}
                           </span>
-                          <h4 className="font-semibold text-slate-900 dark:text-slate-100 truncate">
-                            {room.name}
-                          </h4>
+                          {editingRoomId === room.id ? (
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={editingRoomName}
+                                onChange={(e) => setEditingRoomName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleUpdateRoomName(room.id);
+                                  if (e.key === 'Escape') setEditingRoomId(null);
+                                }}
+                                autoFocus
+                                className="flex-1 px-2 py-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                              />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleUpdateRoomName(room.id)}
+                                className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
+                              >
+                                <Check size={14} />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => setEditingRoomId(null)}
+                                className="h-7 w-7 text-slate-400 hover:text-slate-600"
+                              >
+                                <X size={14} />
+                              </Button>
+                            </div>
+                          ) : (
+                            <h4 className="font-semibold text-slate-900 dark:text-slate-100 truncate flex-1">
+                              {room.name}
+                            </h4>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400">
                           <Database className="w-3.5 h-3.5" />
@@ -220,15 +276,28 @@ function GenieBuilderView() {
                         </div>
                       </div>
                       
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleDeleteRoom(room.id)}
-                        className="h-8 w-8 p-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity
-                                 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400"
-                        title="Delete room"
-                      >
-                        <Trash2 size={14} />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        {editingRoomId !== room.id && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => startEditing(room)}
+                            className="h-8 w-8 p-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity
+                                     hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400"
+                            title="Rename room"
+                          >
+                            <Edit2 size={14} />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleDeleteRoom(room.id)}
+                          className="h-8 w-8 p-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity
+                                   hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400"
+                          title="Delete room"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}
