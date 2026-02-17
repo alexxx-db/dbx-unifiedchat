@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Suspense, useState, useCallback, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useBuildGraph, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom } from '@/lib/api';
+import { useBuildGraph, useGetGraphData, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom } from '@/lib/api';
 import { selector } from '@/lib/selector';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -54,6 +54,20 @@ function GraphExplorerContent() {
   const [graphBuilt, setGraphBuilt] = useState(loadGraphBuiltState());
   const buildGraphMutation = useBuildGraph();
   const navigate = useNavigate();
+
+  // Check if graph data actually exists on mount if we think it's built
+  const { error: graphDataError } = useGetGraphData({
+    query: {
+      enabled: graphBuilt,
+      retry: false,
+    }
+  });
+
+  // If we get a 404, it means the backend was restarted and lost the in-memory graph
+  if (graphDataError && (graphDataError as any).status === 404 && graphBuilt) {
+    setGraphBuilt(false);
+    localStorage.removeItem('graph-explorer-built');
+  }
 
   // Poll logs while building
   const { data: logs } = useGetGraphBuildLogs({

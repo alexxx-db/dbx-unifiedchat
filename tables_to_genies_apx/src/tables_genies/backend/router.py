@@ -16,6 +16,7 @@ import threading
 import os
 import json
 import asyncio
+import requests
 from datetime import datetime
 
 # Initialize SDK
@@ -23,9 +24,24 @@ config = Config()
 client = WorkspaceClient(config=config)
 warehouse_id = "a4ed2ccbda385db9"
 
-# In-memory storage
+# In-memory storage with file persistence for development
+CACHE_DIR = "/tmp/tables_to_genies_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+GRAPH_DATA_FILE = os.path.join(CACHE_DIR, "graph_data.json")
+
 _selection: TableSelectionOut = TableSelectionOut(table_fqns=[], count=0)
 _graph_data: Optional[GraphDataOut] = None
+
+# Load cached graph data if exists
+if os.path.exists(GRAPH_DATA_FILE):
+    try:
+        with open(GRAPH_DATA_FILE, 'r') as f:
+            data = json.load(f)
+            _graph_data = GraphDataOut(**data)
+            print(f"Loaded cached graph data from {GRAPH_DATA_FILE}")
+    except Exception as e:
+        print(f"Failed to load cached graph data: {e}")
+
 _graph_build_logs: List[GraphBuildLogOut] = []
 _genie_rooms = []
 _genie_creation_status: Optional[GenieCreationStatusOut] = None
@@ -517,6 +533,14 @@ async def build_graph():
             communities=graph_output.get('communities')
         )
         
+        # Persist to disk for development
+        try:
+            with open(GRAPH_DATA_FILE, 'w') as f:
+                f.write(_graph_data.model_dump_json())
+            _add_graph_log("Graph data persisted to disk for faster reloads.")
+        except Exception as e:
+            _add_graph_log(f"Warning: Failed to persist graph data to disk: {e}", level="warn")
+        
         _add_graph_log("LLM-powered GraphRAG build completed successfully.", level="success")
         return GraphBuildStatusOut(job_id="graph-1", status=GraphBuildStatus.COMPLETED)
         
@@ -570,36 +594,100 @@ def _create_rooms_task():
     """Background task for creating Genie spaces."""
     global _genie_creation_status
     
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         for i, room in enumerate(_genie_creation_status.rooms):
             try:
                 room['status'] = 'creating'
+                logger.info(f"[Genie Creation] Starting room: {room['name']}")
+                print(f"[Genie Creation] Starting room: {room['name']}", flush=True)
                 
-                # Create Genie space
-                space = client.genie.create_space(
-                    display_name=room['name'],
-                    description=f"Genie space with {room['table_count']} tables"
+                # Use REST API directly to create Genie space with tables
+                # Based on Databricks documentation, table_identifiers should be inside serialized_space
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {config.token}",
+                    "Content-Type": "application/json"
+                }
+                
+                serialized_space_data = {
+                    "table_identifiers": room['tables']
+                }
+                
+                create_payload = {
+                    "title": room['name'],
+                    "description": f"Genie space with {room['table_count']} tables",
+                    "sql_warehouse_id": warehouse_id,
+                    "serialized_space": json.dumps(serialized_space_data)
+                }
+                
+                api_url = f"{config.host}/api/2.0/genie/spaces"
+                print(f"[Genie Creation] API URL: {api_url}", flush=True)
+                
+                response = requests.post(
+                    api_url,
+                    headers=headers,
+                    json=create_payload
                 )
                 
-                # Update with table identifiers
-                client.genie.update_space(
-                    id=space.id,
-                    display_name=room['name'],
-                    table_identifiers=room['tables'],
-                    sql_warehouse_id=warehouse_id
-                )
+                if response.status_code >= 400:
+                    # Try fallback if serialized_space failed - some environments use different schemas
+                    error_data = response.json()
+                    if "table_identifiers" in str(error_data):
+                         print(f"[Genie Creation] Fallback: trying top-level table_identifiers", flush=True)
+                         fallback_payload = {
+                             "title": room['name'],
+                             "description": f"Genie space with {room['table_count']} tables",
+                             "sql_warehouse_id": warehouse_id,
+                             "table_identifiers": room['tables']
+                         }
+                         response = requests.post(api_url, headers=headers, json=fallback_payload)
+                    
+                    if response.status_code >= 400:
+                        raise Exception(f"API Error {response.status_code}: {response.text}")
+                
+                space_data = response.json()
+                space_id = space_data.get('space_id') or space_data.get('id')
+                
+                logger.info(f"[Genie Creation] Space created: {space_id}")
+                print(f"[Genie Creation] Space created: {space_id}", flush=True)
                 
                 room['status'] = 'created'
-                room['space_id'] = space.id
-                room['url'] = f"https://{config.host}/sql/genie/{space.id}"
+                room['space_id'] = space_id
+                room['url'] = f"{config.host}/sql/genie/{space_id}"
+                
+                logger.info(f"[Genie Creation] ✅ Successfully created room: {room['name']}")
+                print(f"[Genie Creation] ✅ Successfully created room: {room['name']}", flush=True)
                 
             except Exception as e:
+                import traceback
+                error_msg = str(e)
+                traceback_str = traceback.format_exc()
+                
+                logger.error(f"[Genie Creation] ❌ Error creating room {room['name']}: {error_msg}")
+                logger.error(f"[Genie Creation] Traceback:\n{traceback_str}")
+                
+                print(f"\n{'='*80}", flush=True)
+                print(f"[Genie Creation] ❌ ERROR creating room: {room['name']}", flush=True)
+                print(f"Error: {error_msg}", flush=True)
+                print(f"Traceback:\n{traceback_str}", flush=True)
+                print(f"{'='*80}\n", flush=True)
+                
                 room['status'] = 'failed'
-                room['error'] = str(e)
+                room['error'] = error_msg
         
         _genie_creation_status.status = 'completed'
+        logger.info("[Genie Creation] All rooms processed")
+        print("[Genie Creation] All rooms processed", flush=True)
         
     except Exception as e:
+        import traceback
+        logger.error(f"[Genie Creation] Fatal error in task: {str(e)}")
+        logger.error(traceback.format_exc())
+        print(f"[Genie Creation] Fatal error: {str(e)}", flush=True)
+        print(traceback.format_exc(), flush=True)
         _genie_creation_status.status = 'failed'
 
 

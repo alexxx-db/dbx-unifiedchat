@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Suspense, useState } from 'react';
-import { useListGenieRoomsSuspense, useCreateAllGenieRooms, useGetGenieCreationStatusSuspense, useListCreatedGenieRoomsSuspense } from '@/lib/api';
+import { useListGenieRoomsSuspense, useCreateAllGenieRooms, useGetGenieCreationStatus, useListCreatedGenieRooms } from '@/lib/api';
 import { selector } from '@/lib/selector';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,26 +79,56 @@ function GenieCreateView() {
 }
 
 function CreationProgress() {
-  const { data: status } = useGetGenieCreationStatusSuspense(selector());
+  const { data: status } = useGetGenieCreationStatus({
+    query: {
+      select: selector(),
+      refetchInterval: 2000, // Poll every 2 seconds
+    }
+  });
+
+  if (!status) return <Skeleton className="h-64 w-full" />;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Creation Progress</CardTitle>
+        <CardTitle className="flex items-center justify-between">
+          <span>Creation Progress</span>
+          {status.status === 'creating' && (
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-2">
           {status.rooms.map((room: any) => (
-            <div key={room.id} className="flex items-center justify-between p-3 border rounded-lg">
-              <span className="font-medium">{room.name}</span>
-              <span className={`text-sm px-2 py-1 rounded ${
-                room.status === 'created' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' :
-                room.status === 'creating' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300' :
-                room.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300' :
-                'bg-gray-100 text-gray-800'
-              }`}>
-                {room.status}
-              </span>
+            <div key={room.id} className="p-3 border rounded-lg transition-all hover:bg-accent/50">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium">{room.name}</span>
+                <span className={`text-xs px-2 py-1 rounded-full font-semibold uppercase tracking-wider ${
+                  room.status === 'created' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                  room.status === 'creating' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                  room.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
+                  'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400'
+                }`}>
+                  {room.status}
+                </span>
+              </div>
+              {room.status === 'failed' && room.error && (
+                <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/40 rounded text-sm text-red-800 dark:text-red-300 border border-red-200/50 dark:border-red-800/50">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1 text-red-500">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    </span>
+                    <div className="flex-1">
+                      <p className="font-semibold text-xs mb-1">Error Details:</p>
+                      <p className="text-[10px] font-mono break-all leading-relaxed opacity-90">{room.error}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -108,9 +138,14 @@ function CreationProgress() {
 }
 
 function CreatedRooms() {
-  const { data: createdRooms } = useListCreatedGenieRoomsSuspense(selector());
+  const { data: createdRooms } = useListCreatedGenieRooms({
+    query: {
+      select: selector(),
+      refetchInterval: 2000,
+    }
+  });
 
-  if (createdRooms.length === 0) {
+  if (!createdRooms || createdRooms.length === 0) {
     return null;
   }
 

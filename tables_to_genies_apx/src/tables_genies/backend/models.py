@@ -122,12 +122,15 @@ class EnrichmentResultOut(BaseModel):
     """Full enrichment result for a table."""
     fqn: str
     catalog: str
-    schema: str
+    schema_name: str = Field(..., alias="schema")
     table: str
     column_count: int
     columns: List[ColumnEnriched]
     enriched: bool
     timestamp: str
+
+    class Config:
+        populate_by_name = True
 
 
 class TablePreviewOut(BaseModel):
@@ -177,10 +180,13 @@ class GraphNodeOut(BaseModel):
     id: str
     label: str
     catalog: str
-    schema: str
+    schema_name: str = Field(..., alias="schema")
     column_count: int
     community: int
     columns: List[str]
+
+    class Config:
+        populate_by_name = True
 
 
 class GraphEdgeOut(BaseModel):
