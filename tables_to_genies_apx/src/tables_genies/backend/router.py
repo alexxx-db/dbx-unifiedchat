@@ -552,14 +552,10 @@ async def create_genie_room(room_in: GenieRoomIn):
     return room
 
 
-@api.get("/genie/rooms", response_model=List[GenieRoomListOut], operation_id="listGenieRooms")
+@api.get("/genie/rooms", response_model=List[GenieRoomOut], operation_id="listGenieRooms")
 async def list_genie_rooms():
     """List all planned Genie rooms."""
-    return [GenieRoomListOut(
-        id=r.id,
-        name=r.name,
-        table_count=r.table_count
-    ) for r in _genie_rooms]
+    return _genie_rooms
 
 
 @api.delete("/genie/rooms/{room_id}", operation_id="deleteGenieRoom")

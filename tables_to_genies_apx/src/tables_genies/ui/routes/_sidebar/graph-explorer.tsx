@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Suspense, useState, useCallback, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useBuildGraph, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense } from '@/lib/api';
+import { useBuildGraph, useGetGraphDataSuspense, useGetGraphBuildLogs, useCreateGenieRoom, useListGenieRoomsSuspense, useDeleteGenieRoom } from '@/lib/api';
 import { selector } from '@/lib/selector';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Terminal, X, ChevronDown, ChevronRight, Plus, Layers, Info } from 'lucide-react';
+import { ArrowLeft, Terminal, X, ChevronDown, ChevronRight, Plus, Layers, Info, Minus } from 'lucide-react';
 import { 
   ReactFlow, 
   Background, 
@@ -136,14 +136,14 @@ const ROOM_COLORS = [
 ];
 
 // Custom node component
-function TableNode({ data }: { data: any }) {
+function TableNode({ data, selected }: { data: any, selected?: boolean }) {
   const schemaColor = SCHEMA_COLORS[data.schema] || SCHEMA_COLORS.default;
   const rooms = data.rooms || [];
-  
+
   return (
-    <div 
-      className={`px-4 py-3 rounded-lg border-2 shadow-lg bg-white dark:bg-slate-800 transition-all hover:shadow-xl hover:scale-105 ${data.isDimmed ? 'opacity-20' : 'opacity-100'} ${data.isHighlighted ? 'ring-4 ring-yellow-400 ring-offset-2' : ''}`}
-      style={{ 
+    <div
+      className={`px-4 py-3 rounded-lg border-2 shadow-lg bg-white dark:bg-slate-800 transition-all hover:shadow-xl hover:scale-105 ${data.isDimmed ? 'opacity-20' : 'opacity-100'} ${data.isHighlighted ? 'ring-4 ring-yellow-400 ring-offset-2' : ''} ${selected ? 'ring-4 ring-blue-500 ring-offset-2 animate-pulse' : ''}`}
+      style={{
         borderColor: schemaColor,
         minWidth: '180px',
       }}
@@ -270,6 +270,7 @@ function GraphVisualization() {
   const { data: graphData } = useGetGraphDataSuspense(selector());
   const { data: genieRooms = [] } = useListGenieRoomsSuspense(selector());
   const createRoomMutation = useCreateGenieRoom();
+  const deleteRoomMutation = useDeleteGenieRoom();
   
   const [hoveredNode, setHoveredNode] = useState<any>(null);
   const hoverIntentRef = useRef<boolean>(false);
@@ -285,16 +286,42 @@ function GraphVisualization() {
   const [highlightedCommunity, setHighlightedCommunity] = useState<string | null>(null);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
 
-  // Room mapping with colors and symbols - Deduplicated by name
+  // Store full room data locally since list API only returns summary
+  const [fullRoomData, setFullRoomData] = useState<Record<string, { id: string; name: string; tables: string[] }>>({});
+
+  // Hover state for rooms and tables
+  const [hoveredRoomId, setHoveredRoomId] = useState<string | null>(null);
+  const [hoveredTableFqn, setHoveredTableFqn] = useState<string | null>(null);
+  
+  // Store React Flow instance
+  const reactFlowInstanceRef = useRef<any>(null);
+
+  // Populate fullRoomData from API on mount/update
+  useMemo(() => {
+    const newFullRoomData: Record<string, { id: string; name: string; tables: string[] }> = {};
+    genieRooms.forEach((room: any) => {
+      if (room.tables && Array.isArray(room.tables)) {
+        newFullRoomData[room.id] = {
+          id: room.id,
+          name: room.name,
+          tables: room.tables
+        };
+      }
+    });
+    setFullRoomData(prev => ({ ...prev, ...newFullRoomData }));
+  }, [genieRooms]);
+
+  // Room mapping with colors and symbols - Deduplicated by name (since "updates" create new rooms)
   const roomMap = useMemo(() => {
     const uniqueRooms: Record<string, any> = {};
-    genieRooms.forEach((room) => {
-      // If we see the same name, we merge the table_fqns
+    (genieRooms as any[]).forEach((room: any) => {
+      // If we see the same name, merge the table_fqns (since "updates" create new rooms)
       if (uniqueRooms[room.name]) {
-        uniqueRooms[room.name].table_fqns = Array.from(new Set([
-          ...(uniqueRooms[room.name].table_fqns || []),
-          ...(room.table_fqns || [])
+        uniqueRooms[room.name].tables = Array.from(new Set([
+          ...(uniqueRooms[room.name].tables || []),
+          ...(room.tables || [])
         ]));
+        uniqueRooms[room.name].table_count = uniqueRooms[room.name].tables.length;
       } else {
         uniqueRooms[room.name] = { ...room };
       }
@@ -302,6 +329,7 @@ function GraphVisualization() {
 
     return Object.values(uniqueRooms).map((room, idx) => ({
       ...room,
+      table_fqns: room.tables || [], // Map backend 'tables' to frontend 'table_fqns'
       color: ROOM_COLORS[idx % ROOM_COLORS.length],
       symbol: String.fromCharCode(65 + (idx % 26)), // A, B, C...
     }));
@@ -399,15 +427,27 @@ function GraphVisualization() {
 
   // Apply filtering and highlighting to nodes and edges
   const { filteredNodes, filteredEdges } = useMemo(() => {
+    // Get table IDs for the hovered room
+    const hoveredRoomTableIds = hoveredRoomId && fullRoomData[hoveredRoomId] 
+      ? new Set(fullRoomData[hoveredRoomId].tables) 
+      : null;
+
     const nodes = initialNodes.map(node => {
       const isDimmed = highlightedCommunity && node.data.schema !== highlightedCommunity;
       const isHighlighted = highlightedCommunity && node.data.schema === highlightedCommunity;
+      
+      // Room hover highlight
+      const isInHoveredRoom = hoveredRoomTableIds && hoveredRoomTableIds.has(node.id);
+      
+      // Individual table hover highlight
+      const isHoveredTable = hoveredTableFqn === node.id;
+      
       return {
         ...node,
         data: {
           ...node.data,
-          isDimmed,
-          isHighlighted,
+          isDimmed: isDimmed || (hoveredRoomTableIds && !isInHoveredRoom) || (hoveredTableFqn && !isHoveredTable),
+          isHighlighted: isHighlighted || isInHoveredRoom || isHoveredTable,
         }
       };
     });
@@ -434,7 +474,7 @@ function GraphVisualization() {
     });
 
     return { filteredNodes: nodes, filteredEdges: edges };
-  }, [initialNodes, initialEdges, showStructuralEdges, showSemanticEdges, highlightedCommunity]);
+  }, [initialNodes, initialEdges, showStructuralEdges, showSemanticEdges, highlightedCommunity, hoveredRoomId, hoveredTableFqn, fullRoomData]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(filteredNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(filteredEdges);
@@ -487,7 +527,7 @@ function GraphVisualization() {
 
   const handleAddToRoom = useCallback(async () => {
     const tableFqns = selectedNodes.map(n => n.id);
-    
+
     if (selectedRoomId === 'new' && newRoomName) {
       // Create new room
       await createRoomMutation.mutateAsync({
@@ -496,41 +536,111 @@ function GraphVisualization() {
           table_fqns: tableFqns,
         }
       }, {
-        onSuccess: () => {
+        onSuccess: (newRoom) => {
+          // Store full room data locally
+          setFullRoomData(prev => ({
+            ...prev,
+            [newRoom.id]: { id: newRoom.id, name: newRoom.name, tables: newRoom.tables }
+          }));
           queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
+          // Force immediate refetch
+          queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
           setNewRoomName('');
           setSelectedRoomId('');
           setShowSelectionPanel(false);
           setSelectedNodes([]);
+          setExpandedRoomId(null); // Reset expansion state
         }
       });
     } else if (selectedRoomId && selectedRoomId !== 'new') {
-      // Add to existing room
-      const existingRoom = genieRooms.find(r => r.id === selectedRoomId);
+      // Add to existing room - delete old room and create new one with combined tables
+      const existingRoom = genieRooms.find(r => r.id === selectedRoomId) as any;
+
       if (existingRoom) {
-        // Merge existing table FQNs with selected ones, ensuring uniqueness
+        // Get existing tables from the room (now that API returns full data)
+        const existingTableFqns = existingRoom.tables || [];
         const combinedTableFqns = Array.from(new Set([
-          ...(existingRoom.table_fqns || []),
+          ...existingTableFqns,
           ...tableFqns
         ]));
 
+        // Delete the old room first
+        await deleteRoomMutation.mutateAsync({
+          roomId: selectedRoomId
+        });
+
+        // Create new room with combined tables
         await createRoomMutation.mutateAsync({
           data: {
-            id: selectedRoomId,
             name: existingRoom.name,
             table_fqns: combinedTableFqns,
           }
         }, {
-          onSuccess: () => {
+          onSuccess: (updatedRoom) => {
+            // Store full room data locally
+            setFullRoomData(prev => ({
+              ...prev,
+              [updatedRoom.id]: { id: updatedRoom.id, name: updatedRoom.name, tables: updatedRoom.tables },
+              // Remove the old room data
+              [selectedRoomId]: undefined
+            }));
             queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
+            // Force immediate refetch
+            queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
             setSelectedRoomId('');
             setShowSelectionPanel(false);
             setSelectedNodes([]);
+            setExpandedRoomId(null); // Reset expansion state
           }
         });
       }
     }
-  }, [selectedNodes, selectedRoomId, newRoomName, createRoomMutation, genieRooms, queryClient]);
+  }, [selectedNodes, selectedRoomId, newRoomName, createRoomMutation, deleteRoomMutation, genieRooms, queryClient]);
+
+  const handleRemoveTableFromRoom = useCallback(async (roomId: string, tableFqn: string) => {
+    const room = fullRoomData[roomId];
+    if (!room) return;
+
+    // Remove the specific table from the room's table list
+    const updatedTableFqns = room.tables.filter((fqn: string) => fqn !== tableFqn);
+
+    // If no tables left, delete the room entirely
+    if (updatedTableFqns.length === 0) {
+      await deleteRoomMutation.mutateAsync({
+        roomId: roomId
+      });
+      // Remove from local data
+      setFullRoomData(prev => {
+        const newData = { ...prev };
+        delete newData[roomId];
+        return newData;
+      });
+    } else {
+      // Delete old room and create new one with remaining tables
+      await deleteRoomMutation.mutateAsync({
+        roomId: roomId
+      });
+
+      const result = await createRoomMutation.mutateAsync({
+        data: {
+          name: room.name,
+          table_fqns: updatedTableFqns,
+        }
+      });
+
+      // Store the updated room data locally
+      setFullRoomData(prev => ({
+        ...prev,
+        [result.id]: { id: result.id, name: result.name, tables: result.tables },
+        // Remove the old room data
+        [roomId]: undefined
+      }));
+    }
+
+    // Refresh the room list
+    queryClient.invalidateQueries({ queryKey: [`/api/genie/rooms`] });
+    queryClient.refetchQueries({ queryKey: [`/api/genie/rooms`] });
+  }, [fullRoomData, deleteRoomMutation, createRoomMutation, queryClient]);
 
   const semanticEdgeCount = initialEdges.filter(e => e.data.isSemantic).length;
 
@@ -551,6 +661,7 @@ function GraphVisualization() {
             onNodeMouseEnter={onNodeMouseEnter}
             onNodeMouseLeave={onNodeMouseLeave}
             onSelectionChange={onSelectionChange}
+            onInit={(instance) => { reactFlowInstanceRef.current = instance; }}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
@@ -642,6 +753,8 @@ function GraphVisualization() {
                     <button 
                       className="w-full flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                       onClick={() => setExpandedRoomId(expandedRoomId === room.id ? null : room.id)}
+                      onMouseEnter={() => setHoveredRoomId(room.id)}
+                      onMouseLeave={() => setHoveredRoomId(null)}
                     >
                       <div 
                         className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white font-bold"
@@ -650,16 +763,49 @@ function GraphVisualization() {
                         {room.symbol}
                       </div>
                       <span className="text-xs font-medium truncate flex-1 text-left">{room.name}</span>
-                      <span className="text-[10px] text-slate-500">{room.table_fqns?.length || 0}</span>
+                      <span className="text-[10px] text-slate-500">{fullRoomData[room.id]?.tables?.length || room.table_count || 0}</span>
                       {expandedRoomId === room.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                     {expandedRoomId === room.id && (
                       <div className="bg-slate-50 dark:bg-slate-900/50 p-2 border-t text-[10px] space-y-1">
-                        {room.table_fqns?.map((fqn: string) => (
-                          <div key={fqn} className="truncate text-slate-600 dark:text-slate-400">
-                            • {fqn.split('.').pop()}
+                        {fullRoomData[room.id] ? (
+                          fullRoomData[room.id].tables.map((fqn: string) => (
+                            <div 
+                              key={fqn} 
+                              className="flex items-center justify-between gap-1 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded px-1 py-0.5 transition-colors"
+                              onMouseEnter={() => setHoveredTableFqn(fqn)}
+                              onMouseLeave={() => setHoveredTableFqn(null)}
+                            >
+                              <span 
+                                className="truncate text-slate-600 dark:text-slate-400 flex-1 cursor-pointer"
+                                onClick={() => {
+                                  // Find the node and center on it
+                                  const node = nodes.find(n => n.id === fqn);
+                                  if (node && reactFlowInstanceRef.current) {
+                                    reactFlowInstanceRef.current.setCenter(node.position.x + 100, node.position.y + 40, { zoom: 1.5, duration: 800 });
+                                  }
+                                }}
+                                title={`Click to center on ${fqn.split('.').pop()}`}
+                              >
+                                • {fqn.split('.').pop()}
+                              </span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveTableFromRoom(room.id, fqn);
+                                }}
+                                className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded p-0.5 transition-colors"
+                                title={`Remove ${fqn.split('.').pop()} from room`}
+                              >
+                                <Minus size={10} />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-slate-500 italic text-center py-2">
+                            Room details not available for editing
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>
