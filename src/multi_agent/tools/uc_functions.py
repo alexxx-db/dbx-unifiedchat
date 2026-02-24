@@ -111,32 +111,29 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_summary(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get high-level summary of Genie spaces. Returns JSON with space summaries including chunk_id, chunk_type, space_title, and content.'
-RETURN (
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'chunk_id', chunk_id,
-                            'chunk_type', chunk_type,
-                            'space_title', space_title,
-                            'content', searchable_content
-                        )
+RETURN SELECT COALESCE(
+    to_json(
+        map_from_entries(
+            collect_list(
+                struct(
+                    space_id,
+                    named_struct(
+                        'chunk_id', chunk_id,
+                        'chunk_type', chunk_type,
+                        'space_title', space_title,
+                        'content', searchable_content
                     )
                 )
             )
-        ),
-        '{{}}')
-    ) as result
-    FROM {table_name}
-    WHERE chunk_type = 'space_summary'
-    AND (
-        space_ids_json IS NULL 
-        OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
-        OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-    )
+        )
+    ),
+    '{{}}')
+FROM {table_name}
+WHERE chunk_type = 'space_summary'
+AND (
+    space_ids_json IS NULL 
+    OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
+    OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
 )
 """)
         registered.append("get_space_summary")
@@ -157,45 +154,42 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_table_overview(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get table-level metadata for specific Genie spaces. Returns JSON with table metadata including chunk_id, chunk_type, table_name, and content grouped by space.'
-RETURN (
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'space_title', space_title,
-                            'tables', tables
-                        )
+RETURN SELECT COALESCE(
+    to_json(
+        map_from_entries(
+            collect_list(
+                struct(
+                    space_id,
+                    named_struct(
+                        'space_title', space_title,
+                        'tables', tables
                     )
                 )
             )
-        ),
-        '{{}}')
-    ) as result
-    FROM (
-        SELECT 
-            space_id,
-            first(space_title) as space_title,
-            collect_list(
-                named_struct(
-                    'chunk_id', chunk_id,
-                    'chunk_type', chunk_type,
-                    'table_name', table_name,
-                    'content', searchable_content
-                )
-            ) as tables
-        FROM {table_name}
-        WHERE chunk_type = 'table_overview'
-        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-        AND (
-            table_names_json IS NULL 
-            OR TRIM(LOWER(table_names_json)) IN ('null', 'none', '')
-            OR array_contains(from_json(table_names_json, 'array<string>'), table_name)
         )
-        GROUP BY space_id
+    ),
+    '{{}}')
+FROM (
+    SELECT 
+        space_id,
+        first(space_title) as space_title,
+        collect_list(
+            named_struct(
+                'chunk_id', chunk_id,
+                'chunk_type', chunk_type,
+                'table_name', table_name,
+                'content', searchable_content
+            )
+        ) as tables
+    FROM {table_name}
+    WHERE chunk_type = 'table_overview'
+    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+    AND (
+        table_names_json IS NULL 
+        OR TRIM(LOWER(table_names_json)) IN ('null', 'none', '')
+        OR array_contains(from_json(table_names_json, 'array<string>'), table_name)
     )
+    GROUP BY space_id
 )
 """)
         registered.append("get_table_overview")
@@ -217,47 +211,44 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_column_detail(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get column-level metadata for specific Genie spaces. Returns JSON with column metadata including chunk_id, chunk_type, table_name, column_name, and content grouped by space.'
-RETURN (
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'space_title', space_title,
-                            'columns', columns
-                        )
+RETURN SELECT COALESCE(
+    to_json(
+        map_from_entries(
+            collect_list(
+                struct(
+                    space_id,
+                    named_struct(
+                        'space_title', space_title,
+                        'columns', columns
                     )
                 )
             )
-        ),
-        '{{}}')
-    ) as result
-    FROM (
-        SELECT 
-            space_id,
-            first(space_title) as space_title,
-            collect_list(
-                named_struct(
-                    'chunk_id', chunk_id,
-                    'chunk_type', chunk_type,
-                    'table_name', table_name,
-                    'column_name', column_name,
-                    'content', searchable_content
-                )
-            ) as columns
-        FROM {table_name}
-        WHERE chunk_type = 'column_detail'
-        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-        AND array_contains(from_json(table_names_json, 'array<string>'), table_name)
-        AND (
-            column_names_json IS NULL 
-            OR TRIM(LOWER(column_names_json)) IN ('null', 'none', '')
-            OR array_contains(from_json(column_names_json, 'array<string>'), column_name)
         )
-        GROUP BY space_id
+    ),
+    '{{}}')
+FROM (
+    SELECT 
+        space_id,
+        first(space_title) as space_title,
+        collect_list(
+            named_struct(
+                'chunk_id', chunk_id,
+                'chunk_type', chunk_type,
+                'table_name', table_name,
+                'column_name', column_name,
+                'content', searchable_content
+            )
+        ) as columns
+    FROM {table_name}
+    WHERE chunk_type = 'column_detail'
+    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+    AND array_contains(from_json(table_names_json, 'array<string>'), table_name)
+    AND (
+        column_names_json IS NULL 
+        OR TRIM(LOWER(column_names_json)) IN ('null', 'none', '')
+        OR array_contains(from_json(column_names_json, 'array<string>'), column_name)
     )
+    GROUP BY space_id
 )
 """)
         registered.append("get_column_detail")
@@ -277,29 +268,26 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_details(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get complete metadata for specific Genie spaces - use as LAST RESORT (token intensive). Returns JSON with complete space metadata including chunk_id, chunk_type, space_title, and all available metadata content.'
-RETURN (
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'chunk_id', chunk_id,
-                            'chunk_type', chunk_type,
-                            'space_title', space_title,
-                            'complete_metadata', searchable_content
-                        )
+RETURN SELECT COALESCE(
+    to_json(
+        map_from_entries(
+            collect_list(
+                struct(
+                    space_id,
+                    named_struct(
+                        'chunk_id', chunk_id,
+                        'chunk_type', chunk_type,
+                        'space_title', space_title,
+                        'complete_metadata', searchable_content
                     )
                 )
             )
-        ),
-        '{{}}')
-    ) as result
-    FROM {table_name}
-    WHERE chunk_type = 'space_details'
-    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-)
+        )
+    ),
+    '{{}}')
+FROM {table_name}
+WHERE chunk_type = 'space_details'
+AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
 """)
         registered.append("get_space_details")
         if verbose:
@@ -318,29 +306,26 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_instructions(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Extract SQL instructions from Genie space metadata. Returns JSON with space-specific SQL guidance. The instructions field contains the raw JSON content from serialized_space.instructions, which may include example queries, filters, measures, and other space-specific guidance.'
-RETURN (
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'chunk_id', chunk_id,
-                            'chunk_type', chunk_type,
-                            'space_title', space_title,
-                            'instructions', get_json_object(metadata_json, '$.serialized_space.instructions')
-                        )
+RETURN SELECT COALESCE(
+    to_json(
+        map_from_entries(
+            collect_list(
+                struct(
+                    space_id,
+                    named_struct(
+                        'chunk_id', chunk_id,
+                        'chunk_type', chunk_type,
+                        'space_title', space_title,
+                        'instructions', get_json_object(metadata_json, '$.serialized_space.instructions')
                     )
                 )
             )
-        ),
-        '{{}}')
-    ) as result
-    FROM {table_name}
-    WHERE chunk_type = 'space_details'
-    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-)
+        )
+    ),
+    '{{}}')
+FROM {table_name}
+WHERE chunk_type = 'space_details'
+AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
 """)
         registered.append("get_space_instructions")
         if verbose:
