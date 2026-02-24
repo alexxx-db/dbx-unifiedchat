@@ -111,7 +111,7 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_summary(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get high-level summary of Genie spaces. Returns JSON with space summaries including chunk_id, chunk_type, space_title, and content.'
-RETURN
+RETURN (
     SELECT COALESCE(
         to_json(
             map_from_entries(
@@ -137,6 +137,7 @@ RETURN
         OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
         OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
     )
+)
 """)
         registered.append("get_space_summary")
         if verbose:
@@ -156,7 +157,7 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_table_overview(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get table-level metadata for specific Genie spaces. Returns JSON with table metadata including chunk_id, chunk_type, table_name, and content grouped by space.'
-RETURN
+RETURN (
     SELECT COALESCE(
         to_json(
             map_from_entries(
@@ -195,6 +196,7 @@ RETURN
         )
         GROUP BY space_id
     )
+)
 """)
         registered.append("get_table_overview")
         if verbose:
@@ -215,7 +217,7 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_column_detail(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get column-level metadata for specific Genie spaces. Returns JSON with column metadata including chunk_id, chunk_type, table_name, column_name, and content grouped by space.'
-RETURN
+RETURN (
     SELECT COALESCE(
         to_json(
             map_from_entries(
@@ -256,6 +258,7 @@ RETURN
         )
         GROUP BY space_id
     )
+)
 """)
         registered.append("get_column_detail")
         if verbose:
@@ -274,7 +277,7 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_details(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Get complete metadata for specific Genie spaces - use as LAST RESORT (token intensive). Returns JSON with complete space metadata including chunk_id, chunk_type, space_title, and all available metadata content.'
-RETURN
+RETURN (
     SELECT COALESCE(
         to_json(
             map_from_entries(
@@ -296,6 +299,7 @@ RETURN
     FROM {table_name}
     WHERE chunk_type = 'space_details'
     AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+)
 """)
         registered.append("get_space_details")
         if verbose:
@@ -314,7 +318,7 @@ CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_instructions(
 RETURNS STRING
 LANGUAGE SQL
 COMMENT 'Extract SQL instructions from Genie space metadata. Returns JSON with space-specific SQL guidance. The instructions field contains the raw JSON content from serialized_space.instructions, which may include example queries, filters, measures, and other space-specific guidance.'
-RETURN
+RETURN (
     SELECT COALESCE(
         to_json(
             map_from_entries(
@@ -336,6 +340,7 @@ RETURN
     FROM {table_name}
     WHERE chunk_type = 'space_details'
     AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
+)
 """)
         registered.append("get_space_instructions")
         if verbose:
