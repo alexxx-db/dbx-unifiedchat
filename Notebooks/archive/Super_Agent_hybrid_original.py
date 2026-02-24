@@ -1452,7 +1452,7 @@ if not check_result["all_exist"]:
 # MAGIC                 "## WORKFLOW:\n"
 # MAGIC                 "1. Review the execution plan and provided metadata\n"
 # MAGIC                 "2. If metadata is sufficient → Generate SQL immediately\n"
-# MAGIC                 "3. If insufficient, call UC function tools to gather metadata:\n"
+# MAGIC                 "3. If insufficient, call UC function tools in this order to gather metadata:\n"
 # MAGIC                 "   a) get_space_summary for space information\n"
 # MAGIC                 "   b) get_table_overview for table schemas\n"
 # MAGIC                 "   c) get_column_detail for specific columns\n"

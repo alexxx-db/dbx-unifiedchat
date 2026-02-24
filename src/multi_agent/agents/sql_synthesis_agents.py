@@ -162,7 +162,7 @@ class SQLSynthesisTableAgent:
                 "## WORKFLOW:\n"
                 "1. Review the execution plan and provided metadata\n"
                 "2. If metadata is sufficient → Generate SQL immediately\n"
-                "3. If insufficient, call UC function tools to gather metadata:\n"
+                "3. If insufficient, call UC function tools in this order to gather metadata:\n"
                 "   a) get_space_summary for space information\n"
                 "   b) get_table_overview for table schemas\n"
                 "   c) get_column_detail for specific columns\n"
