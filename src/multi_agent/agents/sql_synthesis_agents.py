@@ -144,7 +144,8 @@ class SQLSynthesisTableAgent:
             f"{catalog}.{schema}.get_space_summary",
             f"{catalog}.{schema}.get_table_overview",
             f"{catalog}.{schema}.get_column_detail",
-            f"{catalog}.{schema}.get_space_details",
+            f"{catalog}.{schema}.get_space_instructions",  # REQUIRED FINAL STEP before SQL synthesis
+            f"{catalog}.{schema}.get_space_details",  # Last resort only
         ]
         
         self.uc_toolkit = UCFunctionToolkit(function_names=uc_function_names)
@@ -161,13 +162,17 @@ class SQLSynthesisTableAgent:
                 "## WORKFLOW:\n"
                 "1. Review the execution plan and provided metadata\n"
                 "2. If metadata is sufficient → Generate SQL immediately\n"
-                "3. If insufficient, call UC function tools in this order:\n"
+                "3. If insufficient, call UC function tools to gather metadata:\n"
                 "   a) get_space_summary for space information\n"
                 "   b) get_table_overview for table schemas\n"
                 "   c) get_column_detail for specific columns\n"
                 "   d) get_space_details ONLY as last resort (token intensive)\n"
-                "4. At last, if you still cannot find enough metadata in relevant spaces provided, dont stuck there. Expand the searching scope to all spaces mentioned in the execution plan's 'vector_search_relevant_spaces_info' field. Extract the space_id from 'vector_search_relevant_spaces_info'. \n"
-                "5. Generate complete, executable SQL\n\n"
+                "4. **CRITICAL - FINAL STEP BEFORE SQL SYNTHESIS**:\n"
+                "   **MUST call get_space_instructions** to fetch SQL examples, filters, and measures guidance\n"
+                "   This provides essential SQL patterns and best practices for the specific space\n"
+                "5. If still cannot find enough metadata in relevant spaces, expand searching scope to all spaces\n"
+                "   mentioned in the execution plan's 'vector_search_relevant_spaces_info' field\n"
+                "6. Generate complete, executable SQL using the gathered metadata AND instructions\n\n"
 
                 "## UC FUNCTION USAGE:\n"
                 "- Pass arguments as JSON array strings: '[\"space_id_1\", \"space_id_2\"]' or 'null'\n"
@@ -176,6 +181,15 @@ class SQLSynthesisTableAgent:
                 "- OPTIMIZATION: When possible, call multiple UC functions in parallel by returning multiple tool calls\n"
                 "  Example: If you need table_overview for space_1 AND column_detail for space_2, call both tools at once\n"
                 "- This enables parallel execution and reduces latency by 1-2 seconds\n\n"
+
+                "## get_space_instructions - REQUIRED FINAL STEP:\n"
+                "- **MUST ALWAYS call this as the FINAL step before generating SQL**\n"
+                "- Returns raw JSON content from the instructions field (structure varies by space)\n"
+                "- Commonly includes: example_question_sqls, sql_snippets (filters/measures), and other SQL guidance\n"
+                "- Provides essential SQL patterns, best practices, and space-specific query requirements\n"
+                "- More efficient than get_space_details: Returns only SQL instructions, not full metadata\n"
+                "- Parse the returned JSON to extract relevant examples, filters, or measures for your query\n"
+                "- Use these instructions to guide your SQL generation and ensure query quality\n\n"
 
                 "## OUTPUT REQUIREMENTS:\n"
                 "- Generate complete, executable SQL with:\n"

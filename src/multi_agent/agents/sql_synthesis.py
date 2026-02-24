@@ -5,7 +5,7 @@ This module provides two SQL synthesis strategies for the multi-agent system:
 
 1. Table Route (sql_synthesis_table_node):
    - Fast SQL synthesis using Unity Catalog (UC) function tools
-   - Queries metadata directly from UC functions (get_space_summary, get_table_overview, etc.)
+   - Queries metadata directly from UC functions (get_space_summary, get_table_overview, get_space_instructions, etc.)
    - Optimized for single-space or simple multi-space queries
    - Uses cached SQLSynthesisTableAgent instance for performance
 
@@ -61,19 +61,30 @@ def initialize_config(
     llm_endpoint_sql_synthesis_table: str,
     llm_endpoint_sql_synthesis_genie: str,
     catalog: str,
-    schema: str
+    schema: str,
+    table_name: Optional[str] = None,
+    register_uc_functions_flag: bool = False,
+    check_uc_functions: bool = True
 ):
     """
-    Initialize module-level configuration constants.
+    Initialize module-level configuration constants and optionally register UC functions.
     
     This function should be called before using the SQL synthesis nodes,
     or the constants can be set directly.
+    
+    IMPORTANT: UC functions must exist before creating SQLSynthesisTableAgent.
+    - Set register_uc_functions_flag=True to register them automatically
+    - Or register manually before calling this function
+    - Set check_uc_functions=True to verify functions exist
     
     Args:
         llm_endpoint_sql_synthesis_table: LLM endpoint for table route SQL synthesis
         llm_endpoint_sql_synthesis_genie: LLM endpoint for genie route SQL synthesis
         catalog: Unity Catalog catalog name
         schema: Unity Catalog schema name
+        table_name: Fully qualified table name (required if register_uc_functions_flag=True)
+        register_uc_functions_flag: If True, register UC functions before initializing
+        check_uc_functions: If True, check that UC functions exist (default: True)
     """
     global LLM_ENDPOINT_SQL_SYNTHESIS_TABLE
     global LLM_ENDPOINT_SQL_SYNTHESIS_GENIE
@@ -84,6 +95,42 @@ def initialize_config(
     LLM_ENDPOINT_SQL_SYNTHESIS_GENIE = llm_endpoint_sql_synthesis_genie
     CATALOG = catalog
     SCHEMA = schema
+    
+    # Register UC functions if requested
+    if register_uc_functions_flag:
+        if not table_name:
+            raise ValueError("table_name is required when register_uc_functions_flag=True")
+        
+        from ..tools.uc_functions import register_uc_functions
+        
+        print("\n" + "=" * 80)
+        print("🔧 REGISTERING UC FUNCTIONS (required for SQL Synthesis Table Agent)")
+        print("=" * 80)
+        
+        result = register_uc_functions(
+            catalog=catalog,
+            schema=schema,
+            table_name=table_name,
+            verbose=True
+        )
+        
+        if not result["success"]:
+            raise RuntimeError(f"Failed to register UC functions: {result['errors']}")
+    
+    # Check UC functions exist
+    if check_uc_functions:
+        from ..tools.uc_functions import check_uc_functions_exist
+        
+        result = check_uc_functions_exist(catalog=catalog, schema=schema, verbose=True)
+        
+        if not result["all_exist"]:
+            print("\n⚠️ WARNING: Some UC functions are missing!")
+            print("Missing functions:", result["missing_functions"])
+            print("\nTo register them, call:")
+            print(f"  from src.multi_agent.tools.uc_functions import register_uc_functions")
+            print(f"  register_uc_functions(catalog='{catalog}', schema='{schema}', table_name='...')")
+            print("\nOr set register_uc_functions_flag=True when calling initialize_config()")
+            print("=" * 80)
 
 
 def initialize_config_from_module():
@@ -318,7 +365,7 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
         writer({"type": "agent_step", "agent": "sql_synthesis_table", "step": "analyzing_plan", "content": f"📋 Analyzing execution plan for {len(relevant_space_ids)} relevant spaces"})
         
         # Emit tool preparation event
-        uc_functions = ["get_space_summary", "get_table_overview", "get_column_detail", "get_space_details"]
+        uc_functions = ["get_space_summary", "get_table_overview", "get_column_detail", "get_space_instructions", "get_space_details"]
         writer({"type": "tools_available", "agent": "sql_synthesis_table", "tools": uc_functions, "content": f"🔧 Available UC functions: {', '.join(uc_functions)}"})
         
         # Emit query strategy

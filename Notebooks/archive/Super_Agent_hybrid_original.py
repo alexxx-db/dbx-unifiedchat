@@ -224,216 +224,50 @@ if instance_exists:
 # COMMAND ----------
 
 # DBTITLE 1,ONE-TIME SETUP: Register Unity Catalog Functions for Metadata Querying
-# """
-# Register UC functions that will be used as tools by the SQL Synthesis Agent.
+"""
+Register UC functions that will be used as tools by the SQL Synthesis Agent.
 
-# These UC functions query different levels of the enriched genie docs chunks table:
-# 1. get_space_summary: High-level space information
-# 2. get_table_overview: Table-level metadata
-# 3. get_column_detail: Column-level metadata
-# 4. get_space_details: Complete metadata (last resort - token intensive)
+These UC functions query different levels of the enriched genie docs chunks table:
+1. get_space_summary: High-level space information
+2. get_table_overview: Table-level metadata
+3. get_column_detail: Column-level metadata
+4. get_space_instructions: Extract raw SQL instructions JSON (any structure within instructions field) from space metadata (REQUIRED FINAL STEP)
+5. get_space_details: Complete metadata (last resort - token intensive)
 
-# All functions use LANGUAGE SQL for better performance and compatibility.
-# """
+All functions use LANGUAGE SQL for better performance and compatibility.
 
-print("="*80)
-print("REGISTERING UNITY CATALOG FUNCTIONS")
-print("="*80)
-print(f"Target table: {TABLE_NAME}")
-print(f"Functions will be created in: {CATALOG}.{SCHEMA}")
-print("="*80)
+IMPORTANT: This registration is now centralized in src/multi_agent/tools/uc_functions.py
+and should be called before creating agents.
+"""
 
-# Optional: Drop existing functions if you need to recreate them
-# Uncomment these lines if you need to drop and recreate the functions
-# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_summary')
-# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_table_overview')
-# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_column_detail')
-# spark.sql(f'DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.get_space_details')
+# Import the registration function from the centralized module
+from src.multi_agent.tools import register_uc_functions, check_uc_functions_exist
 
-# UC Function 1: get_space_summary (SQL scalar function)
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_summary(
-    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query, or "null" to retrieve all spaces. Example: ["space_1", "space_2"] or "null"'
+# Register all UC functions using the centralized registration module
+result = register_uc_functions(
+    catalog=CATALOG,
+    schema=SCHEMA,
+    table_name=TABLE_NAME,
+    drop_if_exists=False,  # Set to True if you need to recreate functions
+    verbose=True
 )
-RETURNS STRING
-LANGUAGE SQL
-COMMENT 'Get high-level summary of Genie spaces. Returns JSON with space summaries including chunk_id, chunk_type, space_title, and content.'
-RETURN
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'chunk_id', chunk_id,
-                            'chunk_type', chunk_type,
-                            'space_title', space_title,
-                            'content', searchable_content
-                        )
-                    )
-                )
-            )
-        ),
-        '{{}}'
-    ) as result
-    FROM {TABLE_NAME}
-    WHERE chunk_type = 'space_summary'
-    AND (
-        space_ids_json IS NULL 
-        OR TRIM(LOWER(space_ids_json)) IN ('null', 'none', '')
-        OR array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-    )
-""")
-print("✓ Registered: get_space_summary")
 
-# UC Function 2: get_table_overview (SQL scalar function with grouping)
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_table_overview(
-    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-    table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter, or "null" for all tables in the specified spaces. Example: ["table1", "table2"] or "null"'
-)
-RETURNS STRING
-LANGUAGE SQL
-COMMENT 'Get table-level metadata for specific Genie spaces. Returns JSON with table metadata including chunk_id, chunk_type, table_name, and content grouped by space.'
-RETURN
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'space_title', space_title,
-                            'tables', tables
-                        )
-                    )
-                )
-            )
-        ),
-        '{{}}'
-    ) as result
-    FROM (
-        SELECT 
-            space_id,
-            first(space_title) as space_title,
-            collect_list(
-                named_struct(
-                    'chunk_id', chunk_id,
-                    'chunk_type', chunk_type,
-                    'table_name', table_name,
-                    'content', searchable_content
-                )
-            ) as tables
-        FROM {TABLE_NAME}
-        WHERE chunk_type = 'table_overview'
-        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-        AND (
-            table_names_json IS NULL 
-            OR TRIM(LOWER(table_names_json)) IN ('null', 'none', '')
-            OR array_contains(from_json(table_names_json, 'array<string>'), table_name)
-        )
-        GROUP BY space_id
-    )
-""")
-print("✓ Registered: get_table_overview")
+# Check registration result
+if not result["success"]:
+    print("\n" + "=" * 80)
+    print("⚠️ WARNING: Some UC functions failed to register!")
+    print("=" * 80)
+    for error in result["errors"]:
+        print(f"  ✗ {error}")
+    print("=" * 80)
+    raise RuntimeError("Failed to register all UC functions")
 
-# UC Function 3: get_column_detail (SQL scalar function with grouping)
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_column_detail(
-    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-    table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter (required, prefer single table). Example: ["table1"]',
-    column_names_json STRING DEFAULT 'null' COMMENT 'JSON array of column names to filter, or "null" for all columns in the specified tables. Example: ["col1", "col2"] or "null"'
-)
-RETURNS STRING
-LANGUAGE SQL
-COMMENT 'Get column-level metadata for specific Genie spaces. Returns JSON with column metadata including chunk_id, chunk_type, table_name, column_name, and content grouped by space.'
-RETURN
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'space_title', space_title,
-                            'columns', columns
-                        )
-                    )
-                )
-            )
-        ),
-        '{{}}'
-    ) as result
-    FROM (
-        SELECT 
-            space_id,
-            first(space_title) as space_title,
-            collect_list(
-                named_struct(
-                    'chunk_id', chunk_id,
-                    'chunk_type', chunk_type,
-                    'table_name', table_name,
-                    'column_name', column_name,
-                    'content', searchable_content
-                )
-            ) as columns
-        FROM {TABLE_NAME}
-        WHERE chunk_type = 'column_detail'
-        AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-        AND array_contains(from_json(table_names_json, 'array<string>'), table_name)
-        AND (
-            column_names_json IS NULL 
-            OR TRIM(LOWER(column_names_json)) IN ('null', 'none', '')
-            OR array_contains(from_json(column_names_json, 'array<string>'), column_name)
-        )
-        GROUP BY space_id
-    )
-""")
-print("✓ Registered: get_column_detail")
+# Verify all functions exist
+print("\n🔍 Verifying UC functions...")
+check_result = check_uc_functions_exist(catalog=CATALOG, schema=SCHEMA, verbose=True)
 
-# UC Function 4: get_space_details (SQL scalar function - last resort)
-spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.get_space_details(
-    space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]. WARNING: Returns large metadata - use as LAST RESORT.'
-)
-RETURNS STRING
-LANGUAGE SQL
-COMMENT 'Get complete metadata for specific Genie spaces - use as LAST RESORT (token intensive). Returns JSON with complete space metadata including chunk_id, chunk_type, space_title, and all available metadata content.'
-RETURN
-    SELECT COALESCE(
-        to_json(
-            map_from_entries(
-                collect_list(
-                    struct(
-                        space_id,
-                        named_struct(
-                            'chunk_id', chunk_id,
-                            'chunk_type', chunk_type,
-                            'space_title', space_title,
-                            'complete_metadata', searchable_content
-                        )
-                    )
-                )
-            )
-        ),
-        '{{}}'
-    ) as result
-    FROM {TABLE_NAME}
-    WHERE chunk_type = 'space_details'
-    AND array_contains(from_json(space_ids_json, 'array<string>'), space_id)
-""")
-print("✓ Registered: get_space_details")
-
-print("\n" + "="*80)
-print("✅ ALL 4 UC FUNCTIONS REGISTERED SUCCESSFULLY!")
-print("="*80)
-print("Functions available for SQL Synthesis Agent:")
-print(f"  1. {CATALOG}.{SCHEMA}.get_space_summary")
-print(f"  2. {CATALOG}.{SCHEMA}.get_table_overview")
-print(f"  3. {CATALOG}.{SCHEMA}.get_column_detail")
-print(f"  4. {CATALOG}.{SCHEMA}.get_space_details")
-print("="*80)
+if not check_result["all_exist"]:
+    raise RuntimeError(f"Missing UC functions: {check_result['missing_functions']}")
 
 # COMMAND ----------
 
@@ -1600,6 +1434,7 @@ print("="*80)
 # MAGIC             f"{catalog}.{schema}.get_space_summary",
 # MAGIC             f"{catalog}.{schema}.get_table_overview",
 # MAGIC             f"{catalog}.{schema}.get_column_detail",
+# MAGIC             f"{catalog}.{schema}.get_space_instructions",
 # MAGIC             f"{catalog}.{schema}.get_space_details",
 # MAGIC         ]
 # MAGIC         
@@ -1617,13 +1452,17 @@ print("="*80)
 # MAGIC                 "## WORKFLOW:\n"
 # MAGIC                 "1. Review the execution plan and provided metadata\n"
 # MAGIC                 "2. If metadata is sufficient → Generate SQL immediately\n"
-# MAGIC                 "3. If insufficient, call UC function tools in this order:\n"
+# MAGIC                 "3. If insufficient, call UC function tools to gather metadata:\n"
 # MAGIC                 "   a) get_space_summary for space information\n"
 # MAGIC                 "   b) get_table_overview for table schemas\n"
 # MAGIC                 "   c) get_column_detail for specific columns\n"
 # MAGIC                 "   d) get_space_details ONLY as last resort (token intensive)\n"
-# MAGIC                 "4. At last, if you still cannot find enough metadata in relevant spaces provided, dont stuck there. Expand the searching scope to all spaces mentioned in the execution plan's 'vector_search_relevant_spaces_info' field. Extract the space_id from 'vector_search_relevant_spaces_info'. \n"
-# MAGIC                 "5. Generate complete, executable SQL\n\n"
+# MAGIC                 "4. **CRITICAL - FINAL STEP BEFORE SQL SYNTHESIS**:\n"
+# MAGIC                 "   **MUST call get_space_instructions** to fetch SQL examples, filters, and measures guidance\n"
+# MAGIC                 "   This provides essential SQL patterns and best practices for the specific space\n"
+# MAGIC                 "5. If still cannot find enough metadata in relevant spaces, expand searching scope to all spaces\n"
+# MAGIC                 "   mentioned in the execution plan's 'vector_search_relevant_spaces_info' field\n"
+# MAGIC                 "6. Generate complete, executable SQL using the gathered metadata AND instructions\n\n"
 # MAGIC
 # MAGIC                 "## UC FUNCTION USAGE:\n"
 # MAGIC                 "- Pass arguments as JSON array strings: '[\"space_id_1\", \"space_id_2\"]' or 'null'\n"
@@ -4328,7 +4167,7 @@ print("="*80)
 # MAGIC         writer({"type": "agent_step", "agent": "sql_synthesis_table", "step": "analyzing_plan", "content": f"📋 Analyzing execution plan for {len(relevant_space_ids)} relevant spaces"})
 # MAGIC         
 # MAGIC         # Emit tool preparation event
-# MAGIC         uc_functions = ["get_space_summary", "get_table_overview", "get_column_detail", "get_space_details"]
+# MAGIC         uc_functions = ["get_space_summary", "get_table_overview", "get_column_detail", "get_space_instructions", "get_space_details"]
 # MAGIC         writer({"type": "tools_available", "agent": "sql_synthesis_table", "tools": uc_functions, "content": f"🔧 Available UC functions: {', '.join(uc_functions)}"})
 # MAGIC         
 # MAGIC         # Emit query strategy
@@ -6083,6 +5922,7 @@ resources = [
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_summary"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_table_overview"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_column_detail"),
+    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_instructions"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_details"),
 ]
 """)
@@ -6150,6 +5990,7 @@ from pkg_resources import get_distribution
 #     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_summary"),
 #     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_table_overview"),
 #     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_column_detail"),
+#     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_instructions"),
 #     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_details"),
 # ]
 
@@ -6183,6 +6024,7 @@ resources = [
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_summary"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_table_overview"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_column_detail"),
+    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_instructions"),
     DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_details"),
 ]
 
