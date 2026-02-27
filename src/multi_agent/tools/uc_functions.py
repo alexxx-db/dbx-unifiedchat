@@ -36,7 +36,7 @@ def register_uc_functions(catalog: str, schema: str, table_name: str):
     # UC Function 1: get_space_summary (SQL scalar function)
     spark.sql(f"""
     CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_summary(
-        space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query, or "null" to retrieve all spaces. Example: ["space_1", "space_2"] or "null"'
+        space_ids_json STRING DEFAULT NULL COMMENT 'JSON array of space IDs to query, or NULL to retrieve all spaces. Example: ["space_1", "space_2"] or NULL'
     )
     RETURNS STRING
     LANGUAGE SQL
@@ -73,8 +73,8 @@ def register_uc_functions(catalog: str, schema: str, table_name: str):
     # UC Function 2: get_table_overview (SQL scalar function with grouping)
     spark.sql(f"""
     CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_table_overview(
-        space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-        table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter, or "null" for all tables in the specified spaces. Example: ["table1", "table2"] or "null"'
+        space_ids_json STRING DEFAULT NULL COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
+        table_names_json STRING DEFAULT NULL COMMENT 'JSON array of table names to filter, or NULL for all tables in the specified spaces. Example: ["table1", "table2"] or NULL'
     )
     RETURNS STRING
     LANGUAGE SQL
@@ -124,9 +124,9 @@ def register_uc_functions(catalog: str, schema: str, table_name: str):
     # UC Function 3: get_column_detail (SQL scalar function with grouping)
     spark.sql(f"""
     CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_column_detail(
-        space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
-        table_names_json STRING DEFAULT 'null' COMMENT 'JSON array of table names to filter (required, prefer single table). Example: ["table1"]',
-        column_names_json STRING DEFAULT 'null' COMMENT 'JSON array of column names to filter, or "null" for all columns in the specified tables. Example: ["col1", "col2"] or "null"'
+        space_ids_json STRING DEFAULT NULL COMMENT 'JSON array of space IDs to query (required, prefer single space). Example: ["space_1"]',
+        table_names_json STRING DEFAULT NULL COMMENT 'JSON array of table names to filter (required, prefer single table). Example: ["table1"]',
+        column_names_json STRING DEFAULT NULL COMMENT 'JSON array of column names to filter, or NULL for all columns in the specified tables. Example: ["col1", "col2"] or NULL'
     )
     RETURNS STRING
     LANGUAGE SQL
@@ -178,7 +178,7 @@ def register_uc_functions(catalog: str, schema: str, table_name: str):
     # UC Function 4: get_space_instructions (REQUIRED FINAL STEP)
     spark.sql(f"""
     CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_instructions(
-        space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]'
+        space_ids_json STRING DEFAULT NULL COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]'
     )
     RETURNS STRING
     LANGUAGE SQL
@@ -211,7 +211,7 @@ def register_uc_functions(catalog: str, schema: str, table_name: str):
     # UC Function 5: get_space_details (SQL scalar function - last resort)
     spark.sql(f"""
     CREATE OR REPLACE FUNCTION {catalog}.{schema}.get_space_details(
-        space_ids_json STRING DEFAULT 'null' COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]. WARNING: Returns large metadata - use as LAST RESORT.'
+        space_ids_json STRING DEFAULT NULL COMMENT 'JSON array of space IDs to query (required). Example: ["space_1", "space_2"]. WARNING: Returns large metadata - use as LAST RESORT.'
     )
     RETURNS STRING
     LANGUAGE SQL
