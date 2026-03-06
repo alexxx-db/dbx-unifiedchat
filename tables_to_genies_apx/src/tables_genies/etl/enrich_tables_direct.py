@@ -677,7 +677,21 @@ if __name__ == "__main__":
     # These are set when running as a notebook task via Jobs API
     try:
         # Try to use dbutils widgets (notebook mode)
-        table_fqns_str = dbutils.widgets.get("tables")
+        # Support new table_list_table parameter (for large table lists) or legacy tables parameter
+        table_list_table = None
+        table_fqns_str = None
+        
+        try:
+            table_list_table = dbutils.widgets.get("table_list_table")
+        except:
+            pass
+        
+        if not table_list_table:
+            try:
+                table_fqns_str = dbutils.widgets.get("tables")
+            except:
+                pass
+        
         sample_size = int(dbutils.widgets.get("sample_size"))
         max_unique_values = int(dbutils.widgets.get("max_unique_values"))
         llm_endpoint = dbutils.widgets.get("llm_endpoint")
@@ -687,6 +701,7 @@ if __name__ == "__main__":
     except:
         # Fallback to sys.argv for local testing
         import sys
+        table_list_table = None
         table_fqns_str = sys.argv[1] if len(sys.argv) > 1 else ""
         sample_size = int(sys.argv[2]) if len(sys.argv) > 2 else 20
         max_unique_values = int(sys.argv[3]) if len(sys.argv) > 3 else 50
@@ -695,12 +710,26 @@ if __name__ == "__main__":
         chunks_table_full = sys.argv[6] if len(sys.argv) > 6 else "serverless_dbx_unifiedchat_catalog.gold.enriched_table_chunks"
         write_mode = sys.argv[7] if len(sys.argv) > 7 else "overwrite"
     
-    # Parse comma-separated table FQNs
-    table_fqns = [fqn.strip() for fqn in table_fqns_str.split(',') if fqn.strip()]
+    # Get table FQNs either from temp table or comma-separated string
+    if table_list_table:
+        print(f"Reading table list from temp table: {table_list_table}")
+        try:
+            df_tables = spark.sql(f"SELECT table_fqn FROM {table_list_table}")
+            table_fqns = [row.table_fqn for row in df_tables.collect()]
+            print(f"✓ Loaded {len(table_fqns)} tables from temp table")
+        except Exception as e:
+            print(f"Error reading temp table {table_list_table}: {str(e)}")
+            raise ValueError(f"Failed to read table list from {table_list_table}")
+    elif table_fqns_str:
+        # Parse comma-separated table FQNs (legacy method)
+        print(f"Reading table list from comma-separated parameter")
+        table_fqns = [fqn.strip() for fqn in table_fqns_str.split(',') if fqn.strip()]
+    else:
+        table_fqns = []
     
     if not table_fqns:
         print("Error: No table FQNs provided")
-        print("Usage: Provide 'tables' parameter with comma-separated FQNs")
+        print("Usage: Provide 'table_list_table' parameter with temp table name or 'tables' parameter with comma-separated FQNs")
         raise ValueError("No table FQNs provided")
     
     # Parse destination table names (format: catalog.schema.table)
