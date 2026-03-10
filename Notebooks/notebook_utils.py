@@ -1,11 +1,10 @@
 import logging
 import os
 import yaml
-from mlflow.models import ModelConfig
 
 logger = logging.getLogger(__name__)
 
-# All config keys that build_config_yaml writes and load_deployment_config reads.
+# All config keys that build_config_yaml writes.
 # Keys marked with (list) are converted from comma-separated strings.
 AGENT_CONFIG_KEYS = [
     "catalog_name",
@@ -38,8 +37,8 @@ def build_config_yaml(params: dict, path: str = "/tmp/agent_config.yaml") -> str
     Generate a ModelConfig-compatible YAML from a dict of widget parameters.
 
     Handles format conversion:
-      - genie_space_ids, uc_function_names: comma-separated string → YAML list
-      - lakebase_embedding_dims / sample_size / max_unique_values: string → int
+      - genie_space_ids, uc_function_names: comma-separated string -> YAML list
+      - lakebase_embedding_dims / sample_size / max_unique_values: string -> int
 
     Args:
         params: dict of config values (typically from dbutils.widgets)
@@ -63,73 +62,3 @@ def build_config_yaml(params: dict, path: str = "/tmp/agent_config.yaml") -> str
 
     logger.info(f"Generated config YAML at {path}")
     return path
-
-
-def load_deployment_config(source):
-    """
-    Load configuration for notebook deployment/testing.
-
-    Args:
-        source: path to a YAML file (str) **or** a dict of pre-loaded params.
-                When a dict is provided, a temp YAML is generated so that
-                ModelConfig can still read it (needed for mlflow.pyfunc.log_model).
-
-    Returns:
-        Tuple of (config_dict, yaml_path) where yaml_path can be passed to
-        mlflow.pyfunc.log_model(model_config=...).
-    """
-    if isinstance(source, dict):
-        yaml_path = build_config_yaml(source)
-    else:
-        yaml_path = source
-
-    logger.info("=" * 80)
-    logger.info(f"LOADING CONFIGURATION FROM {yaml_path}")
-    logger.info("=" * 80)
-
-    model_config = ModelConfig(development_config=yaml_path)
-
-    catalog = model_config.get("catalog_name")
-    schema = model_config.get("schema_name")
-    default_endpoint = model_config.get("llm_endpoint")
-    source_table = model_config.get("source_table") or "enriched_genie_docs_chunks"
-    uc_fn_short = model_config.get("uc_function_names") or [
-        "get_space_summary", "get_table_overview", "get_column_detail",
-        "get_space_instructions", "get_space_details",
-    ]
-
-    config = {
-        "CATALOG": catalog,
-        "SCHEMA": schema,
-        "TABLE_NAME": f"{catalog}.{schema}.{source_table}",
-        "VECTOR_SEARCH_INDEX": f"{catalog}.{schema}.{source_table}_vs_index",
-
-        "LLM_ENDPOINT_CLARIFICATION": model_config.get("llm_endpoint_clarification") or default_endpoint,
-        "LLM_ENDPOINT_PLANNING": model_config.get("llm_endpoint_planning") or default_endpoint,
-        "LLM_ENDPOINT_SQL_SYNTHESIS_TABLE": model_config.get("llm_endpoint_sql_synthesis_table") or default_endpoint,
-        "LLM_ENDPOINT_SQL_SYNTHESIS_GENIE": model_config.get("llm_endpoint_sql_synthesis_genie") or default_endpoint,
-        "LLM_ENDPOINT_EXECUTION": model_config.get("llm_endpoint_execution") or default_endpoint,
-        "LLM_ENDPOINT_SUMMARIZE": model_config.get("llm_endpoint_summarize") or default_endpoint,
-
-        "LAKEBASE_INSTANCE_NAME": model_config.get("lakebase_instance_name"),
-        "EMBEDDING_ENDPOINT": model_config.get("lakebase_embedding_endpoint"),
-        "EMBEDDING_DIMS": model_config.get("lakebase_embedding_dims"),
-
-        "GENIE_SPACE_IDS": model_config.get("genie_space_ids"),
-        "SQL_WAREHOUSE_ID": model_config.get("sql_warehouse_id"),
-
-        "UC_FUNCTION_NAMES": [f"{catalog}.{schema}.{fn}" for fn in uc_fn_short],
-    }
-
-    logger.info(f"Catalog: {config['CATALOG']}, Schema: {config['SCHEMA']}")
-    logger.info(f"Lakebase: {config['LAKEBASE_INSTANCE_NAME']}")
-    logger.info(f"Genie Spaces: {len(config['GENIE_SPACE_IDS'])} spaces configured")
-    logger.info(f"SQL Warehouse ID: {config['SQL_WAREHOUSE_ID']}")
-
-    if not config["SQL_WAREHOUSE_ID"]:
-        raise ValueError(
-            "SQL_WAREHOUSE_ID is not configured! "
-            "Ensure 'sql_warehouse_id' is set in databricks.yml variables."
-        )
-
-    return config, yaml_path

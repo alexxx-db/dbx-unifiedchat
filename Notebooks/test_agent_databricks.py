@@ -57,64 +57,45 @@ import mlflow
 # DBTITLE 1,Load Configuration from DABs Variables
 # All parameters are injected by DABs job via base_parameters.
 # databricks.yml is the single source of truth — no separate config YAMLs.
+#
+# Flow: widgets → build_config_yaml() → temp YAML → get_config() → AgentConfig
+#
+# Defaults are empty sentinels. If run manually without DABs, the notebook
+# will fail at validation with a clear error rather than using stale values.
 
-_defaults = {
-    "catalog_name": "yyang",
-    "schema_name": "multi_agent_genie",
-    "sql_warehouse_id": "a4ed2ccbda385db9",
-    "genie_space_ids": "01f106e1239d14b28d6ab46f9c15e540,01f106e121e7173d8cf84bb80e842d6c,01f106e120b718e084598e92dcf14d4e",
-    "volume_name": "volume",
-    "enriched_docs_table": "enriched_genie_docs",
-    "source_table": "enriched_genie_docs_chunks",
-    "uc_function_names": "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details",
-    "llm_endpoint": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_clarification": "databricks-claude-haiku-4-5",
-    "llm_endpoint_planning": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_sql_synthesis_table": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_sql_synthesis_genie": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_execution": "databricks-claude-haiku-4-5",
-    "llm_endpoint_summarize": "databricks-claude-haiku-4-5",
-    "sample_size": "20",
-    "max_unique_values": "20",
-    "vs_endpoint_name": "genie_multi_agent_vs",
-    "embedding_model": "databricks-gte-large-en",
-    "lakebase_instance_name": "multi-agent-genie-system-state-db",
-    "lakebase_embedding_endpoint": "databricks-gte-large-en",
-    "lakebase_embedding_dims": "1024",
-}
+_WIDGET_KEYS = [
+    "catalog_name", "schema_name", "sql_warehouse_id", "genie_space_ids",
+    "volume_name", "enriched_docs_table", "source_table", "uc_function_names",
+    "llm_endpoint", "llm_endpoint_clarification", "llm_endpoint_planning",
+    "llm_endpoint_sql_synthesis_table", "llm_endpoint_sql_synthesis_genie",
+    "llm_endpoint_execution", "llm_endpoint_summarize",
+    "sample_size", "max_unique_values",
+    "vs_endpoint_name", "embedding_model",
+    "lakebase_instance_name", "lakebase_embedding_endpoint", "lakebase_embedding_dims",
+]
 
-for k, v in _defaults.items():
-    dbutils.widgets.text(k, v)
+for k in _WIDGET_KEYS:
+    dbutils.widgets.text(k, "")
 
-widget_params = {k: dbutils.widgets.get(k) for k in _defaults}
+widget_params = {k: dbutils.widgets.get(k) for k in _WIDGET_KEYS}
 
-from notebook_utils import load_deployment_config
+_empty = [k for k, v in widget_params.items() if not v.strip()]
+if _empty:
+    print(f"⚠️  {len(_empty)} widget(s) have no value (expected when run via DABs): {', '.join(_empty[:5])}{'...' if len(_empty) > 5 else ''}")
+    print("   If running manually, set values via notebook widgets or use DABs: databricks bundle run")
 
-config_dict, config_yaml_path = load_deployment_config(widget_params)
+# Step 1: Generate temp YAML
+from notebook_utils import build_config_yaml
+config_yaml_path = build_config_yaml(widget_params)
 
-# CRITICAL: set AGENT_CONFIG_FILE BEFORE importing agent code.
+# Step 2: CRITICAL — set env var BEFORE importing agent code.
 # responses_agent.py calls get_config() at module load time.
 os.environ["AGENT_CONFIG_FILE"] = config_yaml_path
 
-CATALOG = config_dict['CATALOG']
-SCHEMA = config_dict['SCHEMA']
-TABLE_NAME = config_dict['TABLE_NAME']
-VECTOR_SEARCH_INDEX = config_dict['VECTOR_SEARCH_INDEX']
-LLM_ENDPOINT_CLARIFICATION = config_dict['LLM_ENDPOINT_CLARIFICATION']
-LAKEBASE_INSTANCE_NAME = config_dict['LAKEBASE_INSTANCE_NAME']
-SQL_WAREHOUSE_ID = config_dict['SQL_WAREHOUSE_ID']
-GENIE_SPACE_IDS = config_dict['GENIE_SPACE_IDS']
-
-print("="*80)
-print("CONFIGURATION LOADED FROM databricks.yml (via DABs base_parameters)")
-print("="*80)
-print(f"Catalog: {CATALOG}")
-print(f"Schema: {SCHEMA}")
-print(f"Vector Search Index: {VECTOR_SEARCH_INDEX}")
-print(f"SQL Warehouse ID: {SQL_WAREHOUSE_ID}")
-print(f"Genie Spaces: {len(GENIE_SPACE_IDS)} spaces")
-print(f"Lakebase Instance: {LAKEBASE_INSTANCE_NAME}")
-print("="*80)
+# Step 3: Single config system
+from multi_agent.core.config import get_config
+cfg = get_config()
+cfg.print_summary()
 
 # COMMAND ----------
 

@@ -32,95 +32,71 @@ Original Super_Agent_hybrid.py (6,833 lines) archived in archive/ for reference.
 # DBTITLE 1,Load Configuration from DABs Variables
 # All parameters are injected by DABs job via base_parameters.
 # databricks.yml is the single source of truth — no separate config YAMLs.
+#
+# Flow: widgets → build_config_yaml() → temp YAML → get_config() → AgentConfig
+#       One config system for notebooks AND serving.
+#
+# Defaults are empty sentinels. If run manually without DABs, the notebook
+# will fail at validation with a clear error rather than using stale values.
+import sys
 import os
 
-_defaults = {
-    "catalog_name": "yyang",
-    "schema_name": "multi_agent_genie",
-    "sql_warehouse_id": "a4ed2ccbda385db9",
-    "genie_space_ids": "01f106e1239d14b28d6ab46f9c15e540,01f106e121e7173d8cf84bb80e842d6c,01f106e120b718e084598e92dcf14d4e",
-    "volume_name": "volume",
-    "enriched_docs_table": "enriched_genie_docs",
-    "source_table": "enriched_genie_docs_chunks",
-    "uc_function_names": "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details",
-    "llm_endpoint": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_clarification": "databricks-claude-haiku-4-5",
-    "llm_endpoint_planning": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_sql_synthesis_table": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_sql_synthesis_genie": "databricks-claude-sonnet-4-5",
-    "llm_endpoint_execution": "databricks-claude-haiku-4-5",
-    "llm_endpoint_summarize": "databricks-claude-haiku-4-5",
-    "sample_size": "20",
-    "max_unique_values": "20",
-    "vs_endpoint_name": "genie_multi_agent_vs",
-    "embedding_model": "databricks-gte-large-en",
-    "lakebase_instance_name": "multi-agent-genie-system-state-db",
-    "lakebase_embedding_endpoint": "databricks-gte-large-en",
-    "lakebase_embedding_dims": "1024",
-    "model_name": "super_agent_hybrid",
-    "endpoint_name": "multi-agent-genie-endpoint",
-    "workload_size": "Small",
-    "scale_to_zero": "true",
-}
+_WIDGET_KEYS = [
+    "catalog_name", "schema_name", "sql_warehouse_id", "genie_space_ids",
+    "volume_name", "enriched_docs_table", "source_table", "uc_function_names",
+    "llm_endpoint", "llm_endpoint_clarification", "llm_endpoint_planning",
+    "llm_endpoint_sql_synthesis_table", "llm_endpoint_sql_synthesis_genie",
+    "llm_endpoint_execution", "llm_endpoint_summarize",
+    "sample_size", "max_unique_values",
+    "vs_endpoint_name", "embedding_model",
+    "lakebase_instance_name", "lakebase_embedding_endpoint", "lakebase_embedding_dims",
+    "model_name", "endpoint_name", "workload_size", "scale_to_zero",
+]
 
-for k, v in _defaults.items():
-    dbutils.widgets.text(k, v)
+for k in _WIDGET_KEYS:
+    dbutils.widgets.text(k, "")
 
-widget_params = {k: dbutils.widgets.get(k) for k in _defaults}
+widget_params = {k: dbutils.widgets.get(k) for k in _WIDGET_KEYS}
 
-from notebook_utils import load_deployment_config
-config_dict, config_yaml_path = load_deployment_config(widget_params)
+_empty = [k for k, v in widget_params.items() if not v.strip()]
+if _empty:
+    print(f"⚠️  {len(_empty)} widget(s) have no value (expected when run via DABs): {', '.join(_empty[:5])}{'...' if len(_empty) > 5 else ''}")
+    print("   If running manually, set values via notebook widgets or use DABs: databricks bundle run")
 
-# Set AGENT_CONFIG_FILE so config.py can find the generated YAML when agent code is imported
+# Step 1: Generate temp YAML (needed for mlflow.pyfunc.log_model model_config)
+from notebook_utils import build_config_yaml
+config_yaml_path = build_config_yaml(widget_params)
+
+# Step 2: Set env var BEFORE any src/ imports (responses_agent.py calls get_config() at load time)
 os.environ["AGENT_CONFIG_FILE"] = config_yaml_path
 
-# Extract configuration values
-CATALOG = config_dict["CATALOG"]
-SCHEMA = config_dict["SCHEMA"]
-TABLE_NAME = config_dict["TABLE_NAME"]
-VECTOR_SEARCH_INDEX = config_dict["VECTOR_SEARCH_INDEX"]
-LLM_ENDPOINT_CLARIFICATION = config_dict["LLM_ENDPOINT_CLARIFICATION"]
-LLM_ENDPOINT_PLANNING = config_dict["LLM_ENDPOINT_PLANNING"]
-LLM_ENDPOINT_SQL_SYNTHESIS_TABLE = config_dict["LLM_ENDPOINT_SQL_SYNTHESIS_TABLE"]
-LLM_ENDPOINT_SQL_SYNTHESIS_GENIE = config_dict["LLM_ENDPOINT_SQL_SYNTHESIS_GENIE"]
-LLM_ENDPOINT_EXECUTION = config_dict["LLM_ENDPOINT_EXECUTION"]
-LLM_ENDPOINT_SUMMARIZE = config_dict["LLM_ENDPOINT_SUMMARIZE"]
-LAKEBASE_INSTANCE_NAME = config_dict["LAKEBASE_INSTANCE_NAME"]
-EMBEDDING_ENDPOINT = config_dict["EMBEDDING_ENDPOINT"]
-EMBEDDING_DIMS = config_dict["EMBEDDING_DIMS"]
-GENIE_SPACE_IDS = config_dict["GENIE_SPACE_IDS"]
-SQL_WAREHOUSE_ID = config_dict["SQL_WAREHOUSE_ID"]
-UC_FUNCTION_NAMES = config_dict["UC_FUNCTION_NAMES"]
+# Step 3: Add src to path
+notebook_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+src_path = os.path.join(os.path.dirname(notebook_dir), "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
-# Deploy-time settings (read directly from widgets, not baked into model)
-MODEL_NAME = widget_params["model_name"]
-ENDPOINT_NAME = widget_params["endpoint_name"]
-WORKLOAD_SIZE = widget_params["workload_size"]
-SCALE_TO_ZERO = widget_params["scale_to_zero"].lower() == "true"
+# Step 4: Single config system — same AgentConfig used by notebooks and serving
+from multi_agent.core.config import get_config
+cfg = get_config()
 
-print("="*80)
-print("CONFIGURATION LOADED FROM databricks.yml (via DABs base_parameters)")
-print("="*80)
-print(f"Catalog: {CATALOG}")
-print(f"Schema: {SCHEMA}")
-print(f"Vector Search Index: {VECTOR_SEARCH_INDEX}")
-print(f"SQL Warehouse ID: {SQL_WAREHOUSE_ID}")
-print(f"Genie Spaces: {len(GENIE_SPACE_IDS)} spaces")
-print(f"Lakebase Instance: {LAKEBASE_INSTANCE_NAME}")
-print(f"\nDeploy Settings:")
-print(f"  Model Name: {CATALOG}.{SCHEMA}.{MODEL_NAME}")
-print(f"  Endpoint: {ENDPOINT_NAME}")
-print(f"  Workload Size: {WORKLOAD_SIZE}")
-print(f"  Scale to Zero: {SCALE_TO_ZERO}")
-print(f"\nLLM Endpoints (Diversified by Agent):")
-print(f"  Clarification: {LLM_ENDPOINT_CLARIFICATION}")
-print(f"  Planning: {LLM_ENDPOINT_PLANNING}")
-print(f"  SQL Synthesis Table: {LLM_ENDPOINT_SQL_SYNTHESIS_TABLE}")
-print(f"  SQL Synthesis Genie: {LLM_ENDPOINT_SQL_SYNTHESIS_GENIE}")
-print(f"  Execution: {LLM_ENDPOINT_EXECUTION}")
-print(f"  Summarize: {LLM_ENDPOINT_SUMMARIZE}")
-print("="*80)
+# Convenience aliases (used throughout the notebook)
+CATALOG = cfg.unity_catalog.catalog_name
+SCHEMA = cfg.unity_catalog.schema_name
+TABLE_NAME = cfg.source_table_fq
+VECTOR_SEARCH_INDEX = cfg.vs_index_fq
+UC_FUNCTION_NAMES = cfg.unity_catalog.uc_function_names_fq
+GENIE_SPACE_IDS = cfg.table_metadata.genie_space_ids
+SQL_WAREHOUSE_ID = cfg.table_metadata.sql_warehouse_id
+LAKEBASE_INSTANCE_NAME = cfg.lakebase.instance_name
+EMBEDDING_ENDPOINT = cfg.lakebase.embedding_endpoint
+EMBEDDING_DIMS = cfg.lakebase.embedding_dims
+MODEL_NAME = cfg.model_serving.model_name
+ENDPOINT_NAME = cfg.model_serving.endpoint_name
+WORKLOAD_SIZE = cfg.model_serving.workload_size
+SCALE_TO_ZERO = cfg.model_serving.scale_to_zero_enabled
 
+cfg.print_summary()
 
 # COMMAND ----------
 
@@ -130,15 +106,6 @@ Verify that src/multi_agent/ code is synced to Databricks workspace.
 
 The modular code must be uploaded before deployment.
 """
-
-import sys
-import os
-
-# Add src to path
-notebook_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-src_path = os.path.join(os.path.dirname(notebook_dir), "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
 
 # Try importing to verify code is available
 try:
@@ -409,12 +376,12 @@ from pkg_resources import get_distribution
 # Declare all resources the agent needs
 resources = [
     # LLM endpoints - Diversified by Agent Role
-    DatabricksServingEndpoint(LLM_ENDPOINT_CLARIFICATION),
-    DatabricksServingEndpoint(LLM_ENDPOINT_PLANNING),
-    DatabricksServingEndpoint(LLM_ENDPOINT_SQL_SYNTHESIS_TABLE),
-    DatabricksServingEndpoint(LLM_ENDPOINT_SQL_SYNTHESIS_GENIE),
-    DatabricksServingEndpoint(LLM_ENDPOINT_EXECUTION),
-    DatabricksServingEndpoint(LLM_ENDPOINT_SUMMARIZE),
+    DatabricksServingEndpoint(cfg.llm.clarification_endpoint),
+    DatabricksServingEndpoint(cfg.llm.planning_endpoint),
+    DatabricksServingEndpoint(cfg.llm.sql_synthesis_table_endpoint),
+    DatabricksServingEndpoint(cfg.llm.sql_synthesis_genie_endpoint),
+    DatabricksServingEndpoint(cfg.llm.execution_endpoint),
+    DatabricksServingEndpoint(cfg.llm.summarize_endpoint),
     DatabricksServingEndpoint(EMBEDDING_ENDPOINT),
     
     # Lakebase for state management (CRITICAL!)
@@ -434,11 +401,7 @@ resources = [
     *[DatabricksTable(table_name=table) for table in UNDERLYING_TABLES],
     
     # UC Functions (metadata querying tools)
-    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_summary"),
-    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_table_overview"),
-    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_column_detail"),
-    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_instructions"),
-    DatabricksFunction(function_name=f"{CATALOG}.{SCHEMA}.get_space_details"),
+    *[DatabricksFunction(function_name=fn) for fn in UC_FUNCTION_NAMES],
 ]
 
 # Input example for schema inference
@@ -457,12 +420,12 @@ mlflow.set_experiment(f"/Shared/dbx-unifiedchat/{_target}-traces")
 # Deploy with MLflow
 with mlflow.start_run():
     # Log LLM model choices for monitoring
-    mlflow.log_param("llm_endpoint_clarification", LLM_ENDPOINT_CLARIFICATION)
-    mlflow.log_param("llm_endpoint_planning", LLM_ENDPOINT_PLANNING)
-    mlflow.log_param("llm_endpoint_sql_synthesis_table", LLM_ENDPOINT_SQL_SYNTHESIS_TABLE)
-    mlflow.log_param("llm_endpoint_sql_synthesis_genie", LLM_ENDPOINT_SQL_SYNTHESIS_GENIE)
-    mlflow.log_param("llm_endpoint_execution", LLM_ENDPOINT_EXECUTION)
-    mlflow.log_param("llm_endpoint_summarize", LLM_ENDPOINT_SUMMARIZE)
+    mlflow.log_param("llm_endpoint_clarification", cfg.llm.clarification_endpoint)
+    mlflow.log_param("llm_endpoint_planning", cfg.llm.planning_endpoint)
+    mlflow.log_param("llm_endpoint_sql_synthesis_table", cfg.llm.sql_synthesis_table_endpoint)
+    mlflow.log_param("llm_endpoint_sql_synthesis_genie", cfg.llm.sql_synthesis_genie_endpoint)
+    mlflow.log_param("llm_endpoint_execution", cfg.llm.execution_endpoint)
+    mlflow.log_param("llm_endpoint_summarize", cfg.llm.summarize_endpoint)
     mlflow.log_param("embedding_endpoint", EMBEDDING_ENDPOINT)
     
     # Log agent configuration strategy
