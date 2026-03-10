@@ -27,7 +27,9 @@ AGENT_CONFIG_KEYS = [
     "sample_size",
     "max_unique_values",
     "enriched_docs_table",
+    "source_table",
     "volume_name",
+    "uc_function_names",
 ]
 
 
@@ -36,7 +38,7 @@ def build_config_yaml(params: dict, path: str = "/tmp/agent_config.yaml") -> str
     Generate a ModelConfig-compatible YAML from a dict of widget parameters.
 
     Handles format conversion:
-      - genie_space_ids: comma-separated string → YAML list
+      - genie_space_ids, uc_function_names: comma-separated string → YAML list
       - lakebase_embedding_dims / sample_size / max_unique_values: string → int
 
     Args:
@@ -48,8 +50,9 @@ def build_config_yaml(params: dict, path: str = "/tmp/agent_config.yaml") -> str
     """
     cfg = dict(params)
 
-    if isinstance(cfg.get("genie_space_ids"), str):
-        cfg["genie_space_ids"] = [s.strip() for s in cfg["genie_space_ids"].split(",") if s.strip()]
+    for list_key in ("genie_space_ids", "uc_function_names"):
+        if isinstance(cfg.get(list_key), str):
+            cfg[list_key] = [s.strip() for s in cfg[list_key].split(",") if s.strip()]
 
     for int_key in ("lakebase_embedding_dims", "sample_size", "max_unique_values"):
         if int_key in cfg and isinstance(cfg[int_key], str):
@@ -89,12 +92,17 @@ def load_deployment_config(source):
     catalog = model_config.get("catalog_name")
     schema = model_config.get("schema_name")
     default_endpoint = model_config.get("llm_endpoint")
+    source_table = model_config.get("source_table") or "enriched_genie_docs_chunks"
+    uc_fn_short = model_config.get("uc_function_names") or [
+        "get_space_summary", "get_table_overview", "get_column_detail",
+        "get_space_instructions", "get_space_details",
+    ]
 
     config = {
         "CATALOG": catalog,
         "SCHEMA": schema,
-        "TABLE_NAME": f"{catalog}.{schema}.enriched_genie_docs_chunks",
-        "VECTOR_SEARCH_INDEX": f"{catalog}.{schema}.enriched_genie_docs_chunks_vs_index",
+        "TABLE_NAME": f"{catalog}.{schema}.{source_table}",
+        "VECTOR_SEARCH_INDEX": f"{catalog}.{schema}.{source_table}_vs_index",
 
         "LLM_ENDPOINT_CLARIFICATION": model_config.get("llm_endpoint_clarification") or default_endpoint,
         "LLM_ENDPOINT_PLANNING": model_config.get("llm_endpoint_planning") or default_endpoint,
@@ -110,13 +118,7 @@ def load_deployment_config(source):
         "GENIE_SPACE_IDS": model_config.get("genie_space_ids"),
         "SQL_WAREHOUSE_ID": model_config.get("sql_warehouse_id"),
 
-        "UC_FUNCTION_NAMES": [
-            f"{catalog}.{schema}.get_space_summary",
-            f"{catalog}.{schema}.get_table_overview",
-            f"{catalog}.{schema}.get_column_detail",
-            f"{catalog}.{schema}.get_space_instructions",
-            f"{catalog}.{schema}.get_space_details",
-        ],
+        "UC_FUNCTION_NAMES": [f"{catalog}.{schema}.{fn}" for fn in uc_fn_short],
     }
 
     logger.info(f"Catalog: {config['CATALOG']}, Schema: {config['SCHEMA']}")

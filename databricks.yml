@@ -83,6 +83,11 @@ variables:
     description: Max unique values for value dictionaries
     default: "20"
 
+  # ---- UC Function short names (comma-separated, FQ = catalog.schema.name) ----
+  uc_function_names:
+    description: Comma-separated list of UC function short names used by agents
+    default: "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details"
+
   # ---- Vector Search ----
   vs_endpoint_name:
     description: Vector Search endpoint name

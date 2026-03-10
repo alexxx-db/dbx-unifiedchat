@@ -41,6 +41,8 @@ _defaults = {
     "genie_space_ids": "01f106e1239d14b28d6ab46f9c15e540,01f106e121e7173d8cf84bb80e842d6c,01f106e120b718e084598e92dcf14d4e",
     "volume_name": "volume",
     "enriched_docs_table": "enriched_genie_docs",
+    "source_table": "enriched_genie_docs_chunks",
+    "uc_function_names": "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details",
     "llm_endpoint": "databricks-claude-sonnet-4-5",
     "llm_endpoint_clarification": "databricks-claude-haiku-4-5",
     "llm_endpoint_planning": "databricks-claude-sonnet-4-5",

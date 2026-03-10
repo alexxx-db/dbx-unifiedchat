@@ -31,6 +31,8 @@ resources:
               genie_space_ids: ${var.genie_space_ids}
               volume_name: ${var.volume_name}
               enriched_docs_table: ${var.enriched_docs_table}
+              source_table: ${var.source_table}
+              uc_function_names: ${var.uc_function_names}
               llm_endpoint: ${var.llm_endpoint}
               llm_endpoint_clarification: ${var.llm_endpoint_clarification}
               llm_endpoint_planning: ${var.llm_endpoint_planning}
@@ -70,6 +72,8 @@ resources:
               genie_space_ids: ${var.genie_space_ids}
               volume_name: ${var.volume_name}
               enriched_docs_table: ${var.enriched_docs_table}
+              source_table: ${var.source_table}
+              uc_function_names: ${var.uc_function_names}
               llm_endpoint: ${var.llm_endpoint}
               llm_endpoint_clarification: ${var.llm_endpoint_clarification}
               llm_endpoint_planning: ${var.llm_endpoint_planning}
@@ -106,6 +110,8 @@ resources:
               genie_space_ids: ${var.genie_space_ids}
               volume_name: ${var.volume_name}
               enriched_docs_table: ${var.enriched_docs_table}
+              source_table: ${var.source_table}
+              uc_function_names: ${var.uc_function_names}
               llm_endpoint: ${var.llm_endpoint}
               llm_endpoint_clarification: ${var.llm_endpoint_clarification}
               llm_endpoint_planning: ${var.llm_endpoint_planning}

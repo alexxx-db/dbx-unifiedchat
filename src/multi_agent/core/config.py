@@ -40,19 +40,28 @@ class UnityCatalogConfig:
     """Unity Catalog configuration."""
     catalog_name: str
     schema_name: str
+    uc_function_names: list[str]
     
     @classmethod
     def from_env(cls) -> 'UnityCatalogConfig':
         """Load configuration from environment variables."""
+        fn_str = os.getenv("UC_FUNCTION_NAMES", "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details")
+        fn_list = [f.strip() for f in fn_str.split(",") if f.strip()]
         return cls(
             catalog_name=os.getenv("CATALOG_NAME", "yyang"),
             schema_name=os.getenv("SCHEMA_NAME", "multi_agent_genie"),
+            uc_function_names=fn_list,
         )
     
     @property
     def full_schema_name(self) -> str:
         """Get fully qualified schema name."""
         return f"{self.catalog_name}.{self.schema_name}"
+
+    @property
+    def uc_function_names_fq(self) -> list[str]:
+        """Fully qualified UC function names."""
+        return [f"{self.full_schema_name}.{fn}" for fn in self.uc_function_names]
 
 
 @dataclass
@@ -109,6 +118,7 @@ class TableMetadataConfig:
     max_unique_values: int
     volume_name: str
     enriched_docs_table: str
+    source_table: str
     genie_space_ids: list[str]
     sql_warehouse_id: str
     
@@ -126,9 +136,11 @@ class TableMetadataConfig:
             max_unique_values=int(os.getenv("MAX_UNIQUE_VALUES", "50")),
             volume_name=os.getenv("VOLUME_NAME", "volume"),
             enriched_docs_table=os.getenv("ENRICHED_DOCS_TABLE", "enriched_genie_docs"),
+            source_table=os.getenv("SOURCE_TABLE", "enriched_genie_docs_chunks"),
             genie_space_ids=space_ids,
             sql_warehouse_id=sql_warehouse_id,
         )
+
 
 
 @dataclass
@@ -185,6 +197,21 @@ class AgentConfig:
     model_serving: ModelServingConfig
     lakebase: LakebaseConfig
     
+    @property
+    def enriched_docs_table_fq(self) -> str:
+        """Fully qualified enriched docs (pre-chunks) table name."""
+        return f"{self.unity_catalog.full_schema_name}.{self.table_metadata.enriched_docs_table}"
+
+    @property
+    def source_table_fq(self) -> str:
+        """Fully qualified source (chunks) table name."""
+        return f"{self.unity_catalog.full_schema_name}.{self.table_metadata.source_table}"
+
+    @property
+    def vs_index_fq(self) -> str:
+        """Fully qualified vector search index name."""
+        return f"{self.unity_catalog.full_schema_name}.{self.table_metadata.source_table}_vs_index"
+
     @classmethod
     def from_env(cls) -> 'AgentConfig':
         """Load all configuration from environment variables."""
@@ -263,6 +290,7 @@ class AgentConfig:
         print(f"  Catalog: {self.unity_catalog.catalog_name}")
         print(f"  Schema: {self.unity_catalog.schema_name}")
         print(f"  Full Schema: {self.unity_catalog.full_schema_name}")
+        print(f"  UC Functions: {', '.join(self.unity_catalog.uc_function_names)}")
         print(f"\nLLM Endpoints (Diversified by Agent):")
         print(f"  Default/Fallback: {self.llm.endpoint_name}")
         print(f"  Clarification Agent: {self.llm.clarification_endpoint}")
@@ -281,6 +309,10 @@ class AgentConfig:
         print(f"  Max Unique Values: {self.table_metadata.max_unique_values}")
         print(f"  Volume Name: {self.table_metadata.volume_name}")
         print(f"  Enriched Docs Table: {self.table_metadata.enriched_docs_table}")
+        print(f"  Source Table: {self.table_metadata.source_table}")
+        print(f"  Enriched Docs Table (FQ): {self.enriched_docs_table_fq}")
+        print(f"  Source Table (FQ): {self.source_table_fq}")
+        print(f"  VS Index (FQ): {self.vs_index_fq}")
         print(f"  SQL Warehouse ID: {self.table_metadata.sql_warehouse_id}")
         print(f"  Genie Space IDs: {len(self.table_metadata.genie_space_ids)} spaces")
         for i, sid in enumerate(self.table_metadata.genie_space_ids, 1):
@@ -336,6 +368,7 @@ def get_config(reload: bool = False) -> AgentConfig:
                 mapping = {
                     "catalog_name": "CATALOG_NAME",
                     "schema_name": "SCHEMA_NAME",
+                    "uc_function_names": "UC_FUNCTION_NAMES",
                     "llm_endpoint": "LLM_ENDPOINT",
                     "llm_endpoint_clarification": "LLM_ENDPOINT_CLARIFICATION",
                     "llm_endpoint_planning": "LLM_ENDPOINT_PLANNING",
@@ -354,6 +387,7 @@ def get_config(reload: bool = False) -> AgentConfig:
                     "sample_size": "SAMPLE_SIZE",
                     "max_unique_values": "MAX_UNIQUE_VALUES",
                     "enriched_docs_table": "ENRICHED_DOCS_TABLE",
+                    "source_table": "SOURCE_TABLE",
                     "volume_name": "VOLUME_NAME",
                     "model_name": "MODEL_NAME",
                     "endpoint_name": "ENDPOINT_NAME",
