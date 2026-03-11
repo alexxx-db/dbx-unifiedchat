@@ -54,56 +54,48 @@ import mlflow
 
 # COMMAND ----------
 
-# DBTITLE 1,Load Configuration from YAML
-"""
-Load configuration from YAML for testing.
+# DBTITLE 1,Load Configuration from DABs Variables
+# All parameters are injected by DABs job via base_parameters.
+# databricks.yml is the single source of truth — no separate config YAMLs.
+#
+# Flow: widgets → build_config_yaml() → temp YAML → get_config() → AgentConfig
+#
+# Defaults are empty sentinels. If run manually without DABs, the notebook
+# will fail at validation with a clear error rather than using stale values.
 
-config_file is injected by the DABs job via base_parameters (${var.config_file}).
-The default keeps the notebook runnable interactively without a job context.
-"""
+_WIDGET_KEYS = [
+    "catalog_name", "schema_name", "sql_warehouse_id", "genie_space_ids",
+    "volume_name", "enriched_docs_table", "source_table", "uc_function_names",
+    "llm_endpoint", "llm_endpoint_clarification", "llm_endpoint_planning",
+    "llm_endpoint_sql_synthesis_table", "llm_endpoint_sql_synthesis_genie",
+    "llm_endpoint_execution", "llm_endpoint_summarize",
+    "sample_size", "max_unique_values",
+    "vs_endpoint_name", "embedding_model",
+    "lakebase_instance_name", "lakebase_embedding_endpoint", "lakebase_embedding_dims",
+]
 
-# config_file widget: DABs passes dev_config.yaml (dev target) or prod_config.yaml (prod target)
-dbutils.widgets.text("config_file", "../dev_config.yaml")
-config_file = dbutils.widgets.get("config_file")
+for k in _WIDGET_KEYS:
+    dbutils.widgets.text(k, "")
 
-from notebook_utils import load_deployment_config
+widget_params = {k: dbutils.widgets.get(k) for k in _WIDGET_KEYS}
 
-config_dict = load_deployment_config(config_file)
+_empty = [k for k, v in widget_params.items() if not v.strip()]
+if _empty:
+    print(f"⚠️  {len(_empty)} widget(s) have no value (expected when run via DABs): {', '.join(_empty[:5])}{'...' if len(_empty) > 5 else ''}")
+    print("   If running manually, set values via notebook widgets or use DABs: databricks bundle run")
 
-# Extract key configuration values
-CATALOG = config_dict['CATALOG']
-SCHEMA = config_dict['SCHEMA']
-TABLE_NAME = config_dict['TABLE_NAME']
-VECTOR_SEARCH_INDEX = config_dict['VECTOR_SEARCH_INDEX']
+# Step 1: Generate temp YAML
+from notebook_utils import build_config_yaml
+config_yaml_path = build_config_yaml(widget_params)
 
-# LLM Endpoints
-LLM_ENDPOINT_CLARIFICATION = config_dict['LLM_ENDPOINT_CLARIFICATION']
-LLM_ENDPOINT_PLANNING = config_dict['LLM_ENDPOINT_PLANNING']
-LLM_ENDPOINT_SQL_SYNTHESIS_TABLE = config_dict['LLM_ENDPOINT_SQL_SYNTHESIS_TABLE']
-LLM_ENDPOINT_SQL_SYNTHESIS_GENIE = config_dict['LLM_ENDPOINT_SQL_SYNTHESIS_GENIE']
-LLM_ENDPOINT_EXECUTION = config_dict['LLM_ENDPOINT_EXECUTION']
-LLM_ENDPOINT_SUMMARIZE = config_dict['LLM_ENDPOINT_SUMMARIZE']
+# Step 2: CRITICAL — set env var BEFORE importing agent code.
+# responses_agent.py calls get_config() at module load time.
+os.environ["AGENT_CONFIG_FILE"] = config_yaml_path
 
-# Lakebase
-LAKEBASE_INSTANCE_NAME = config_dict['LAKEBASE_INSTANCE_NAME']
-EMBEDDING_ENDPOINT = config_dict['EMBEDDING_ENDPOINT']
-
-# SQL Warehouse
-SQL_WAREHOUSE_ID = config_dict['SQL_WAREHOUSE_ID']
-
-# Genie Spaces
-GENIE_SPACE_IDS = config_dict['GENIE_SPACE_IDS']
-
-print("="*80)
-print(f"CONFIGURATION LOADED FROM {config_file} via notebook_utils")
-print("="*80)
-print(f"Catalog: {CATALOG}")
-print(f"Schema: {SCHEMA}")
-print(f"Vector Search Index: {VECTOR_SEARCH_INDEX}")
-print(f"SQL Warehouse ID: {SQL_WAREHOUSE_ID}")
-print(f"Genie Spaces: {len(GENIE_SPACE_IDS)} spaces")
-print(f"Lakebase Instance: {LAKEBASE_INSTANCE_NAME}")
-print("="*80)
+# Step 3: Single config system
+from multi_agent.core.config import get_config
+cfg = get_config()
+cfg.print_summary()
 
 # COMMAND ----------
 
@@ -191,7 +183,7 @@ print("✅ DATABRICKS TESTING COMPLETE")
 print("="*80)
 print("\nWhat was tested:")
 print("✓ Imports from src/multi_agent/")
-print(f"✓ Configuration loading from {config_file}")
+print(f"✓ Configuration loading from databricks.yml (via DABs)")
 print("✓ Agent graph construction")
 print("✓ ResponsesAgent wrapper initialization")
 print("✓ Single query execution via predict_stream")

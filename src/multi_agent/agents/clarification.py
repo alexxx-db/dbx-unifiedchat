@@ -282,7 +282,7 @@ def unified_intent_context_clarification_node(
             if llm_endpoint is None:
                 llm_endpoint = config.llm.clarification_endpoint
             if table_name is None:
-                table_name = f"{config.unity_catalog.catalog_name}.{config.unity_catalog.schema_name}.enriched_genie_docs_chunks"
+                table_name = config.source_table_fq
         except ImportError:
             raise ValueError(
                 "llm_endpoint and table_name must be provided if config module is not available"

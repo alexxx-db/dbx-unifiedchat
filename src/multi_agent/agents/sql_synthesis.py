@@ -273,8 +273,7 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
         writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": "🧠 Starting SQL synthesis using UC function tools..."})
         writer({"type": "agent_step", "agent": "sql_synthesis_table", "step": "analyzing_plan", "content": f"📋 Analyzing execution plan for {len(relevant_space_ids)} relevant spaces"})
         
-        # Emit tool preparation event
-        uc_functions = ["get_space_summary", "get_table_overview", "get_column_detail", "get_space_instructions", "get_space_details"]
+        uc_functions = config.unity_catalog.uc_function_names
         writer({"type": "tools_available", "agent": "sql_synthesis_table", "tools": uc_functions, "content": f"🔧 Available UC functions: {', '.join(uc_functions)}"})
         
         # Emit query strategy
