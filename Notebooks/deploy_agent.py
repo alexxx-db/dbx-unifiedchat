@@ -65,7 +65,7 @@ if _empty:
 
 # Step 1: Generate temp YAML (needed for mlflow.pyfunc.log_model model_config)
 from notebook_utils import build_config_yaml
-config_yaml_path = build_config_yaml(widget_params)
+config_yaml_path = build_config_yaml(widget_params, path="./agent_config.yaml")
 
 # Step 2: Set env var BEFORE any src/ imports (responses_agent.py calls get_config() at load time)
 os.environ["AGENT_CONFIG_FILE"] = config_yaml_path

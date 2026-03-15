@@ -86,7 +86,8 @@ if _empty:
 
 # Step 1: Generate temp YAML
 from notebook_utils import build_config_yaml
-config_yaml_path = build_config_yaml(widget_params)
+config_yaml_path = build_config_yaml(widget_params, path="./agent_config.yaml")
+
 
 # Step 2: CRITICAL — set env var BEFORE importing agent code.
 # responses_agent.py calls get_config() at module load time.
