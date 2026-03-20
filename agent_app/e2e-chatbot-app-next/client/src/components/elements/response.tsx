@@ -33,23 +33,24 @@ export const Response = memo(
   (props: ResponseProps) => {
     const processed = useMemo(() => {
       if (typeof props.children !== 'string') return props.children;
-      const text = props.children;
+      let text = props.children;
       const closeTag = '</details>';
       const lastClose = text.lastIndexOf(closeTag);
-      if (lastClose === -1) return text;
 
-      const afterDetails = text
-        .substring(lastClose + closeTag.length)
-        .trim();
-      if (afterDetails.length > 0) {
-        // Collapse the block and add a horizontal rule separator
-        return text
-          .replace(/<details open>/g, '<details>')
-          .replace(
-            new RegExp(`${closeTag}(?!.*${closeTag})`, 's'),
-            `${closeTag}\n\n---\n\n`,
-          );
+      if (lastClose !== -1) {
+        const afterDetails = text
+          .substring(lastClose + closeTag.length)
+          .trim();
+        if (afterDetails.length > 0) {
+          text = text
+            .replace(/<details open>/g, '<details>')
+            .replace(
+              new RegExp(`${closeTag}(?!.*${closeTag})`, 's'),
+              `${closeTag}\n\n---\n\n`,
+            );
+        }
       }
+
       return text;
     }, [props.children]);
 

@@ -167,7 +167,7 @@ Data preview:
 1. Start with a descriptive ## title for the analysis
 2. Write a concise narrative answering the user's question with formatted numbers ($X,XXX,XXX.XX for currency, commas for counts)
 3. Present results in a well-formatted markdown table (include ALL data rows if <=30, otherwise top 20)
-4. If columns contain raw codes (ICD, CPT, etc.) without descriptions, add a description column with human-readable meanings
+4. **IMPORTANT — Code annotation:** If ANY column contains coded identifiers rather than plain text (e.g., NDC drug codes, ICD/CPT/HCPCS medical codes, NPI numbers, taxonomy codes, NAICS/SIC industry codes, MCC merchant codes, CUSIP/ISIN/ticker symbols, FIPS/ZIP codes, currency codes, tax form codes, GL account codes, or ANY other standardized code system), you MUST add a "Description" column with the human-readable name/meaning for each code. Use your domain knowledge to decode every code. Never present a table with coded columns that lack descriptions.
 5. Add a ### Key Insights section with 2-4 bullet points
 
 **DO NOT include:**

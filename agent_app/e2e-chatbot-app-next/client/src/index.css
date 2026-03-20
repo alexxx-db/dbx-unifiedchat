@@ -298,3 +298,19 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* Processing steps: grey out past steps, highlight the current (last) one.
+   Uses both class selector (.ps) and structural fallback (details > div)
+   in case the markdown renderer strips class attributes. */
+details > .ps,
+details > summary ~ div {
+  opacity: 0.4;
+  font-size: 0.9em;
+  line-height: 1.6;
+  transition: opacity 0.15s ease;
+}
+details > .ps:last-of-type,
+details > summary ~ div:last-of-type {
+  opacity: 1;
+  font-size: 0.95em;
+}

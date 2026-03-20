@@ -335,12 +335,15 @@ Guidelines:
             progress_started = True
             events.append(ResponsesAgentStreamEvent(
                 **_create_text_delta(
-                    delta="<details open>\n<summary>Processing Steps</summary>\n\n",
+                    delta='<details open>\n<summary>Processing Steps</summary>\n',
                     id=progress_item_id,
                 ),
             ))
         events.append(ResponsesAgentStreamEvent(
-            **_create_text_delta(delta=f"- {step_text}\n", id=progress_item_id),
+            **_create_text_delta(
+                delta=f'<div class="ps">{step_text}</div>\n',
+                id=progress_item_id,
+            ),
         ))
         return events
 
