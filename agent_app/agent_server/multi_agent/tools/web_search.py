@@ -1,31 +1,78 @@
 """
-Web search utility for code enrichment.
+Code enrichment utility.
 
-Provides DuckDuckGo-based web search, LLM-powered code column detection,
-and end-to-end enrichment that adds human-readable descriptions to coded
-identifiers (NDC, ICD-10, CPT, tickers, FIPS, etc.) in query result tables.
+Provides LLM-powered code column detection and batch description lookup.
+A single LLM call annotates all unique coded values (NDC, ICD-10, CPT,
+NAICS, tickers, etc.) at once — faster and more reliable than web scraping.
 """
 
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
-try:
-    from ddgs import DDGS  # new package name
-except ImportError:
-    from duckduckgo_search import DDGS  # type: ignore[no-redef]
+
+_MAX_CODES_TO_LOOKUP = 30
+
+import ssl
+import urllib.request
+
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
-_SEARCH_TIMEOUT = 5
-_ENRICHMENT_TIMEOUT = 15
-_MAX_CODES_TO_LOOKUP = 20
-_MAX_SEARCH_WORKERS = 5
+def _http_get_json(url: str, timeout: int = 5) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX) as resp:
+        return json.loads(resp.read())
+
+
+def _api_lookup_ndc(value: str) -> str:
+    """RxNorm/NLM API fallback for NDC codes."""
+    try:
+        d = _http_get_json(f"https://rxnav.nlm.nih.gov/REST/ndcstatus.json?ndc={value}")
+        name = d.get("ndcStatus", {}).get("conceptName", "")
+        if name:
+            return name.title()
+    except Exception:
+        pass
+    return ""
+
+
+def _api_lookup_icd(value: str) -> str:
+    """NLM Clinical Tables API fallback for ICD-10 codes."""
+    try:
+        d = _http_get_json(
+            f"https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search"
+            f"?sf=code,name&terms={value}&maxList=1"
+        )
+        if d and len(d) >= 4 and d[3]:
+            return d[3][0][1]
+    except Exception:
+        pass
+    return ""
+
+
+def _api_lookup_cpt(value: str) -> str:
+    """NLM HCPCS API fallback for CPT/HCPCS codes."""
+    try:
+        d = _http_get_json(
+            f"https://clinicaltables.nlm.nih.gov/api/hcpcs/v3/search"
+            f"?sf=code,display&terms={value}&maxList=1"
+        )
+        if d and len(d) >= 4 and d[3]:
+            return d[3][0][1]
+    except Exception:
+        pass
+    return ""
 
 
 def web_search(query: str, max_results: int = 3) -> str:
-    """Run a DuckDuckGo text search and return formatted snippets."""
+    """Kept for backward compatibility. Performs a DuckDuckGo text search."""
     try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS  # type: ignore[no-redef]
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         if not results:
@@ -46,7 +93,7 @@ def detect_code_columns(
     sample_data: list[dict],
     llm: Any,
 ) -> list[dict]:
-    """Use a cheap LLM to identify which columns contain coded identifiers.
+    """Use an LLM to identify which columns contain coded identifiers.
 
     Returns a list like [{"column": "ndc", "code_type": "NDC"}].
     """
@@ -84,14 +131,6 @@ def detect_code_columns(
         return []
 
 
-import ssl
-import urllib.request
-
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
-
-
 def _sanitize_for_markdown_table(text: str) -> str:
     """Escape characters that break markdown table cells."""
     text = re.sub(r"<[^>]+>", "", text)
@@ -100,95 +139,48 @@ def _sanitize_for_markdown_table(text: str) -> str:
     return text.strip()
 
 
-def _http_get_json(url: str, timeout: int = 5) -> dict:
-    """Simple HTTP GET returning parsed JSON."""
-    with urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX) as resp:
-        return json.loads(resp.read())
+def _lookup_codes_via_llm(
+    code_type: str,
+    values: list[str],
+    llm: Any,
+) -> dict[str, str]:
+    """Single batch LLM call to look up descriptions for all unique code values.
 
+    Returns a dict mapping each code value to its description string.
+    Unknown codes are marked "(unknown by LLM)".
+    """
+    if not values:
+        return {}
 
-def _lookup_ndc(value: str) -> str:
-    """Look up an NDC drug code via the RxNorm/NLM API."""
+    values_json = json.dumps(values)
+    prompt = (
+        f"You are a knowledgeable data analyst and domain expert.\n\n"
+        f"Look up the human-readable description for each of the following "
+        f"**{code_type}** code values.\n\n"
+        f"Rules:\n"
+        f"- Provide a concise description (under 80 characters) for each code you know "
+        f"with HIGH confidence (e.g., drug name + strength + form for NDC; diagnosis "
+        f"name for ICD-10; procedure name for CPT; company name for ticker; etc.).\n"
+        f"- If you are NOT sure, or the code is not in your training data, "
+        f'mark it exactly as: (unknown by LLM)\n'
+        f"- NEVER guess or hallucinate. Accuracy is critical — an honest "
+        f'"(unknown by LLM)" is far better than a wrong description.\n'
+        f"- Do not include the code itself in the description.\n\n"
+        f"Code values to look up ({code_type}):\n{values_json}\n\n"
+        f"Return ONLY a JSON object mapping each code to its description:\n"
+        f'{{"code1": "description or (unknown by LLM)", "code2": "...", ...}}\n'
+        f"Output ONLY the JSON object, nothing else."
+    )
+
     try:
-        d = _http_get_json(
-            f"https://rxnav.nlm.nih.gov/REST/ndcstatus.json?ndc={value}"
-        )
-        name = d.get("ndcStatus", {}).get("conceptName", "")
-        if name:
-            return name.title()
-    except Exception:
-        pass
-    return ""
-
-
-def _lookup_icd(value: str) -> str:
-    """Look up an ICD-10 diagnosis code via the NLM Clinical Tables API."""
-    try:
-        d = _http_get_json(
-            f"https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search"
-            f"?sf=code,name&terms={value}&maxList=1"
-        )
-        if d and len(d) >= 4 and d[3]:
-            return d[3][0][1]  # [[code, description], ...]
-    except Exception:
-        pass
-    return ""
-
-
-def _lookup_cpt(value: str) -> str:
-    """Look up a CPT/HCPCS procedure code via the NLM Clinical Tables API."""
-    try:
-        d = _http_get_json(
-            f"https://clinicaltables.nlm.nih.gov/api/hcpcs/v3/search"
-            f"?sf=code,display&terms={value}&maxList=1"
-        )
-        if d and len(d) >= 4 and d[3]:
-            return d[3][0][1]
-    except Exception:
-        pass
-    return ""
-
-
-def _lookup_via_ddg(code_type: str, value: str) -> str:
-    """Fallback: DuckDuckGo search. Returns a title-first snippet."""
-    try:
-        query = f"{value} {code_type} meaning"
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=3))
-        skip_phrases = [
-            "lookup tool", "look up tool", "code lookup", "search by",
-            "code database", "lookup service", "find code",
-        ]
-        for result in results:
-            title = _sanitize_for_markdown_table(result.get("title", ""))
-            body = _sanitize_for_markdown_table(result.get("body", ""))
-            combined = (title + " " + body).lower()
-            if any(p in combined for p in skip_phrases):
-                continue
-            if title and (value.lower() in title.lower() or len(title) < 120):
-                return title
-            if body:
-                return body[:120] + ("..." if len(body) > 120 else "")
-    except Exception:
-        pass
-    return ""
-
-
-def _lookup_code(code_type: str, value: str) -> tuple[str, str]:
-    """Dispatch to the right API based on code type, fall back to DuckDuckGo."""
-    ct = code_type.upper()
-    desc = ""
-
-    if "NDC" in ct:
-        desc = _lookup_ndc(value)
-    elif "ICD" in ct:
-        desc = _lookup_icd(value)
-    elif "CPT" in ct or "HCPCS" in ct:
-        desc = _lookup_cpt(value)
-
-    if not desc:
-        desc = _lookup_via_ddg(code_type, value)
-
-    return (value, _sanitize_for_markdown_table(desc) if desc else "—")
+        response = llm.invoke(prompt)
+        text = response.content.strip()
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except Exception as e:
+        print(f"⚠ LLM code lookup failed: {e}")
+    return {v: "(unknown by LLM)" for v in values}
 
 
 def enrich_codes(
@@ -197,7 +189,7 @@ def enrich_codes(
     llm: Any,
     writer: Optional[Any] = None,
 ) -> Optional[str]:
-    """Detect code columns, web-search descriptions, and build an enriched markdown table.
+    """Detect coded columns then use a single batch LLM call to enrich descriptions.
 
     Returns the enriched markdown table string, or None if nothing to enrich.
     """
@@ -215,11 +207,6 @@ def enrich_codes(
 
     code_type_map = {c["column"]: c["code_type"] for c in code_cols}
     print(f"🔍 Detected coded columns: {col_names}")
-    if writer:
-        writer({
-            "type": "code_enrichment_progress",
-            "content": f"Detected coded columns: {', '.join(col_names)}",
-        })
 
     lookups: dict[str, dict[str, str]] = {}
     for col in col_names:
@@ -228,26 +215,33 @@ def enrich_codes(
         ))[:_MAX_CODES_TO_LOOKUP]
 
         code_type = code_type_map.get(col, "code")
-        if writer:
-            writer({
-                "type": "code_enrichment_progress",
-                "content": f"Looking up {len(unique_vals)} {code_type} descriptions...",
-            })
+        print(f"🤖 LLM lookup: {len(unique_vals)} {code_type} values in column '{col}'")
 
-        col_lookups: dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=_MAX_SEARCH_WORKERS) as pool:
-            futures = {
-                pool.submit(_lookup_code, code_type, val): val
-                for val in unique_vals
-            }
-            for future in as_completed(futures, timeout=_ENRICHMENT_TIMEOUT):
-                try:
-                    val, desc = future.result(timeout=_SEARCH_TIMEOUT)
-                    col_lookups[val] = desc
-                except Exception:
-                    col_lookups[futures[future]] = "—"
+        raw_lookups = _lookup_codes_via_llm(code_type, unique_vals, llm)
 
-        lookups[col] = col_lookups
+        # For any "(unknown by LLM)" entries, try a specialized free API based on code type
+        ct_upper = code_type.upper()
+        api_fn = None
+        if "NDC" in ct_upper:
+            api_fn = _api_lookup_ndc
+        elif "ICD" in ct_upper:
+            api_fn = _api_lookup_icd
+        elif "CPT" in ct_upper or "HCPCS" in ct_upper:
+            api_fn = _api_lookup_cpt
+
+        if api_fn:
+            unknown_vals = [v for v, d in raw_lookups.items() if "(unknown by LLM)" in d]
+            if unknown_vals:
+                print(f"  🔍 API fallback for {len(unknown_vals)} unknown {code_type} codes")
+                for val in unknown_vals:
+                    api_desc = api_fn(val)
+                    if api_desc:
+                        raw_lookups[val] = api_desc
+
+        lookups[col] = {
+            k: _sanitize_for_markdown_table(v)
+            for k, v in raw_lookups.items()
+        }
 
     enriched_columns = []
     for col in columns:
@@ -265,7 +259,7 @@ def enrich_codes(
             val = _sanitize_for_markdown_table(str(row.get(col, "")))
             cells.append(val)
             if col in lookups:
-                desc = lookups[col].get(val.replace("\\|", "|"), "—")
+                desc = lookups[col].get(val.replace("\\|", "|"), "(unknown by LLM)")
                 cells.append(desc)
         rows_md.append("| " + " | ".join(cells) + " |")
 

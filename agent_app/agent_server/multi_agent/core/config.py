@@ -121,7 +121,7 @@ class LLMConfig:
             execution_endpoint=os.getenv("LLM_ENDPOINT_EXECUTION", d),
             summarize_endpoint=os.getenv("LLM_ENDPOINT_SUMMARIZE", d),
             chart_endpoint=os.getenv("LLM_ENDPOINT_CHART", d),
-            detect_code_lookup_endpoint=os.getenv("LLM_ENDPOINT_DETECT_CODE_LOOKUP", "databricks-claude-haiku-4-5"),
+            detect_code_lookup_endpoint=os.getenv("LLM_ENDPOINT_DETECT_CODE_LOOKUP", "databricks-gpt-5-4-mini"),
         )
 
     @classmethod
@@ -136,7 +136,7 @@ class LLMConfig:
             execution_endpoint=_mc_get(mc, "llm_endpoint_execution", d),
             summarize_endpoint=_mc_get(mc, "llm_endpoint_summarize", d),
             chart_endpoint=_mc_get(mc, "llm_endpoint_chart", d),
-            detect_code_lookup_endpoint=_mc_get(mc, "llm_endpoint_detect_code_lookup", "databricks-claude-haiku-4-5"),
+            detect_code_lookup_endpoint=_mc_get(mc, "llm_endpoint_detect_code_lookup", "databricks-gpt-5-4-mini"),
         )
 
 

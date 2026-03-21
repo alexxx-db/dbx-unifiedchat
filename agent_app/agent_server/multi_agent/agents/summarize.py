@@ -90,11 +90,11 @@ def get_cached_summarize_agent():
         try:
             from databricks_langchain import ChatDatabricks
             from .summarize_agent import ResultSummarizeAgent
-            llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=5000)
+            llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=10000)
             get_cached_summarize_agent._cached_agent = ResultSummarizeAgent(llm)
         except ImportError:
             # Fallback: Create a simple wrapper
-            llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=5000)
+            llm = ChatDatabricks(endpoint=llm_endpoint, temperature=0.1, max_tokens=10000)
             get_cached_summarize_agent._cached_agent = _SimpleSummarizeAgent(llm)
         except Exception as e:
              raise ImportError(
@@ -378,7 +378,7 @@ def summarize_node(state: AgentState) -> dict:
             enrich_llm = ChatDatabricks(
                 endpoint=config.llm.detect_code_lookup_endpoint,
                 temperature=0,
-                max_tokens=500,
+                max_tokens=1500,
             )
             enrichment_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             enrichment_future = enrichment_pool.submit(
