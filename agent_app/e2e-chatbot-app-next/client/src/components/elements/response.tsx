@@ -12,10 +12,116 @@ import {
 } from 'react';
 import { DatabricksMessageCitationStreamdownIntegration } from '../databricks-message-citation';
 import { Streamdown } from 'streamdown';
+import { PaginatedTable } from './paginated-table';
+import { TabWidget } from './tab-widget';
 
 const InteractiveChart = lazy(() =>
   import('./interactive-chart').then((m) => ({ default: m.InteractiveChart })),
 );
+
+function encodeTabsToBase64(tabs: Array<{ title: string; content: string }>): string {
+  const json = JSON.stringify(tabs);
+  return btoa(
+    encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+      String.fromCharCode(parseInt(p1, 16)),
+    ),
+  );
+}
+
+function decodeTabsFromBase64(b64: string): Array<{ title: string; content: string }> | null {
+  try {
+    const json = decodeURIComponent(
+      atob(b64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+type TableDownloadPayload = {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  totalRows?: number;
+  filename?: string;
+  title?: string;
+};
+
+function decodeTableFromBase64(b64: string): TableDownloadPayload | null {
+  try {
+    const json = decodeURIComponent(
+      atob(b64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    const payload = JSON.parse(json) as TableDownloadPayload;
+    if (!payload || !Array.isArray(payload.columns) || !Array.isArray(payload.rows)) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function parseAccordionGroup(text: string): {
+  before: string;
+  tabs: Array<{ title: string; content: string }>;
+  after: string;
+} | null {
+  const marker = '<div class="accordion-group">';
+  const groupStart = text.indexOf(marker);
+  if (groupStart === -1) return null;
+
+  const inner = text.substring(groupStart + marker.length);
+
+  const detailsOpens = inner.match(/<details[\s>]/g);
+  if (!detailsOpens || detailsOpens.length === 0) return null;
+
+  let searchPos = 0;
+  for (let i = 0; i < detailsOpens.length; i++) {
+    const idx = inner.indexOf('</details>', searchPos);
+    if (idx === -1) return null;
+    searchPos = idx + '</details>'.length;
+  }
+
+  const remaining = inner.substring(searchPos);
+  const closingDiv = remaining.indexOf('</div>');
+  if (closingDiv === -1) return null;
+
+  const groupEnd =
+    groupStart + marker.length + searchPos + closingDiv + '</div>'.length;
+  const before = text.substring(0, groupStart);
+  const after = text.substring(groupEnd);
+
+  const tabs: Array<{ title: string; content: string }> = [];
+  const detailsRe =
+    /<details[^>]*>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/g;
+  let m;
+  while ((m = detailsRe.exec(inner)) !== null) {
+    const title = m[1].trim();
+    let content = m[2].trim();
+
+    const wrapperTag = '<div class="accordion-content">';
+    const wrapIdx = content.indexOf(wrapperTag);
+    if (wrapIdx !== -1) {
+      content = content.substring(wrapIdx + wrapperTag.length);
+      const lastDiv = content.lastIndexOf('</div>');
+      if (lastDiv !== -1) {
+        content = content.substring(0, lastDiv);
+      }
+    }
+    content = content.trim();
+    tabs.push({ title, content });
+  }
+
+  if (tabs.length === 0) return null;
+  return { before, tabs, after };
+}
 
 function SqlCodeBlock({ sql, filename, b64 }: { sql: string; filename: string; b64: string }) {
   const [copied, setCopied] = useState(false);
@@ -93,8 +199,9 @@ function JsonCodeBlock({ json, filename, b64 }: { json: string; filename: string
   );
 }
 
-function EChartsCodeBlock(props: { className?: string; children?: string }) {
-  const { className, children } = props;
+function EChartsCodeBlock(props: Record<string, unknown>) {
+  const { className } = props as { className?: string };
+  const children = typeof props.children === 'string' ? props.children : undefined;
 
   if (className === 'language-echarts-chart' && children) {
     try {
@@ -108,6 +215,36 @@ function EChartsCodeBlock(props: { className?: string; children?: string }) {
       );
     } catch {
       // fall through to default code block
+    }
+  }
+
+  if (className?.startsWith('language-accordion-tabs:')) {
+    const b64 = className.slice('language-accordion-tabs:'.length);
+    const tabs = decodeTabsFromBase64(b64);
+    if (tabs && tabs.length > 0) {
+      return <TabWidget tabs={tabs} components={streamdownComponents} />;
+    }
+  }
+
+  if (className?.startsWith('language-table-download:')) {
+    const meta = className.slice('language-table-download:'.length);
+    const colonIdx = meta.indexOf(':');
+    if (colonIdx !== -1) {
+      const b64 = meta.substring(colonIdx + 1);
+      const payload = decodeTableFromBase64(b64);
+      if (payload) {
+        return (
+          <PaginatedTable
+            tableData={{
+              columns: payload.columns,
+              rows: payload.rows,
+              totalRows: payload.totalRows,
+              filename: payload.filename,
+              title: payload.title,
+            }}
+          />
+        );
+      }
     }
   }
 
@@ -198,6 +335,12 @@ class ChartErrorBoundary extends Component<
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const streamdownComponents: Record<string, any> = {
+  a: DatabricksMessageCitationStreamdownIntegration,
+  code: EChartsCodeBlock,
+};
+
 type ResponseProps = ComponentProps<typeof Streamdown>;
 
 export const Response = memo(
@@ -211,8 +354,6 @@ export const Response = memo(
         let text = props.children;
 
         // Auto-collapse the Processing Steps <details open> when summary content follows.
-        // Use indexOf (first </details>) — the Processing Steps block — not lastIndexOf
-        // which would find the SQL <details> block at the end (nothing follows it).
         const processingStepsStart = text.indexOf('<summary>Processing Steps</summary>');
         if (processingStepsStart !== -1) {
           const closeTag = '</details>';
@@ -230,6 +371,19 @@ export const Response = memo(
           }
         }
 
+        // Transform accordion-group into a tab widget code fence.
+        // Falls through gracefully during streaming (returns null if incomplete).
+        const accordionResult = parseAccordionGroup(text);
+        if (accordionResult) {
+          const encoded = encodeTabsToBase64(accordionResult.tabs);
+          text =
+            accordionResult.before +
+            '\n\n```accordion-tabs:' +
+            encoded +
+            '\ntabs\n```\n\n' +
+            accordionResult.after;
+        }
+
         return text;
       } catch (e) {
         console.error('Response processing error:', e);
@@ -240,10 +394,7 @@ export const Response = memo(
     return (
       <StreamdownErrorBoundary fallbackText={raw}>
         <Streamdown
-          components={{
-            a: DatabricksMessageCitationStreamdownIntegration,
-            code: EChartsCodeBlock,
-          }}
+          components={streamdownComponents}
           className="flex flex-col gap-4"
           {...props}
           children={processed}

@@ -409,6 +409,8 @@ def summarize_node(state: AgentState) -> dict:
     if "original_query" not in context:
         context["original_query"] = state.get("original_query", "N/A")
 
+    MAX_PREVIEW_ROWS = 200
+
     writer({
         "type": "summarize_step",
         "content": f"SUMMARIZE: Streaming summary (model: {config.llm.summarize_endpoint})...",
@@ -445,11 +447,39 @@ def summarize_node(state: AgentState) -> dict:
             except Exception as e:
                 print(f"⚠ Chart generation failed for result {idx}: {e}")
 
+    # --- 3. Downloadable paginated tables (rendered after charts) ---
+    import base64
+    labels = state.get("sql_query_labels", [])
+    for idx, result_item in enumerate(execution_results):
+        if not result_item or not result_item.get("success"):
+            continue
+        columns = result_item.get("columns", [])
+        data = result_item.get("result", [])
+        if not columns or not data:
+            continue
+
+        table_payload = {
+            "columns": columns,
+            "rows": data[:MAX_PREVIEW_ROWS],
+            "totalRows": result_item.get("row_count", len(data)),
+            "filename": f"results_{idx + 1}.csv" if len(execution_results) > 1 else "results.csv",
+            "title": labels[idx] if idx < len(labels) and labels[idx] else None,
+        }
+        table_json = _json.dumps(table_payload, default=str)
+        table_b64 = base64.b64encode(table_json.encode()).decode()
+        table_filename = table_payload["filename"]
+        table_block = (
+            f"\n\n```table-download:{table_filename}:{table_b64}\n"
+            f"{table_json}\n"
+            "```\n"
+        )
+        summary += table_block
+        writer({"type": "text_delta", "content": table_block})
+
     # --- 3. SQL download (collapsible, streamed as delta) ---
     sql_queries = state.get("sql_queries", [])
     if not sql_queries and state.get("sql_query"):
         sql_queries = [state["sql_query"]]
-    labels = state.get("sql_query_labels", [])
 
     has_accordion = False
     if sql_queries or explanation or plan or enrichment_future:
