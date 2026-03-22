@@ -457,6 +457,22 @@ def summarize_node(state: AgentState) -> dict:
         summary += sql_block
         writer({"type": "text_delta", "content": sql_block})
 
+    # --- 3b. SQL Explanation (collapsible, streamed as delta) ---
+    explanation = state.get("sql_synthesis_explanation", "")
+    if explanation:
+        from .summarize_agent import ResultSummarizeAgent
+        explanation_block = ResultSummarizeAgent.format_sql_explanation(explanation, labels)
+        summary += explanation_block
+        writer({"type": "text_delta", "content": explanation_block})
+
+    # --- 3c. Plan Executed (collapsible, streamed as delta) ---
+    plan = state.get("plan")
+    if plan:
+        from .summarize_agent import ResultSummarizeAgent
+        plan_block = ResultSummarizeAgent.format_plan_executed(plan)
+        summary += plan_block
+        writer({"type": "text_delta", "content": plan_block})
+
     # --- 4. Collect code enrichment result (likely already done by now) ---
     if enrichment_future:
         try:

@@ -90,7 +90,7 @@ class ResultSummarizeAgent:
             return ""
         import base64
 
-        parts: list[str] = ["\n\n---\n\n<details><summary>Show SQL</summary>\n"]
+        parts: list[str] = ['\n\n---\n\n<details name="sql-accordion"><summary>Show SQL</summary>\n']
         for idx, sql in enumerate(sql_queries):
             label = (labels[idx] if labels and idx < len(labels) and labels[idx] else "")
             fname = f"query{'_' + str(idx + 1) if len(sql_queries) > 1 else ''}.sql"
@@ -102,7 +102,38 @@ class ResultSummarizeAgent:
                          f"```sql-download:{meta}\n{sql}\n```\n")
         parts.append("\n</details>\n")
         return "".join(parts)
-    
+
+    @staticmethod
+    def format_sql_explanation(explanation: str, labels: List[str] | None = None) -> str:
+        """Collapsible SQL explanation section with query labels for easy tracking."""
+        if not explanation:
+            return ""
+        parts: list[str] = ['\n<details name="sql-accordion"><summary>SQL Explanation</summary>\n\n']
+        if labels:
+            for idx, label in enumerate(labels):
+                if label:
+                    parts.append(f"**{idx + 1}. {label}**\n\n")
+            parts.append("---\n\n")
+        parts.append(explanation)
+        parts.append("\n\n</details>\n")
+        return "".join(parts)
+
+    @staticmethod
+    def format_plan_executed(plan: dict) -> str:
+        """Collapsible plan section with JSON code block (copy + download)."""
+        if not plan:
+            return ""
+        import base64
+
+        plan_json = ResultSummarizeAgent._safe_json_dumps(plan, indent=2)
+        encoded = base64.b64encode(plan_json.encode()).decode()
+        meta = f"plan.json:{encoded}"
+        return (
+            '\n<details name="sql-accordion"><summary>Plan Executed</summary>\n\n'
+            f"```json-download:{meta}\n{plan_json}\n```\n"
+            "\n</details>\n"
+        )
+
     def _build_summary_prompt(self, state: AgentState) -> str:
         """Build a prompt that produces a clean narrative summary.
 
