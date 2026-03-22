@@ -456,24 +456,63 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
         # Inject retry / sequential context into the plan if looping
         loop_prefix = _build_loop_prompt_prefix(state)
         if loop_prefix:
-            print(f"Loop reason: {state.get('loop_reason')} — injecting context into plan")
+            loop_reason = state.get("loop_reason")
+            print(f"Loop reason: {loop_reason} — injecting context into plan")
             plan = dict(plan)
             original_query = plan.get("original_query", "")
-            plan["original_query"] = f"{loop_prefix}\n\nOriginal question: {original_query}"
-            writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"Retry/sequential context injected (loop_reason={state.get('loop_reason')})"})
+
+            room_info = "\n".join(
+                f"  - Genie room '{s.get('space_title', 'unknown')}' (ID: {s.get('space_id')})"
+                for s in relevant_spaces
+            )
+
+            if loop_reason == "sequential_next":
+                # Null out the stale full-plan so the LLM doesn't re-invoke
+                # parallel with all original questions. The sub-question texts in
+                # genie_route_plan may not match sub_questions (different phrasing),
+                # so index-based trimming is unreliable -- just disable it.
+                plan["genie_route_plan"] = None
+                print("  Nulled genie_route_plan for sequential step — LLM will use individual tools")
+
+                genie_guidance = (
+                    f"\n\nGENIE ROUTE GUIDANCE (Sequential Mode):\n"
+                    f"Available Genie rooms:\n{room_info}\n"
+                    f"- Do NOT call invoke_parallel_genie_agents. The original plan is stale.\n"
+                    f"- Use an INDIVIDUAL Genie agent tool for this single adapted query.\n"
+                    f"- Choose the room most relevant to the adapted question content.\n"
+                    f"  The adapted question may need a DIFFERENT room than originally assigned.\n"
+                    f"- You MUST produce only ONE SQL query for this step."
+                )
+            elif loop_reason == "retry":
+                genie_guidance = (
+                    f"\n\nGENIE ROUTE GUIDANCE (Retry Mode):\n"
+                    f"Available Genie rooms:\n{room_info}\n"
+                    f"- Retry only the FAILED query.\n"
+                    f"- Try rephrasing the question for the same room, or pick a different room.\n"
+                    f"- Use individual Genie agent tools for precise control."
+                )
+            else:
+                genie_guidance = ""
+
+            plan["original_query"] = f"{loop_prefix}{genie_guidance}\n\nOriginal question: {original_query}"
+            writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"Retry/sequential context injected (loop_reason={loop_reason})"})
         
-        print(f"Querying {len(genie_route_plan)} Genie agents...")
-        
-        for idx, (space_id, query) in enumerate(genie_route_plan.items(), 1):
-            space_title = next((s.get("space_title", space_id) for s in relevant_spaces if s.get("space_id") == space_id), space_id)
-            writer({
-                "type": "genie_agent_call", 
-                "agent": "sql_synthesis_genie",
-                "space_id": space_id, 
-                "space_title": space_title,
-                "query": query,
-                "content": f"[{idx}/{len(genie_route_plan)}] Calling Genie agent '{space_title}'"
-            })
+        active_grp = plan.get("genie_route_plan") or {}
+        if active_grp:
+            print(f"Querying {len(active_grp)} Genie agents...")
+            for idx, (space_id, query) in enumerate(active_grp.items(), 1):
+                space_title = next((s.get("space_title", space_id) for s in relevant_spaces if s.get("space_id") == space_id), space_id)
+                writer({
+                    "type": "genie_agent_call",
+                    "agent": "sql_synthesis_genie",
+                    "space_id": space_id,
+                    "space_title": space_title,
+                    "query": query,
+                    "content": f"[{idx}/{len(active_grp)}] Calling Genie agent '{space_title}'"
+                })
+        else:
+            print("Sequential step — LLM will pick a Genie room via individual tools")
+            writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": "Sequential step — agent will select the appropriate Genie room"})
         
         result = sql_agent(plan, writer=writer)
         
