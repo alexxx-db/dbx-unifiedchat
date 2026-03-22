@@ -1,8 +1,9 @@
 'use client';
 
-import { memo, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import type { ComponentType } from 'react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
 
 type Tab = { title: string; content: string };
 
@@ -48,6 +49,16 @@ function ChevronUp() {
 export const TabWidget = memo(function TabWidget({ tabs, components }: TabWidgetProps) {
   const [expanded, setExpanded] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const activeTab = tabs[activeIdx];
+
+  const handleCopy = useCallback(async () => {
+    if (!activeTab?.content) return;
+    await navigator.clipboard.writeText(activeTab.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [activeTab]);
 
   if (tabs.length === 0) return null;
 
@@ -88,8 +99,19 @@ export const TabWidget = memo(function TabWidget({ tabs, components }: TabWidget
         ))}
         <button
           type="button"
-          onClick={() => setExpanded(false)}
+          onClick={handleCopy}
           className="ml-auto shrink-0 px-3 py-2.5 text-zinc-500 transition-colors cursor-pointer hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+          title={`Copy ${activeTab?.title ?? 'details'}`}
+        >
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide">
+            {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+            {copied ? 'Copied' : 'Copy'}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="shrink-0 px-3 py-2.5 text-zinc-500 transition-colors cursor-pointer hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
           title="Hide details"
         >
           <span className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide">

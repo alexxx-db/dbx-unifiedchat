@@ -226,7 +226,13 @@ const CLI_HOST_CACHE_DURATION = 10 * 60 * 1000; // Cache for 10 minutes
  */
 export async function getDatabricksUserIdentity(): Promise<string> {
   // Check if we have a valid cached identity
-  if (cliUserIdentity && Date.now() < cliUserIdentityExpiresAt) {
+  const hasFreshCliHost =
+    cliHostCache && Date.now() < cliHostCacheTime + CLI_HOST_CACHE_DURATION;
+  if (
+    cliUserIdentity &&
+    Date.now() < cliUserIdentityExpiresAt &&
+    (hasFreshCliHost || Boolean(process.env.DATABRICKS_HOST))
+  ) {
     return cliUserIdentity;
   }
 

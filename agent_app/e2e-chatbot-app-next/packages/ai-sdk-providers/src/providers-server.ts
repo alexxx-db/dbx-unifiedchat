@@ -42,6 +42,12 @@ export async function getWorkspaceHostname(): Promise<string> {
     const authMethod = getAuthMethod();
 
     if (authMethod === 'cli') {
+      const cachedCliHost = getCachedCliHost();
+      if (cachedCliHost) {
+        cachedWorkspaceHostname = cachedCliHost;
+        return cachedWorkspaceHostname;
+      }
+
       // For CLI auth, we need to call getDatabricksUserIdentity which handles hostname resolution
       // This will trigger the CLI auth flow and properly cache the host
       await getDatabricksUserIdentity();
@@ -52,9 +58,8 @@ export async function getWorkspaceHostname(): Promise<string> {
         cachedWorkspaceHostname = cliHost;
         return cachedWorkspaceHostname;
       } else {
-        throw new Error(
-          'CLI authentication succeeded but hostname was not cached',
-        );
+        cachedWorkspaceHostname = getHostUrl();
+        return cachedWorkspaceHostname;
       }
     } else {
       // For OAuth, use the standard method
