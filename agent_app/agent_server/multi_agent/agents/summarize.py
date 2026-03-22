@@ -63,13 +63,13 @@ def extract_summarize_context(state: AgentState) -> dict:
     return {
         "messages": truncate_message_history(messages, max_turns=5),
         "sql_query": state.get("sql_query"),
-        "sql_queries": state.get("sql_queries", []),
-        "sql_query_labels": state.get("sql_query_labels", []),
+        "sql_queries": state.get("sql_queries") or [],
+        "sql_query_labels": state.get("sql_query_labels") or [],
         "execution_result": state.get("execution_result"),
-        "execution_results": state.get("execution_results", []),
+        "execution_results": state.get("execution_results") or [],
         "execution_error": state.get("execution_error"),
         "sql_synthesis_explanation": state.get("sql_synthesis_explanation"),
-        "sql_synthesis_explanations": state.get("sql_synthesis_explanations", []),
+        "sql_synthesis_explanations": state.get("sql_synthesis_explanations") or [],
         "synthesis_error": state.get("synthesis_error"),
         # For logging: track original size
         "_original_message_count": len(messages)
@@ -186,9 +186,9 @@ class _SimpleSummarizeAgent:
 """
         
         # NEW: Check for multiple SQL queries and results
-        sql_queries = state.get('sql_queries', [])
-        query_labels = state.get('sql_query_labels', [])
-        execution_results = state.get('execution_results', [])
+        sql_queries = state.get('sql_queries') or []
+        query_labels = state.get('sql_query_labels') or []
+        execution_results = state.get('execution_results') or []
         
         # Fallback to single query/result for backward compatibility
         if not sql_queries and sql_query:
@@ -360,7 +360,7 @@ def summarize_node(state: AgentState) -> dict:
     print("=" * 80)
 
     # --- 0. Kick off code enrichment in background (parallel with summary) ---
-    execution_results = state.get("execution_results", [])
+    execution_results = state.get("execution_results") or []
     exec_result = state.get("execution_result")
     if not execution_results and exec_result:
         execution_results = [exec_result]
@@ -385,7 +385,7 @@ def summarize_node(state: AgentState) -> dict:
             enrichment_pool = concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(4, len(enrichable_results))
             )
-            labels = state.get("sql_query_labels", [])
+            labels = state.get("sql_query_labels") or []
             for idx, result_item in enrichable_results:
                 section_title = (
                     labels[idx]
@@ -469,7 +469,7 @@ def summarize_node(state: AgentState) -> dict:
 
     # --- 3. Downloadable paginated tables (rendered after charts) ---
     import base64
-    labels = state.get("sql_query_labels", [])
+    labels = state.get("sql_query_labels") or []
     for idx, result_item in enumerate(execution_results):
         if not result_item or not result_item.get("success"):
             continue
@@ -497,7 +497,7 @@ def summarize_node(state: AgentState) -> dict:
         writer({"type": "text_delta", "content": table_block})
 
     # --- 3. SQL download / explanation / plan (collapsible, streamed as delta) ---
-    sql_queries = state.get("sql_queries", [])
+    sql_queries = state.get("sql_queries") or []
     if not sql_queries and state.get("sql_query"):
         sql_queries = [state["sql_query"]]
     explanation = state.get("sql_synthesis_explanation", "")

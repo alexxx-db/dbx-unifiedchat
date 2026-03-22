@@ -29,6 +29,7 @@ import type { ChatMessage, Feedback } from '@chat-template/core';
 import { useDataStream } from './data-stream-provider';
 import {
   createMessagePartSegments,
+  dedupeProcessingStepsTextParts,
   formatNamePart,
   isNamePart,
   joinMessagePartSegments,
@@ -97,9 +98,11 @@ const PurePreviewMessage = ({
      */
     () =>
       createMessagePartSegments(
-        message.parts.filter(
-          (part) =>
-            part.type !== 'data-error' || isCredentialErrorMessage(part.data),
+        dedupeProcessingStepsTextParts(
+          message.parts.filter(
+            (part) =>
+              part.type !== 'data-error' || isCredentialErrorMessage(part.data),
+          ),
         ),
       ),
     [message.parts],

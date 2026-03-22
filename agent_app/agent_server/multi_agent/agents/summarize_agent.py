@@ -215,10 +215,10 @@ class ResultSummarizeAgent:
         if execution_error:
             prompt += f"**Execution Failed:** {execution_error}\n"
 
-        sql_queries = state.get('sql_queries', [])
+        sql_queries = state.get('sql_queries') or []
         if not sql_queries and state.get('sql_query'):
             sql_queries = [state['sql_query']]
-        execution_results = state.get('execution_results', [])
+        execution_results = state.get('execution_results') or []
         if not execution_results and state.get('execution_result'):
             execution_results = [state['execution_result']]
 
@@ -238,7 +238,7 @@ class ResultSummarizeAgent:
                 preview_json = preview_json[:MAX_JSON] + "\n..."
 
             label = ""
-            labels = state.get('sql_query_labels', [])
+            labels = state.get('sql_query_labels') or []
             if labels and i < len(labels):
                 label = f" — {labels[i]}"
 
