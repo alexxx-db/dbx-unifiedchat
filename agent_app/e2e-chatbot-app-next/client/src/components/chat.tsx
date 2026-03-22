@@ -25,6 +25,10 @@ import { ChatTransport } from '../lib/ChatTransport';
 import type { ClientSession } from '@chat-template/auth';
 import { softNavigateToChatId } from '@/lib/navigation';
 import { useAppConfig } from '@/contexts/AppConfigContext';
+import {
+  AgentSettingsPanel,
+  useAgentSettings,
+} from './agent-settings';
 
 export function Chat({
   id,
@@ -57,6 +61,8 @@ export function Chat({
   const [_usage, setUsage] = useState<LanguageModelUsage | undefined>(
     initialLastContext,
   );
+  const { settings: agentSettings, update: updateAgentSettings } =
+    useAgentSettings();
 
   const [lastPart, setLastPart] = useState<UIMessageChunk | undefined>();
   const lastPartRef = useRef<UIMessageChunk | undefined>(lastPart);
@@ -131,15 +137,10 @@ export function Chat({
         return {
           body: {
             id,
-            // Only include message field for user messages (new messages)
-            // For continuation (assistant messages with tool results), omit message field
             ...(isUserMessage ? { message: lastMessage } : {}),
             selectedChatModel: initialChatModel,
             selectedVisibilityType: visibilityType,
             nextMessageId: generateUUID(),
-            // Send previous messages when:
-            // 1. Database is disabled (ephemeral mode) - always need client-side messages
-            // 2. Continuation request (tool results) - tool result only exists client-side
             ...(needsPreviousMessages
               ? {
                   previousMessages: isUserMessage
@@ -147,6 +148,7 @@ export function Chat({
                     : messages,
                 }
               : {}),
+            agentSettings,
             ...body,
           },
         };
@@ -285,21 +287,29 @@ export function Chat({
           feedback={feedback}
         />
 
-        <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+        <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl flex-col gap-1 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
           {!isReadonly && (
-            <MultimodalInput
-              chatId={id}
-              input={input}
-              setInput={setInput}
-              status={status}
-              stop={stop}
-              attachments={attachments}
-              setAttachments={setAttachments}
-              messages={messages}
-              setMessages={setMessages}
-              sendMessage={sendMessage}
-              selectedVisibilityType={visibilityType}
-            />
+            <>
+              <div className="flex justify-end">
+                <AgentSettingsPanel
+                  settings={agentSettings}
+                  onUpdate={updateAgentSettings}
+                />
+              </div>
+              <MultimodalInput
+                chatId={id}
+                input={input}
+                setInput={setInput}
+                status={status}
+                stop={stop}
+                attachments={attachments}
+                setAttachments={setAttachments}
+                messages={messages}
+                setMessages={setMessages}
+                sendMessage={sendMessage}
+                selectedVisibilityType={visibilityType}
+              />
+            </>
           )}
         </div>
       </div>

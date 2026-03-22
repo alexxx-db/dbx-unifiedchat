@@ -119,8 +119,22 @@ def create_super_agent_hybrid() -> StateGraph:
         }
     )
     
-    # SQL execution always goes to summarize
-    workflow.add_edge("sql_execution", "summarize")
+    # SQL execution routes conditionally: summarize, or back to synthesis on retry/sequential
+    def route_after_execution(state: AgentState) -> str:
+        next_agent = state.get("next_agent", "summarize")
+        if next_agent in ("sql_synthesis_table", "sql_synthesis_genie"):
+            return next_agent
+        return "summarize"
+    
+    workflow.add_conditional_edges(
+        "sql_execution",
+        route_after_execution,
+        {
+            "sql_synthesis_table": "sql_synthesis_table",
+            "sql_synthesis_genie": "sql_synthesis_genie",
+            "summarize": "summarize",
+        },
+    )
     
     # Summarize is the final node before END
     workflow.add_edge("summarize", END)

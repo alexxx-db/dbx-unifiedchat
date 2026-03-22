@@ -329,25 +329,38 @@ def planning_node(state: AgentState) -> dict:
     # Extract plan components
     join_strategy = plan.get("join_strategy")
     
+    # Honor force_synthesis_route override from UI
+    force_route = state.get("force_synthesis_route", "auto")
+    if force_route == "table_route":
+        join_strategy = "table_route"
+        next_agent = "sql_synthesis_table"
+        print(f"✓ Plan complete - FORCED TABLE ROUTE (UI override)")
+    elif force_route == "genie_route":
+        join_strategy = "genie_route"
+        next_agent = "sql_synthesis_genie"
+        print(f"✓ Plan complete - FORCED GENIE ROUTE (UI override)")
+    elif join_strategy == "genie_route":
+        next_agent = "sql_synthesis_genie"
+        print("✓ Plan complete - using GENIE ROUTE (Genie agents)")
+    else:
+        next_agent = "sql_synthesis_table"
+        print("✓ Plan complete - using TABLE ROUTE (direct SQL synthesis)")
+    
     # Emit plan formulation result
     writer({"type": "plan_formulation", "strategy": join_strategy, "requires_join": plan.get("requires_join", False)})
     
-    # Determine next agent
-    if join_strategy == "genie_route":
-        print("✓ Plan complete - using GENIE ROUTE (Genie agents)")
-        next_agent = "sql_synthesis_genie"
-    else:
-        print("✓ Plan complete - using TABLE ROUTE (direct SQL synthesis)")
-        next_agent = "sql_synthesis_table"
+    sub_questions = plan.get("sub_questions", [])
     
     # Return only updates (no in-place modifications)
     return {
         "plan": plan,
-        "sub_questions": plan.get("sub_questions", []),
+        "sub_questions": sub_questions,
+        "total_sub_questions": len(sub_questions),
         "requires_multiple_spaces": plan.get("requires_multiple_spaces", False),
         "relevant_space_ids": plan.get("relevant_space_ids", []),
         "requires_join": plan.get("requires_join", False),
         "join_strategy": join_strategy,
+        "join_strategy_route": next_agent,
         "execution_plan": plan.get("execution_plan", ""),
         "genie_route_plan": plan.get("genie_route_plan"),
         "vector_search_relevant_spaces_info": plan.get("vector_search_relevant_spaces_info", []),

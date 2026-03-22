@@ -231,6 +231,19 @@ class SQLSynthesisTableAgent:
                 "    separately, or combining would create overly complex SQL\n"
                 "- If sub-questions are closely related and naturally combine (e.g., same table, similar filters):\n"
                 "  * You may generate a single combined SQL query\n\n"
+                "- CRITICAL RULE for 'top N items + their details' patterns:\n"
+                "  When the question asks for 'top N items and their associated details'\n"
+                "  (e.g., 'top 10 medicines and their diagnoses', 'top 5 providers and their procedures'),\n"
+                "  you MUST use multiple separate SQL queries:\n"
+                "  * Query 1: The top N items with their aggregate metric (e.g., top 10 by total cost)\n"
+                "  * Query 2+: For each detail dimension, a separate query\n"
+                "  * IMPORTANT: Each query must be SELF-CONTAINED and independently executable.\n"
+                "    If Query 2 needs the same top-N list as Query 1, embed the top-N selection\n"
+                "    as a subquery or CTE within Query 2 -- do NOT reference Query 1's results.\n"
+                "  * This avoids a single cross-join that explodes rows\n"
+                "    (e.g., 10 medicines x 362 diagnoses = 3,620 rows) and lets each result\n"
+                "    be summarized clearly.\n"
+                "  * NEVER combine top-N aggregation with detail expansion in a single query.\n\n"
                 "## OUTPUT FORMAT:\n"
                 "- Return your response with:\n"
                 "1. Your explanations; If SQL cannot be generated, explain what metadata is missing\n"
@@ -717,6 +730,20 @@ MULTI-QUERY STRATEGY:
     separately, or combining would create overly complex SQL
 - If sub-questions are closely related and naturally combine (e.g., same Genie space, similar context):
   * You may combine SQL fragments into a single query
+
+CRITICAL RULE for "top N items + their details" patterns:
+  When the question asks for "top N items and their associated details"
+  (e.g., "top 10 medicines and their diagnoses", "top 5 providers and their procedures"),
+  you MUST use multiple separate SQL queries:
+  * Query 1: The top N items with their aggregate metric (e.g., top 10 by total cost)
+  * Query 2+: For each detail dimension, a separate query
+  * IMPORTANT: Each query must be SELF-CONTAINED and independently executable.
+    If Query 2 needs the same top-N list as Query 1, embed the top-N selection
+    as a subquery or CTE within Query 2 -- do NOT reference Query 1's results.
+  * This avoids a single cross-join that explodes rows
+    (e.g., 10 medicines x 362 diagnoses = 3,620 rows) and lets each result
+    be summarized clearly.
+  * NEVER combine top-N aggregation with detail expansion in a single query.
 
 OUTPUT REQUIREMENTS:
 - Generate complete, executable SQL with:

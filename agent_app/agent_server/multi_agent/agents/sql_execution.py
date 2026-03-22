@@ -4,10 +4,13 @@ SQL Execution Agent Node
 This module provides the SQL execution node for the multi-agent system.
 It wraps the SQLExecutionAgent class and executes SQL queries using Databricks SQL Warehouse.
 
-The node is optimized to use minimal state extraction to reduce token usage.
+Supports:
+- Parallel execution with retry on failure
+- Sequential execution (one query at a time, feeding results back to synthesis)
 """
 
-from typing import Dict, Any
+import json as _json
+from typing import Dict, Any, List
 from langgraph.config import get_stream_writer
 from langchain_core.messages import SystemMessage
 
@@ -15,124 +18,337 @@ from ..core.state import AgentState
 from ..core.config import get_config
 from .sql_execution_agent import SQLExecutionAgent
 
-def extract_execution_context(state: AgentState) -> dict:
-    """Extract minimal context for SQL execution."""
-    return {
-        "sql_query": state.get("sql_query"),
-        "sql_queries": state.get("sql_queries", []),
-        "sql_query_labels": state.get("sql_query_labels", [])
-    }
+
+def _build_retry_feedback(
+    successes: List[Dict[str, Any]],
+    failures: List[Dict[str, Any]],
+    retry_count: int = 1,
+    retry_max: int = 1,
+) -> str:
+    """Build structured feedback string for the synthesis agent on retry."""
+    parts = [f"## Retry Context (attempt {retry_count + 1} of {retry_max + 1})\n"]
+
+    if successes:
+        parts.append("### Successfully executed queries (DO NOT regenerate these):")
+        for r in successes:
+            qn = r.get("query_number", "?")
+            rows = r.get("row_count", 0)
+            cols = r.get("columns", [])
+            sql = r.get("sql", "")
+            sample = r.get("result", [])[:5]
+            sample_json = _json.dumps(sample, default=str)
+            if len(sample_json) > 800:
+                sample_json = sample_json[:800] + "..."
+            parts.append(
+                f"Query {qn}: {rows} rows returned\n"
+                f"SQL: {sql}\n"
+                f"Columns: {', '.join(cols)}\n"
+                f"Sample: {sample_json}\n"
+            )
+
+    if failures:
+        parts.append("### Failed queries (regenerate these):")
+        for r in failures:
+            qn = r.get("query_number", "?")
+            sql = r.get("sql", "")
+            error = r.get("error", "Unknown error")
+            parts.append(f"Query {qn}: FAILED\nSQL: {sql}\nError: {error}\n")
+
+    parts.append(
+        "### Instructions:\n"
+        "- Only regenerate the FAILED queries. The successful queries will be kept.\n"
+        "- Use the successful query results above as context (column names, sample data).\n"
+        "- Fix the error and generate corrected SQL.\n"
+        "- Each regenerated query must be self-contained (include its own subqueries/CTEs)."
+    )
+    return "\n".join(parts)
+
+
+def _build_sequential_feedback(
+    preserved: List[Dict[str, Any]],
+    step: int,
+    total: int,
+) -> str:
+    """Build structured feedback for sequential continuation."""
+    parts = [f"## Sequential Step {step + 1} of {total}\n"]
+    if preserved:
+        parts.append("### Previous results:")
+        for r in preserved:
+            qn = r.get("query_number", "?")
+            rows = r.get("row_count", 0)
+            cols = r.get("columns", [])
+            sql = r.get("sql", "")
+            sample = r.get("result", [])[:10]
+            sample_json = _json.dumps(sample, default=str)
+            if len(sample_json) > 1200:
+                sample_json = sample_json[:1200] + "..."
+            parts.append(
+                f"Query {qn}: {rows} rows returned\n"
+                f"SQL: {sql}\n"
+                f"Columns: {', '.join(cols)}\n"
+                f"Data: {sample_json}\n"
+            )
+    return "\n".join(parts)
+
+
+def _filter_out_already_succeeded(
+    sql_queries: List[str],
+    preserved: List[Dict[str, Any]],
+) -> List[str]:
+    """Skip queries whose leading comment label matches an already-successful result."""
+    if not preserved:
+        return sql_queries
+    succeeded_labels = set()
+    for r in preserved:
+        sql = r.get("sql", "")
+        first_line = sql.strip().split("\n")[0] if sql else ""
+        if first_line.startswith("--"):
+            succeeded_labels.add(first_line.strip().lower())
+    filtered = []
+    for q in sql_queries:
+        first_line = q.strip().split("\n")[0] if q else ""
+        if first_line.startswith("--") and first_line.strip().lower() in succeeded_labels:
+            print(f"⏭ Skipping already-succeeded query: {first_line.strip()}")
+            continue
+        filtered.append(q)
+    return filtered
 
 
 def sql_execution_node(state: AgentState) -> dict:
     """
     SQL execution node wrapping SQLExecutionAgent class.
-    Supports executing multiple SQL queries for multi-part questions.
-    Combines OOP modularity with explicit state management.
-    
-    OPTIMIZED: Uses minimal state extraction to reduce token usage
-    
-    Returns: Dictionary with only the state updates (for clean MLflow traces)
+    Supports parallel execution with retry, and sequential one-at-a-time mode.
     """
     writer = get_stream_writer()
-    
-    print("\n" + "="*80)
-    print("🚀 SQL EXECUTION AGENT (Token Optimized)")
-    print("="*80)
-    
-    # NEW: Support multiple queries
+
+    print("\n" + "=" * 80)
+    print("SQL EXECUTION AGENT")
+    print("=" * 80)
+
     sql_queries = state.get("sql_queries", [])
-    
-    # Fallback to single query for backward compatibility
     if not sql_queries:
         single_query = state.get("sql_query")
         if single_query:
             sql_queries = [single_query]
-    
+
+    # Handle empty queries (e.g. NO_MORE_QUERIES from sequential synthesis)
     if not sql_queries:
-        print("❌ No SQL queries to execute")
-        # Return error update
+        preserved = list(state.get("preserved_results") or [])
+        if preserved:
+            print("No new queries — returning preserved results")
+            return {
+                "execution_results": preserved,
+                "execution_result": preserved[0],
+                "preserved_results": [],
+                "sql_retry_feedback": None,
+                "loop_reason": None,
+                "next_agent": "summarize",
+                "messages": [SystemMessage(content=f"Sequential complete: {len(preserved)} result sets")],
+            }
         return {
             "execution_error": "No SQL queries provided",
-            "next_agent": "summarize"
+            "next_agent": "summarize",
         }
-    
-    print(f"📊 Executing {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
-    
-    # Get SQL Warehouse ID from config
+
     config = get_config()
     sql_warehouse_id = config.table_metadata.sql_warehouse_id
-    
     if not sql_warehouse_id:
-        error_msg = "SQL_WAREHOUSE_ID is not configured"
-        print(f"❌ {error_msg}")
-        return {
-            "execution_error": error_msg
-        }
-    
-    # Use OOP agent with SQL Warehouse
+        return {"execution_error": "SQL_WAREHOUSE_ID is not configured"}
+
     try:
         execution_agent = SQLExecutionAgent(warehouse_id=sql_warehouse_id)
     except Exception as e:
-        # Fallback for single query if SQLExecutionAgent not available
         print(f"Failed to load SQLExecutionAgent: {e}")
         result = _execute_sql_fallback(sql_queries[0], sql_warehouse_id)
         return {
             "execution_result": result,
             "execution_results": [result],
             "next_agent": "summarize",
-            "messages": [
-                SystemMessage(content=f"Execution {'successful' if result['success'] else 'failed'}: {result.get('row_count', 0)} rows")
-            ]
+            "messages": [SystemMessage(content=f"Execution {'successful' if result['success'] else 'failed'}")],
         }
-    
-    # Emit start events before parallel execution
+
+    execution_mode = state.get("execution_mode", "parallel")
+    route = state.get("join_strategy_route")
+
+    # ── Sequential mode ──────────────────────────────────────────────────
+    if execution_mode == "sequential" and len(sql_queries) >= 1:
+        return _execute_sequential(state, execution_agent, sql_queries, route, writer)
+
+    # ── Parallel mode (default) ──────────────────────────────────────────
+    return _execute_parallel(state, execution_agent, sql_queries, route, writer)
+
+
+def _execute_parallel(
+    state: AgentState,
+    agent: SQLExecutionAgent,
+    sql_queries: List[str],
+    route: str | None,
+    writer,
+) -> dict:
+    """Run all queries in parallel. On partial failure, retry once via synthesis loop."""
+    is_retry = state.get("loop_reason") == "retry"
+    preserved = list(state.get("preserved_results") or [])
+
+    if is_retry:
+        sql_queries = _filter_out_already_succeeded(sql_queries, preserved)
+        if not sql_queries:
+            return {
+                "execution_results": preserved,
+                "execution_result": preserved[0] if preserved else None,
+                "preserved_results": [],
+                "sql_retry_feedback": None,
+                "loop_reason": None,
+                "next_agent": "summarize",
+                "messages": [SystemMessage(content="Retry: all queries already succeeded")],
+            }
+
     for i, query in enumerate(sql_queries, 1):
-        writer({"type": "sql_validation_start", "query": query[:200], "query_number": i})
         writer({"type": "sql_execution_start", "estimated_complexity": "standard", "query_number": i})
-    
-    # Execute queries in parallel (ThreadPoolExecutor inside the class)
-    execution_results = execution_agent.execute_sql_parallel(sql_queries)
-    all_successful = all(r["success"] for r in execution_results)
-    
-    # Emit completion events after parallel execution (writer is not thread-safe)
+
+    execution_results = agent.execute_sql_parallel(sql_queries)
+
     for result in execution_results:
-        i = result["query_number"]
+        i = result.get("query_number", 0)
         if result["success"]:
             print(f"✓ Query {i} succeeded: {result['row_count']} rows")
-            writer({"type": "sql_execution_complete", "rows": result['row_count'], "columns": result['columns'], "query_number": i})
+            writer({"type": "sql_execution_complete", "rows": result["row_count"], "columns": result["columns"], "query_number": i})
         else:
             print(f"❌ Query {i} failed: {result.get('error')}")
-    
-    # Prepare updates (both single and multiple for backward compatibility)
-    updates = {
-        "execution_results": execution_results,
-        "execution_result": execution_results[0],  # For backward compatibility
-        "next_agent": "summarize",
-        "messages": []
-    }
-    
-    if all_successful:
+
+    if is_retry:
+        merged = preserved + execution_results
+        return {
+            "execution_results": merged,
+            "execution_result": merged[0] if merged else None,
+            "preserved_results": [],
+            "sql_retry_feedback": None,
+            "loop_reason": None,
+            "next_agent": "summarize",
+            "messages": [SystemMessage(content=f"Retry complete: {len(merged)} result sets")],
+        }
+
+    successes = [r for r in execution_results if r.get("success")]
+    failures = [r for r in execution_results if not r.get("success")]
+
+    if not failures:
         total_rows = sum(r["row_count"] for r in execution_results)
-        success_msg = f"Executed {len(sql_queries)} quer{'y' if len(sql_queries) == 1 else 'ies'} successfully. Total rows: {total_rows}"
-        print(f"\n✅ {success_msg}")
-        
-        updates["messages"].append(
-            SystemMessage(content=success_msg)
-        )
+        return {
+            "execution_results": execution_results,
+            "execution_result": execution_results[0],
+            "preserved_results": [],
+            "sql_retry_feedback": None,
+            "loop_reason": None,
+            "next_agent": "summarize",
+            "messages": [SystemMessage(content=f"Executed {len(sql_queries)} queries successfully. Total rows: {total_rows}")],
+        }
+
+    retry_count = state.get("sql_retry_count", 0)
+    retry_max = state.get("sql_retry_max", 1)
+
+    if retry_count < retry_max and route:
+        return {
+            "execution_results": execution_results,
+            "preserved_results": successes,
+            "sql_retry_count": retry_count + 1,
+            "sql_retry_feedback": _build_retry_feedback(successes, failures, retry_count, retry_max),
+            "loop_reason": "retry",
+            "next_agent": route,
+            "messages": [SystemMessage(content=f"Partial failure ({len(failures)} failed) — retrying via {route}")],
+        }
+
+    return {
+        "execution_results": execution_results,
+        "execution_result": execution_results[0],
+        "preserved_results": [],
+        "sql_retry_feedback": None,
+        "loop_reason": None,
+        "next_agent": "summarize",
+        "messages": [SystemMessage(content=f"{len(failures)} queries failed, retries exhausted — summarizing partial results")],
+    }
+
+
+def _execute_sequential(
+    state: AgentState,
+    agent: SQLExecutionAgent,
+    sql_queries: List[str],
+    route: str | None,
+    writer,
+) -> dict:
+    """Execute one query at a time, looping back to synthesis for the next sub-question."""
+    preserved = list(state.get("preserved_results") or [])
+    step = state.get("sequential_step", 0)
+    total = state.get("total_sub_questions", 1)
+    retry_count = state.get("sql_retry_count", 0)
+    retry_max = state.get("sql_retry_max", 1)
+
+    query = sql_queries[0]
+    writer({"type": "sql_execution_start", "estimated_complexity": "standard", "query_number": step + 1})
+
+    result = agent.execute_sql(query)
+    result["query_number"] = step + 1
+
+    if result["success"]:
+        writer({"type": "sql_execution_complete", "rows": result["row_count"], "columns": result["columns"], "query_number": step + 1})
+        print(f"✓ Sequential step {step + 1}/{total} succeeded: {result['row_count']} rows")
     else:
-        failed_count = sum(1 for r in execution_results if not r["success"])
-        success_count = len(sql_queries) - failed_count
-        error_msg = f"{failed_count} of {len(sql_queries)} queries failed"
-        
-        print(f"\n⚠️ Partial success: {success_count} succeeded, {failed_count} failed")
-        
-        updates["execution_error"] = error_msg
-        updates["messages"].append(
-            SystemMessage(content=f"{success_count} queries succeeded, {failed_count} failed")
-        )
-    
-    return updates
+        print(f"❌ Sequential step {step + 1}/{total} failed: {result.get('error')}")
+
+    if result.get("success"):
+        preserved.append(result)
+        next_step = step + 1
+
+        if next_step >= total:
+            return {
+                "execution_results": preserved,
+                "execution_result": preserved[0] if preserved else None,
+                "preserved_results": [],
+                "sql_retry_feedback": None,
+                "loop_reason": None,
+                "next_agent": "summarize",
+                "messages": [SystemMessage(content=f"Sequential complete: {len(preserved)} result sets")],
+            }
+        return {
+            "preserved_results": preserved,
+            "sequential_step": next_step,
+            "sql_retry_count": 0,
+            "sql_retry_feedback": _build_sequential_feedback(preserved, step=next_step, total=total),
+            "loop_reason": "sequential_next",
+            "next_agent": route or "summarize",
+            "messages": [SystemMessage(content=f"Step {next_step}/{total} — continuing to next sub-question")],
+        }
+
+    # Failure path
+    if retry_count < retry_max and route:
+        return {
+            "preserved_results": preserved,
+            "sql_retry_count": retry_count + 1,
+            "sql_retry_feedback": _build_retry_feedback(preserved, [result], retry_count, retry_max),
+            "loop_reason": "retry",
+            "next_agent": route,
+            "messages": [SystemMessage(content=f"Step {step + 1}/{total} failed — retrying")],
+        }
+
+    # Retry exhausted — skip this step
+    next_step = step + 1
+    if next_step >= total:
+        return {
+            "execution_results": preserved,
+            "execution_result": preserved[0] if preserved else None,
+            "preserved_results": [],
+            "sql_retry_feedback": None,
+            "loop_reason": None,
+            "next_agent": "summarize",
+            "messages": [SystemMessage(content=f"Sequential complete (with skipped failures): {len(preserved)} result sets")],
+        }
+    return {
+        "preserved_results": preserved,
+        "sequential_step": next_step,
+        "sql_retry_count": 0,
+        "sql_retry_feedback": _build_sequential_feedback(preserved, step=next_step, total=total),
+        "loop_reason": "sequential_next",
+        "next_agent": route or "summarize",
+        "messages": [SystemMessage(content=f"Step {step + 1} failed (retries exhausted), skipping to step {next_step + 1}")],
+    }
 
 
 def _execute_sql_fallback(sql_query: str, warehouse_id: str) -> Dict[str, Any]:
@@ -157,18 +373,13 @@ def _execute_sql_fallback(sql_query: str, warehouse_id: str) -> Dict[str, Any]:
             if sql_match:
                 extracted_sql = sql_match.group(1).strip()
         
-        # Enforce LIMIT clause
-        max_rows = 100
-        limit_pattern = re.search(r'\bLIMIT\s+(\d+)\b', extracted_sql, re.IGNORECASE)
-        if limit_pattern:
-            existing_limit = int(limit_pattern.group(1))
+        # Enforce trailing LIMIT clause (not inner CTE LIMITs)
+        max_rows = 500
+        trailing_limit = re.search(r'\s+LIMIT\s+(\d+)(?:\s+OFFSET\s+\d+)?\s*;?\s*$', extracted_sql, re.IGNORECASE)
+        if trailing_limit:
+            existing_limit = int(trailing_limit.group(1))
             if existing_limit > max_rows:
-                extracted_sql = re.sub(
-                    r'\bLIMIT\s+\d+\b',
-                    f'LIMIT {max_rows}',
-                    extracted_sql,
-                    flags=re.IGNORECASE
-                )
+                extracted_sql = extracted_sql[:trailing_limit.start()] + f' LIMIT {max_rows}' + extracted_sql[trailing_limit.end():]
         else:
             extracted_sql = f"{extracted_sql.rstrip(';')} LIMIT {max_rows}"
         

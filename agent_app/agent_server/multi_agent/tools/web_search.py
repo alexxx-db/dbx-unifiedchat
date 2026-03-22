@@ -189,9 +189,10 @@ def enrich_codes(
     llm: Any,
     writer: Optional[Any] = None,
 ) -> Optional[str]:
-    """Detect coded columns then use a single batch LLM call to enrich descriptions.
+    """Detect coded columns then look up descriptions for unique code values.
 
-    Returns the enriched markdown table string, or None if nothing to enrich.
+    Returns a compact "Code Reference" markdown section mapping unique codes
+    to their API-verified descriptions, or None if nothing to enrich.
     """
     if not columns or not data:
         return None
@@ -208,7 +209,7 @@ def enrich_codes(
     code_type_map = {c["column"]: c["code_type"] for c in code_cols}
     print(f"🔍 Detected coded columns: {col_names}")
 
-    lookups: dict[str, dict[str, str]] = {}
+    sections: list[str] = []
     for col in col_names:
         unique_vals = list(dict.fromkeys(
             str(row.get(col, "")) for row in data if row.get(col) is not None
@@ -219,7 +220,6 @@ def enrich_codes(
 
         raw_lookups = _lookup_codes_via_llm(code_type, unique_vals, llm)
 
-        # For any "(unknown by LLM)" entries, try a specialized free API based on code type
         ct_upper = code_type.upper()
         api_fn = None
         if "NDC" in ct_upper:
@@ -238,31 +238,22 @@ def enrich_codes(
                     if api_desc:
                         raw_lookups[val] = api_desc
 
-        lookups[col] = {
-            k: _sanitize_for_markdown_table(v)
-            for k, v in raw_lookups.items()
-        }
+        rows = []
+        for code_val, desc in raw_lookups.items():
+            safe_code = _sanitize_for_markdown_table(str(code_val))
+            safe_desc = _sanitize_for_markdown_table(desc)
+            rows.append(f"| {safe_code} | {safe_desc} |")
 
-    enriched_columns = []
-    for col in columns:
-        enriched_columns.append(col)
-        if col in lookups:
-            enriched_columns.append(f"{col}_description")
+        if rows:
+            section = f"\n**{code_type} Codes** (`{col}`)\n\n| Code | Description |\n|---|---|\n"
+            section += "\n".join(rows)
+            sections.append(section)
 
-    header = "| " + " | ".join(enriched_columns) + " |"
-    separator = "| " + " | ".join("---" for _ in enriched_columns) + " |"
+    if not sections:
+        return None
 
-    rows_md = []
-    for row in data:
-        cells = []
-        for col in columns:
-            val = _sanitize_for_markdown_table(str(row.get(col, "")))
-            cells.append(val)
-            if col in lookups:
-                desc = lookups[col].get(val.replace("\\|", "|"), "(unknown by LLM)")
-                cells.append(desc)
-        rows_md.append("| " + " | ".join(cells) + " |")
-
-    table = "\n".join([header, separator] + rows_md)
-    print(f"✓ Enriched table built ({len(enriched_columns)} cols, {len(rows_md)} rows)")
-    return table
+    result = "\n\n<details><summary>Code Reference</summary>\n"
+    result += "\n".join(sections)
+    result += "\n\n</details>\n"
+    print(f"✓ Code reference built ({len(sections)} code type sections)")
+    return result

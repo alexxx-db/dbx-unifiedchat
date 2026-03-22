@@ -246,10 +246,12 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
 
     const model = await myProvider.languageModel(selectedChatModel);
     const modelMessages = await convertToModelMessages(uiMessages);
+    const agentSettings = requestBody.agentSettings;
     const requestHeaders = {
       [CONTEXT_HEADER_CONVERSATION_ID]: id,
       [CONTEXT_HEADER_USER_ID]: session.user.email ?? session.user.id,
-      // Forward OBO user token to the backend/serving endpoint
+      'x-agent-execution-mode': agentSettings?.executionMode ?? 'parallel',
+      'x-agent-synthesis-route': agentSettings?.synthesisRoute ?? 'auto',
       ...(req.headers['x-forwarded-access-token']
         ? { 'x-forwarded-access-token': req.headers['x-forwarded-access-token'] as string }
         : {}),

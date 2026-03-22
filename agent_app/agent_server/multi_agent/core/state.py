@@ -104,6 +104,22 @@ class AgentState(TypedDict):
     # Control Flow
     next_agent: Optional[str]
     messages: Annotated[List, operator.add]
+    
+    # Retry / Sequential loop
+    sql_retry_count: Optional[int]
+    sql_retry_max: Optional[int]
+    sql_retry_feedback: Optional[str]
+    loop_reason: Optional[str]  # "retry" | "sequential_next" | None
+    preserved_results: Optional[List[Dict[str, Any]]]
+    
+    # Sequential execution mode
+    execution_mode: Optional[str]  # "parallel" | "sequential"
+    sequential_step: Optional[int]
+    total_sub_questions: Optional[int]
+    
+    # UI override
+    force_synthesis_route: Optional[str]  # "auto" | "table_route" | "genie_route"
+    join_strategy_route: Optional[str]  # stores the synthesis node name chosen by planning
 
 
 # Helper Functions
@@ -225,6 +241,20 @@ def get_reset_state_template() -> Dict[str, Any]:
         
         # Summary (per-query)
         "final_summary": None,
+        
+        # Retry / Sequential loop (per-query)
+        "sql_retry_count": 0,
+        "sql_retry_max": 1,
+        "sql_retry_feedback": None,
+        "loop_reason": None,
+        "preserved_results": [],
+        
+        # Sequential execution mode (per-query)
+        "sequential_step": 0,
+        "total_sub_questions": 0,
+        
+        # Routing memory (per-query)
+        "join_strategy_route": None,
     }
 
 

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { DatabricksMessageCitationStreamdownIntegration } from '../databricks-message-citation';
 import { Streamdown } from 'streamdown';
+import { PaginatedTable } from './paginated-table';
 
 const InteractiveChart = lazy(() =>
   import('./interactive-chart').then((m) => ({ default: m.InteractiveChart })),
@@ -161,29 +162,6 @@ export const Response = memo(
       try {
         let text = props.children;
 
-        // Extract and apply enriched table replacement (sent as a separate text part,
-        // joined here by joinMessagePartSegments)
-        const ENRICHED_SENTINEL = 'ENRICHED_TABLE_REPLACE\n';
-        const sentinelIdx = text.indexOf(ENRICHED_SENTINEL);
-        if (sentinelIdx !== -1) {
-          const enrichedTable = text.substring(
-            sentinelIdx + ENRICHED_SENTINEL.length,
-          );
-          text = text.substring(0, sentinelIdx).trimEnd();
-          // Replace the first markdown table in the summary with the enriched one
-          const tableRegex = /\|[^\n]*\|\n\|[-| :]+\|\n(?:\|[^\n]*\|\n)*/;
-          const tableMatch = text.match(tableRegex);
-          if (tableMatch && tableMatch.index !== undefined) {
-            text =
-              text.substring(0, tableMatch.index) +
-              enrichedTable +
-              '\n' +
-              text.substring(tableMatch.index + tableMatch[0].length);
-          } else {
-            text = text + '\n\n' + enrichedTable;
-          }
-        }
-
         // Auto-collapse the Processing Steps <details open> when summary content follows.
         // Use indexOf (first </details>) — the Processing Steps block — not lastIndexOf
         // which would find the SQL <details> block at the end (nothing follows it).
@@ -214,6 +192,7 @@ export const Response = memo(
           components={{
             a: DatabricksMessageCitationStreamdownIntegration,
             code: EChartsCodeBlock,
+            table: PaginatedTable,
           }}
           className="flex flex-col gap-4"
           {...props}

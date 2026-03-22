@@ -270,9 +270,15 @@ async def stream_handler(
     if user_id:
         run_config["configurable"]["user_id"] = user_id
 
+    # Agent settings from UI (via custom_inputs)
+    execution_mode = ci.get("execution_mode", "parallel")
+    force_synthesis_route = ci.get("force_synthesis_route", "auto")
+
     initial_state = {
         **RESET_STATE_TEMPLATE,
         "original_query": latest_query,
+        "execution_mode": execution_mode,
+        "force_synthesis_route": force_synthesis_route,
         "messages": [
             SystemMessage(content="""You are a multi-agent Q&A analysis system.
 Your role is to help users query and analyze cross-domain data.
@@ -412,14 +418,6 @@ Guidelines:
                         type="response.output_item.done",
                         item=_create_text_output_item(text=_format_custom_event(event_data), id=str(uuid4())),
                     )
-                elif et == "code_enrichment":
-                    enriched_table = event_data.get("enriched_table", "")
-                    if enriched_table:
-                        sentinel = f"ENRICHED_TABLE_REPLACE\n{enriched_table}"
-                        yield ResponsesAgentStreamEvent(
-                            type="response.output_item.done",
-                            item=_create_text_output_item(text=sentinel, id=str(uuid4())),
-                        )
                 elif et == "code_enrichment_progress":
                     step_text = event_data.get("content", "")
                     if step_text:

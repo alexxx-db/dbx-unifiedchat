@@ -225,8 +225,8 @@ class _SimpleSummarizeAgent:
 
 """
             
-            MAX_PREVIEW_ROWS = 20
-            MAX_JSON_CHARS = 2000
+            MAX_PREVIEW_ROWS = 200
+            MAX_JSON_CHARS = 20000
             
             if execution_results:
                 if len(execution_results) == 1:
@@ -460,10 +460,11 @@ def summarize_node(state: AgentState) -> dict:
     # --- 4. Collect code enrichment result (likely already done by now) ---
     if enrichment_future:
         try:
-            enriched_table = enrichment_future.result(timeout=20)
-            if enriched_table:
-                writer({"type": "code_enrichment", "enriched_table": enriched_table})
-                print(f"✓ Code enrichment sent ({len(enriched_table)} chars)")
+            enriched_ref = enrichment_future.result(timeout=20)
+            if enriched_ref:
+                summary += enriched_ref
+                writer({"type": "text_delta", "content": enriched_ref})
+                print(f"✓ Code reference appended ({len(enriched_ref)} chars)")
         except Exception as e:
             print(f"⚠ Code enrichment skipped: {e}")
         finally:

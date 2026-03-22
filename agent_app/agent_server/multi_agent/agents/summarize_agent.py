@@ -138,8 +138,8 @@ class ResultSummarizeAgent:
         if not execution_results and state.get('execution_result'):
             execution_results = [state['execution_result']]
 
-        MAX_PREVIEW = 20
-        MAX_JSON = 2000
+        MAX_PREVIEW = 200
+        MAX_JSON = 20000
 
         for i, result in enumerate(execution_results):
             if not result or not result.get('success'):

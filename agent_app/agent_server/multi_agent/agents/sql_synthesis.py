@@ -226,25 +226,71 @@ def get_cached_sql_table_agent(llm_endpoint=None, catalog=None, schema=None):
 # SQL Synthesis Node Functions
 # ==============================================================================
 
+def _preserved_as_execution_results(state: AgentState) -> dict:
+    """If there are preserved_results from a loop, surface them as execution_results
+    so the summarize node can access accumulated data."""
+    preserved = list(state.get("preserved_results") or [])
+    if preserved:
+        return {
+            "execution_results": preserved,
+            "execution_result": preserved[0],
+            "preserved_results": [],
+        }
+    return {}
+
+
+def _build_loop_prompt_prefix(state: AgentState) -> Optional[str]:
+    """Build a prompt prefix based on loop_reason (retry or sequential continuation)."""
+    loop_reason = state.get("loop_reason")
+    feedback = state.get("sql_retry_feedback")
+    if not loop_reason or not feedback:
+        return None
+
+    if loop_reason == "retry":
+        return f"RETRY CONTEXT:\n{feedback}\n\nFix the failed query and regenerate."
+
+    if loop_reason == "sequential_next":
+        step = state.get("sequential_step", 0)
+        sub_questions = state.get("sub_questions") or []
+        remaining = sub_questions[step:] if step < len(sub_questions) else []
+        remaining_str = "\n".join(f"  {i+1}. {q}" for i, q in enumerate(remaining))
+        return (
+            f"SEQUENTIAL CONTEXT:\n{feedback}\n\n"
+            f"### Remaining sub-questions (soft guidance, not rigid):\n{remaining_str}\n\n"
+            f"Based on the previous results above, decide what to do next:\n"
+            f"- If the next sub-question is already answered by prior results, skip it.\n"
+            f"- If you can write a better query using data from prior results "
+            f"(e.g., exact codes, IDs), do so.\n"
+            f"- If ALL remaining questions are already addressed, return the "
+            f"special marker: NO_MORE_QUERIES\n"
+            f"- Otherwise, generate ONLY ONE query for the most relevant "
+            f"next sub-question.\n"
+            f"- The query must be independently executable "
+            f"(no temp tables from prior queries)."
+        )
+
+    return None
+
+
+def _check_no_more_queries(result: dict) -> bool:
+    """Check if the synthesis agent returned NO_MORE_QUERIES."""
+    raw = result.get("raw_content", "") or result.get("explanation", "")
+    return "NO_MORE_QUERIES" in raw
+
+
 @measure_node_time("sql_synthesis_table")
 def sql_synthesis_table_node(state: AgentState) -> dict:
     """
     Fast SQL synthesis node wrapping SQLSynthesisTableAgent class.
-    Combines OOP modularity with explicit state management.
-    
-    OPTIMIZED: Uses minimal state extraction to reduce token usage
-    
-    Returns: Dictionary with only the state updates (for clean MLflow traces)
+    Supports retry and sequential modes via loop_reason state field.
     """
     writer = get_stream_writer()
     
     print("\n" + "="*80)
-    print("⚡ SQL SYNTHESIS AGENT - TABLE ROUTE (Token Optimized)")
+    print("SQL SYNTHESIS AGENT - TABLE ROUTE")
     print("="*80)
     
-    # OPTIMIZATION: Extract only minimal context needed for table-based synthesis
     context = extract_synthesis_table_context(state)
-    print(f"📊 State optimization: Using {len(context)} fields (vs {len([k for k in state.keys() if state.get(k) is not None])} in full state)")
     
     plan = context.get("plan", {})
     relevant_space_ids = context.get("relevant_space_ids", [])
@@ -267,45 +313,52 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
     print(json.dumps(plan, indent=2))
     
     try:
-        print("🤖 Invoking SQL synthesis agent...")
+        # Inject retry / sequential context into the plan if looping
+        loop_prefix = _build_loop_prompt_prefix(state)
+        if loop_prefix:
+            print(f"Loop reason: {state.get('loop_reason')} — injecting context into plan")
+            plan = dict(plan)
+            original_query = plan.get("original_query", "")
+            plan["original_query"] = f"{loop_prefix}\n\nOriginal question: {original_query}"
+            writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": f"Retry/sequential context injected (loop_reason={state.get('loop_reason')})"})
         
-        writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": "🧠 Starting SQL synthesis using UC function tools..."})
-        writer({"type": "agent_step", "agent": "sql_synthesis_table", "step": "analyzing_plan", "content": f"📋 Analyzing execution plan for {len(relevant_space_ids)} relevant spaces"})
+        writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": "Starting SQL synthesis using UC function tools..."})
         
         uc_functions = config.unity_catalog.uc_function_names
-        writer({"type": "tools_available", "agent": "sql_synthesis_table", "tools": uc_functions, "content": f"🔧 Available UC functions: {', '.join(uc_functions)}"})
-        
-        writer({"type": "agent_thinking", "agent": "sql_synthesis_table", "content": f"🎯 Strategy: Query metadata for spaces {relevant_space_ids} then synthesize SQL"})
+        writer({"type": "tools_available", "agent": "sql_synthesis_table", "tools": uc_functions, "content": f"Available UC functions: {', '.join(uc_functions)}"})
         
         result = sql_agent(plan, writer=writer)
         
-        # Extract SQL and explanation
+        # Check for early completion signal in sequential mode
+        if _check_no_more_queries(result):
+            print("Synthesis returned NO_MORE_QUERIES — early completion")
+            return {
+                **_preserved_as_execution_results(state),
+                "sql_queries": [],
+                "next_agent": "summarize",
+                "loop_reason": None,
+                "sql_retry_feedback": None,
+                "messages": [AIMessage(content="All sub-questions addressed — no more queries needed")],
+            }
+        
         sql_query = result.get("sql")
         explanation = result.get("explanation", "")
         has_sql = result.get("has_sql", False)
         
-        # Extract all SQL queries using helper function
         sql_queries, query_labels = extract_sql_queries_from_agent_result(result, "sql_synthesis_table")
         
         if sql_queries:
-            # Multi-query support
             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
             for i, query in enumerate(sql_queries, 1):
                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
             
-            if explanation:
-                print(f"Agent Explanation: {explanation[:200]}...")
+            writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query_preview": sql_queries[0][:200], "content": f"{len(sql_queries)} SQL Queries Generated"})
             
-            # Emit detailed success events
-            writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query_preview": sql_queries[0][:200], "content": f"💻 {len(sql_queries)} SQL Quer{'y' if len(sql_queries) == 1 else 'ies'} Generated"})
-            writer({"type": "agent_result", "agent": "sql_synthesis_table", "result": "success", "content": f"✅ SQL synthesis complete: {explanation[:150]}..."})
-            
-            # Return updates for successful synthesis
             return {
                 "sql_queries": sql_queries,
                 "sql_query_labels": query_labels,
-                "sql_query": sql_queries[0],  # For backward compatibility
+                "sql_query": sql_queries[0],
                 "has_sql": True,
                 "sql_synthesis_explanation": explanation,
                 "next_agent": "sql_execution",
@@ -317,11 +370,10 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             
-            # Emit failure event
-            writer({"type": "agent_result", "agent": "sql_synthesis_table", "result": "no_sql", "content": f"⚠️ Could not generate SQL: {explanation[:150]}..."})
+            writer({"type": "agent_result", "agent": "sql_synthesis_table", "result": "no_sql", "content": f"Could not generate SQL: {explanation[:150]}..."})
             
-            # Return updates for failed synthesis
             return {
+                **_preserved_as_execution_results(state),
                 "synthesis_error": "Cannot generate SQL query",
                 "sql_synthesis_explanation": explanation,
                 "next_agent": "summarize",
@@ -333,8 +385,8 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
         error_msg = str(e)
-        # Return updates for exception
         return {
+            **_preserved_as_execution_results(state),
             "synthesis_error": error_msg,
             "sql_synthesis_explanation": error_msg,
             "messages": [
@@ -346,24 +398,16 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
 @measure_node_time("sql_synthesis_genie")
 def sql_synthesis_genie_node(state: AgentState) -> dict:
     """
-    Slow SQL synthesis node wrapping SQLSynthesisGenieAgent class.
-    Combines OOP modularity with explicit state management.
-    
-    Uses relevant_spaces from PlanningAgent (no need to re-query all spaces).
-    
-    OPTIMIZED: Uses minimal state extraction to reduce token usage
-    
-    Returns: Dictionary with only the state updates (for clean MLflow traces)
+    SQL synthesis node wrapping SQLSynthesisGenieAgent class.
+    Supports retry and sequential modes via loop_reason state field.
     """
     writer = get_stream_writer()
     
     print("\n" + "="*80)
-    print("🐢 SQL SYNTHESIS AGENT - GENIE ROUTE (Token Optimized)")
+    print("SQL SYNTHESIS AGENT - GENIE ROUTE")
     print("="*80)
     
-    # OPTIMIZATION: Extract only minimal context needed for genie-based synthesis
     context = extract_synthesis_genie_context(state)
-    print(f"📊 State optimization: Using {len(context)} fields (vs {len([k for k in state.keys() if state.get(k) is not None])} in full state)")
     
     # Get relevant spaces from state (already discovered by PlanningAgent)
     relevant_spaces = context.get("relevant_spaces", [])
@@ -383,9 +427,10 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
     
     if not relevant_spaces:
         print("❌ No relevant_spaces found in state")
-        # Return error update
         return {
-            "synthesis_error": "No relevant spaces available for genie route"
+            **_preserved_as_execution_results(state),
+            "synthesis_error": "No relevant spaces available for genie route",
+            "next_agent": "summarize",
         }
     
     # Use OOP agent - only creates Genie agents for relevant spaces
@@ -401,19 +446,24 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
     
     if not genie_route_plan:
         print("❌ No genie_route_plan found in plan")
-        # Return error update
         return {
-            "synthesis_error": "No routing plan available for genie route"
+            **_preserved_as_execution_results(state),
+            "synthesis_error": "No routing plan available for genie route",
+            "next_agent": "summarize",
         }
     
     try:
-        print(f"🤖 Querying {len(genie_route_plan)} Genie agents...")
+        # Inject retry / sequential context into the plan if looping
+        loop_prefix = _build_loop_prompt_prefix(state)
+        if loop_prefix:
+            print(f"Loop reason: {state.get('loop_reason')} — injecting context into plan")
+            plan = dict(plan)
+            original_query = plan.get("original_query", "")
+            plan["original_query"] = f"{loop_prefix}\n\nOriginal question: {original_query}"
+            writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"Retry/sequential context injected (loop_reason={state.get('loop_reason')})"})
         
-        # Emit detailed start event
-        writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"🧠 Starting SQL synthesis using {len(genie_route_plan)} Genie agents..."})
-        writer({"type": "agent_step", "agent": "sql_synthesis_genie", "step": "preparing_genie_calls", "content": f"📋 Preparing to query {len(genie_route_plan)} Genie spaces"})
+        print(f"Querying {len(genie_route_plan)} Genie agents...")
         
-        # Emit detailed events for each Genie agent call with full context
         for idx, (space_id, query) in enumerate(genie_route_plan.items(), 1):
             space_title = next((s.get("space_title", space_id) for s in relevant_spaces if s.get("space_id") == space_id), space_id)
             writer({
@@ -422,42 +472,41 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
                 "space_id": space_id, 
                 "space_title": space_title,
                 "query": query,
-                "content": f"🤖 [{idx}/{len(genie_route_plan)}] Calling Genie agent '{space_title}' with query: {query[:100]}{'...' if len(query) > 100 else ''}"
+                "content": f"[{idx}/{len(genie_route_plan)}] Calling Genie agent '{space_title}'"
             })
-        
-        # Emit execution strategy
-        writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": "⚡ Executing Genie agents in parallel for optimal performance..."})
         
         result = sql_agent(plan, writer=writer)
         
-        # Extract SQL and explanation
+        # Check for early completion signal in sequential mode
+        if _check_no_more_queries(result):
+            print("Synthesis returned NO_MORE_QUERIES — early completion")
+            return {
+                **_preserved_as_execution_results(state),
+                "sql_queries": [],
+                "next_agent": "summarize",
+                "loop_reason": None,
+                "sql_retry_feedback": None,
+                "messages": [AIMessage(content="All sub-questions addressed — no more queries needed")],
+            }
+        
         sql_query = result.get("sql")
         explanation = result.get("explanation", "")
         has_sql = result.get("has_sql", False)
         
-        # Extract all SQL queries using helper function
         sql_queries, query_labels = extract_sql_queries_from_agent_result(result, "sql_synthesis_genie")
         
         if sql_queries:
-            # Multi-query support
             print(f"✓ Extracted {len(sql_queries)} SQL quer{'y' if len(sql_queries) == 1 else 'ies'}")
             for i, query in enumerate(sql_queries, 1):
                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
             
-            if explanation:
-                print(f"Agent Explanation: {explanation[:200]}...")
+            writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query_preview": sql_queries[0][:200], "content": f"{len(sql_queries)} SQL Queries Generated"})
             
-            # Emit detailed success events
-            writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query_preview": sql_queries[0][:200], "content": f"💻 {len(sql_queries)} SQL Quer{'y' if len(sql_queries) == 1 else 'ies'} Generated"})
-            writer({"type": "agent_result", "agent": "sql_synthesis_genie", "result": "success", "content": f"✅ SQL synthesis complete: {explanation[:150]}..."})
-            writer({"type": "agent_thinking", "agent": "sql_synthesis_genie", "content": f"🎯 Successfully extracted {len(sql_queries)} SQL queries from {len(genie_route_plan)} Genie agents"})
-            
-            # Return updates for successful synthesis
             return {
                 "sql_queries": sql_queries,
                 "sql_query_labels": query_labels,
-                "sql_query": sql_queries[0],  # For backward compatibility
+                "sql_query": sql_queries[0],
                 "has_sql": True,
                 "sql_synthesis_explanation": explanation,
                 "next_agent": "sql_execution",
@@ -469,11 +518,10 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
             print("⚠ No SQL generated - agent explanation:")
             print(f"  {explanation}")
             
-            # Emit detailed failure event
-            writer({"type": "agent_result", "agent": "sql_synthesis_genie", "result": "no_sql", "content": f"⚠️ Could not generate SQL from Genie agents: {explanation[:150]}..."})
+            writer({"type": "agent_result", "agent": "sql_synthesis_genie", "result": "no_sql", "content": f"Could not generate SQL from Genie agents: {explanation[:150]}..."})
             
-            # Return updates for failed synthesis
             return {
+                **_preserved_as_execution_results(state),
                 "synthesis_error": "Cannot generate SQL query from Genie agent fragments",
                 "sql_synthesis_explanation": explanation,
                 "next_agent": "summarize",
@@ -485,8 +533,8 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
     except Exception as e:
         print(f"❌ SQL synthesis failed: {e}")
         error_msg = str(e)
-        # Return updates for exception
         return {
+            **_preserved_as_execution_results(state),
             "synthesis_error": error_msg,
             "sql_synthesis_explanation": error_msg,
             "messages": [

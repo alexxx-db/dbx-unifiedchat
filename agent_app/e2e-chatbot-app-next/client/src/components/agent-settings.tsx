@@ -1,0 +1,162 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+
+export type ExecutionMode = 'parallel' | 'sequential';
+export type SynthesisRoute = 'auto' | 'table_route' | 'genie_route';
+
+export interface AgentSettings {
+  executionMode: ExecutionMode;
+  synthesisRoute: SynthesisRoute;
+}
+
+const LS_EXEC_MODE = 'agent:execution-mode';
+const LS_SYNTH_ROUTE = 'agent:synthesis-route';
+
+function loadSettings(): AgentSettings {
+  if (typeof window === 'undefined') {
+    return { executionMode: 'parallel', synthesisRoute: 'auto' };
+  }
+  return {
+    executionMode:
+      (localStorage.getItem(LS_EXEC_MODE) as ExecutionMode) || 'parallel',
+    synthesisRoute:
+      (localStorage.getItem(LS_SYNTH_ROUTE) as SynthesisRoute) || 'auto',
+  };
+}
+
+export function useAgentSettings() {
+  const [settings, setSettings] = useState<AgentSettings>(loadSettings);
+
+  const update = useCallback((patch: Partial<AgentSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      localStorage.setItem(LS_EXEC_MODE, next.executionMode);
+      localStorage.setItem(LS_SYNTH_ROUTE, next.synthesisRoute);
+      return next;
+    });
+  }, []);
+
+  return { settings, update };
+}
+
+const routeLabels: Record<SynthesisRoute, string> = {
+  auto: 'Auto',
+  table_route: 'Table',
+  genie_route: 'Genie',
+};
+
+export function AgentSettingsPanel({
+  settings,
+  onUpdate,
+}: {
+  settings: AgentSettings;
+  onUpdate: (patch: Partial<AgentSettings>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        title="Agent settings"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        Settings
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="mb-3 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            Agent Settings
+          </div>
+
+          {/* Execution mode toggle */}
+          <div className="mb-3">
+            <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
+              Execution Mode
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdate({
+                    executionMode:
+                      settings.executionMode === 'parallel'
+                        ? 'sequential'
+                        : 'parallel',
+                  })
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                  settings.executionMode === 'sequential'
+                    ? 'bg-blue-600'
+                    : 'bg-zinc-200 dark:bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    settings.executionMode === 'sequential'
+                      ? 'translate-x-4'
+                      : 'translate-x-0'
+                  }`}
+                />
+              </button>
+              <span className="text-xs text-zinc-600 dark:text-zinc-300">
+                {settings.executionMode === 'sequential'
+                  ? 'Sequential'
+                  : 'Parallel'}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-zinc-400">
+              Sequential feeds each result into the next query
+            </p>
+          </div>
+
+          {/* Synthesis route selector */}
+          <div>
+            <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
+              Synthesis Route
+            </label>
+            <div className="flex rounded-md border border-zinc-200 dark:border-zinc-700">
+              {(
+                ['auto', 'table_route', 'genie_route'] as SynthesisRoute[]
+              ).map((route) => (
+                <button
+                  key={route}
+                  type="button"
+                  onClick={() => onUpdate({ synthesisRoute: route })}
+                  className={`flex-1 px-2 py-1 text-xs font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
+                    settings.synthesisRoute === route
+                      ? 'bg-blue-600 text-white'
+                      : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  {routeLabels[route]}
+                </button>
+              ))}
+            </div>
+            <p className="mt-0.5 text-[10px] text-zinc-400">
+              Auto lets the planner decide; Table uses UC functions; Genie uses
+              Genie agents
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

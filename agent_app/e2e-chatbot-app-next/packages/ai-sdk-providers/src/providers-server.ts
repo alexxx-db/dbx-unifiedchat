@@ -101,16 +101,20 @@ export const databricksFetch: typeof fetch = async (input, init) => {
   const url = input.toString();
   let requestInit = init;
 
-  // Extract context from headers (passed via streamText headers option)
+  // Extract context and agent settings from headers (passed via streamText headers option)
   const headers = new Headers(requestInit?.headers);
   const conversationId = headers.get(CONTEXT_HEADER_CONVERSATION_ID);
   const userId = headers.get(CONTEXT_HEADER_USER_ID);
-  // Remove context headers so they don't get sent to the API
+  const executionMode = headers.get('x-agent-execution-mode');
+  const synthesisRoute = headers.get('x-agent-synthesis-route');
+  // Remove custom headers so they don't get sent to the API
   headers.delete(CONTEXT_HEADER_CONVERSATION_ID);
   headers.delete(CONTEXT_HEADER_USER_ID);
+  headers.delete('x-agent-execution-mode');
+  headers.delete('x-agent-synthesis-route');
   requestInit = { ...requestInit, headers };
 
-  // Inject context into request body if appropriate
+  // Inject context and agent settings into request body if appropriate
   if (
     conversationId &&
     userId &&
@@ -126,6 +130,13 @@ export const databricksFetch: typeof fetch = async (input, init) => {
             ...body.context,
             conversation_id: conversationId,
             user_id: userId,
+          },
+          custom_inputs: {
+            ...body.custom_inputs,
+            ...(executionMode ? { execution_mode: executionMode } : {}),
+            ...(synthesisRoute && synthesisRoute !== 'auto'
+              ? { force_synthesis_route: synthesisRoute }
+              : {}),
           },
         };
         requestInit = { ...requestInit, body: JSON.stringify(enhancedBody) };
