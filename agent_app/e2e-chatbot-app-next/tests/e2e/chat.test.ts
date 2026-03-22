@@ -231,4 +231,70 @@ test.describe('Agent Settings', () => {
       synthesisRoute: 'table_route',
     });
   });
+
+  test('should isolate settings across multiple open tabs', async ({
+    adaContext,
+  }) => {
+    const { context, page } = adaContext;
+    const secondPage = await context.newPage();
+    const firstChatPage = new ChatPage(page);
+    const secondChatPage = new ChatPage(secondPage);
+    const requestsByText = new Map<
+      string,
+      {
+        executionMode: 'parallel' | 'sequential';
+        synthesisRoute: 'auto' | 'table_route' | 'genie_route';
+      }
+    >();
+
+    await context.route('**/api/chat', async (route) => {
+      const body = route.request().postDataJSON() as {
+        message?: {
+          parts?: Array<{ type?: string; text?: string }>;
+        };
+        agentSettings?: {
+          executionMode: 'parallel' | 'sequential';
+          synthesisRoute: 'auto' | 'table_route' | 'genie_route';
+        };
+      };
+
+      const messageText = body.message?.parts?.find(
+        (part) => part.type === 'text',
+      )?.text;
+
+      expect(body.agentSettings).toBeDefined();
+      if (messageText) {
+        requestsByText.set(messageText, body.agentSettings!);
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: `${mockResponsesApiMultiDeltaTextStream(['Settings verified.']).join('\n\n')}\n\n`,
+      });
+    });
+
+    await firstChatPage.createNewChat();
+    await secondChatPage.createNewChat();
+
+    await firstChatPage.configureAgentSettings('sequential', 'genie_route');
+    await secondChatPage.configureAgentSettings('parallel', 'table_route');
+
+    await firstChatPage.sendUserMessage('tab one request');
+    await firstChatPage.isGenerationComplete();
+
+    await secondChatPage.sendUserMessage('tab two request');
+    await secondChatPage.isGenerationComplete();
+
+    expect(requestsByText.get('tab one request')).toEqual({
+      executionMode: 'sequential',
+      synthesisRoute: 'genie_route',
+    });
+    expect(requestsByText.get('tab two request')).toEqual({
+      executionMode: 'parallel',
+      synthesisRoute: 'table_route',
+    });
+
+    await secondPage.close();
+  });
 });

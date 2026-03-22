@@ -27,7 +27,6 @@ import { softNavigateToChatId } from '@/lib/navigation';
 import { useAppConfig } from '@/contexts/AppConfigContext';
 import {
   AgentSettingsPanel,
-  getPersistedAgentSettings,
   type AgentSettings,
   useAgentSettings,
 } from './agent-settings';
@@ -136,9 +135,7 @@ export function Chat({
       prepareSendMessagesRequest({ messages, id, body }) {
         const lastMessage = messages.at(-1);
         const isUserMessage = lastMessage?.role === 'user';
-        const currentAgentSettings = getPersistedAgentSettings(
-          agentSettingsRef.current,
-        );
+        const currentAgentSettings = agentSettingsRef.current;
 
         // For continuations (non-user messages like tool results), we must always
         // send previousMessages because the tool result only exists client-side
@@ -290,7 +287,7 @@ export function Chat({
       updateAgentSettings(patch);
 
       // Persist to the chat once the thread exists server-side.
-      // New unsaved chats still use localStorage defaults for the first turn.
+      // New unsaved chats keep the current in-memory settings for the first turn.
       if (messages.length > 0) {
         void persistAgentSettings(nextSettings);
       }

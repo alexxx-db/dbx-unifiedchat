@@ -10,47 +10,10 @@ export interface AgentSettings {
   synthesisRoute: SynthesisRoute;
 }
 
-const LS_EXEC_MODE = 'agent:execution-mode';
-const LS_SYNTH_ROUTE = 'agent:synthesis-route';
-
 function loadSettings(initialSettings?: Partial<AgentSettings>): AgentSettings {
-  if (typeof window === 'undefined') {
-    return {
-      executionMode: initialSettings?.executionMode ?? 'parallel',
-      synthesisRoute: initialSettings?.synthesisRoute ?? 'auto',
-    };
-  }
   return {
-    executionMode:
-      initialSettings?.executionMode ||
-      (localStorage.getItem(LS_EXEC_MODE) as ExecutionMode) ||
-      'parallel',
-    synthesisRoute:
-      initialSettings?.synthesisRoute ||
-      (localStorage.getItem(LS_SYNTH_ROUTE) as SynthesisRoute) ||
-      'auto',
-  };
-}
-
-export function getPersistedAgentSettings(
-  fallback?: Partial<AgentSettings>,
-): AgentSettings {
-  if (typeof window === 'undefined') {
-    return {
-      executionMode: fallback?.executionMode ?? 'parallel',
-      synthesisRoute: fallback?.synthesisRoute ?? 'auto',
-    };
-  }
-
-  return {
-    executionMode:
-      (localStorage.getItem(LS_EXEC_MODE) as ExecutionMode) ||
-      fallback?.executionMode ||
-      'parallel',
-    synthesisRoute:
-      (localStorage.getItem(LS_SYNTH_ROUTE) as SynthesisRoute) ||
-      fallback?.synthesisRoute ||
-      'auto',
+    executionMode: initialSettings?.executionMode ?? 'parallel',
+    synthesisRoute: initialSettings?.synthesisRoute ?? 'auto',
   };
 }
 
@@ -62,8 +25,6 @@ export function useAgentSettings(initialSettings?: Partial<AgentSettings>) {
 
   useEffect(() => {
     settingsRef.current = settings;
-    localStorage.setItem(LS_EXEC_MODE, settings.executionMode);
-    localStorage.setItem(LS_SYNTH_ROUTE, settings.synthesisRoute);
   }, [settings]);
 
   const update = useCallback((patch: Partial<AgentSettings>) => {

@@ -80,6 +80,8 @@ export class ChatPage {
 
     if (currentMode !== mode) {
       await this.executionModeToggle().click();
+      await expect(this.agentSettingsPanel()).toBeHidden();
+      await this.openAgentSettings();
     }
 
     await expect(value).toHaveText(mode === 'parallel' ? 'Parallel' : 'Sequential');
@@ -90,6 +92,8 @@ export class ChatPage {
 
     const routeButton = this.synthesisRouteButton(route);
     await routeButton.click();
+    await expect(this.agentSettingsPanel()).toBeHidden();
+    await this.openAgentSettings();
     const ariaPressed = await routeButton.getAttribute('aria-pressed');
 
     if (ariaPressed !== null) {
