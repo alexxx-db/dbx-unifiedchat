@@ -14,6 +14,8 @@ from typing import Any, Optional
 _MAX_CODES_TO_LOOKUP = 30
 _AGGREGATE_COLUMN_TOKENS = (
     "count",
+    "distinct",
+    "unique",
     "total",
     "avg",
     "average",

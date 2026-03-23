@@ -75,6 +75,20 @@ def _build_sequential_feedback(
         parts.append("### Previous results:")
         for r in preserved:
             qn = r.get("query_number", "?")
+            status = r.get("status", "success")
+            if status == "skipped":
+                parts.append(
+                    f"Query {qn}: skipped\n"
+                    f"Reason: {r.get('skip_reason', 'already covered')}\n"
+                )
+                continue
+            if status == "failed":
+                parts.append(
+                    f"Query {qn}: failed\n"
+                    f"SQL: {r.get('sql', '')}\n"
+                    f"Error: {r.get('error', 'unknown')}\n"
+                )
+                continue
             rows = r.get("row_count", 0)
             cols = r.get("columns", [])
             sql = r.get("sql", "")
@@ -122,6 +136,38 @@ def _fallback_query_label(state: AgentState, query_index: int) -> str | None:
     return None
 
 
+def _infer_row_grain_hint(label: str | None, columns: List[str]) -> str | None:
+    """Infer when rows likely repeat a higher-level entity across detail rows."""
+    lower_label = (label or "").lower()
+    lower_columns = {column.lower() for column in columns}
+
+    if "diagnosis_code" in lower_columns or "comorbidit" in lower_label:
+        return (
+            "Rows are diagnosis-level detail. Patient-level metrics may repeat across "
+            "multiple diagnosis rows, so repeated totals should not be summed."
+        )
+
+    if (
+        {"procedure_code", "cpt_code", "hcpcs_code"} & lower_columns
+        or "procedure" in lower_label
+    ):
+        return (
+            "Rows may be procedure-level detail. Higher-level patient or claim totals "
+            "may repeat across multiple procedure rows."
+        )
+
+    if {"benefit_type", "pay_type"} & lower_columns or "coverage" in lower_label:
+        return (
+            "Rows are coverage-level detail. Patient-level metrics may repeat across "
+            "multiple benefit or pay-type rows."
+        )
+
+    if {"diagnosis_code", "benefit_type", "pay_type"} & lower_columns and "patient_id" in lower_columns:
+        return "Rows repeat patient-level values across a more detailed grain."
+
+    return None
+
+
 def _attach_query_metadata(
     state: AgentState,
     result: Dict[str, Any],
@@ -133,11 +179,62 @@ def _attach_query_metadata(
     """Attach stable per-query metadata to an execution result."""
     metadata_label = label or _fallback_query_label(state, query_index)
     enriched = dict(result)
+    enriched["status"] = "success" if enriched.get("success") else "failed"
     enriched["query_number"] = query_index + 1
     enriched["sql"] = enriched.get("sql") or sql_query
     if metadata_label:
         enriched["query_label"] = metadata_label
+    explanation = state.get("sql_synthesis_explanation")
+    if explanation:
+        enriched["sql_explanation"] = explanation
+    row_grain_hint = _infer_row_grain_hint(metadata_label, enriched.get("columns", []) or [])
+    if row_grain_hint:
+        enriched["row_grain_hint"] = row_grain_hint
     return enriched
+
+
+def _build_skipped_artifact(
+    state: AgentState,
+    *,
+    query_index: int,
+    reason: str,
+) -> Dict[str, Any]:
+    """Create an explicit placeholder artifact for skipped sequential steps."""
+    label = _fallback_query_label(state, query_index)
+    artifact: Dict[str, Any] = {
+        "status": "skipped",
+        "success": False,
+        "query_number": query_index + 1,
+        "query_label": label,
+        "sql": "",
+        "columns": [],
+        "result": [],
+        "row_count": 0,
+        "skip_reason": reason,
+        "sql_explanation": reason,
+    }
+    row_grain_hint = _infer_row_grain_hint(label, [])
+    if row_grain_hint:
+        artifact["row_grain_hint"] = row_grain_hint
+    return artifact
+
+
+def _append_remaining_skipped_artifacts(
+    state: AgentState,
+    preserved: List[Dict[str, Any]],
+    *,
+    start_step: int,
+    reason: str,
+) -> List[Dict[str, Any]]:
+    """Pad sequential results so every planned sub-question has an artifact."""
+    total = state.get("total_sub_questions", 0) or 0
+    if start_step >= total:
+        return preserved
+
+    artifacts = list(preserved)
+    for query_index in range(start_step, total):
+        artifacts.append(_build_skipped_artifact(state, query_index=query_index, reason=reason))
+    return artifacts
 
 
 def sql_execution_node(state: AgentState) -> dict:
@@ -162,14 +259,24 @@ def sql_execution_node(state: AgentState) -> dict:
         preserved = list(state.get("preserved_results") or [])
         if preserved:
             print("No new queries — returning preserved results")
+            step = state.get("sequential_step", len(preserved))
+            completion_reason = (
+                "Skipped because the remaining sub-question was considered already covered by prior results."
+            )
+            padded = _append_remaining_skipped_artifacts(
+                state,
+                preserved,
+                start_step=step,
+                reason=completion_reason,
+            )
             return {
-                "execution_results": preserved,
-                "execution_result": preserved[0],
+                "execution_results": padded,
+                "execution_result": padded[0],
                 "preserved_results": [],
                 "sql_retry_feedback": None,
                 "loop_reason": None,
                 "next_agent": "summarize",
-                "messages": [SystemMessage(content=f"Sequential complete: {len(preserved)} result sets")],
+                "messages": [SystemMessage(content=f"Sequential complete: {len(padded)} result sets")],
             }
         return {
             "execution_error": "No SQL queries provided",
@@ -374,6 +481,7 @@ def _execute_sequential(
         }
 
     # Retry exhausted — skip this step
+    preserved.append(result)
     next_step = step + 1
     if next_step >= total:
         return {

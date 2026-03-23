@@ -112,6 +112,12 @@ def _build_artifact_entries(state: AgentState) -> List[Dict[str, Any]]:
                 "sql": result_item.get("sql") or (
                     fallback_sql_queries[idx] if idx < len(fallback_sql_queries) else None
                 ),
+                "status": result_item.get("status") or (
+                    "success" if result_item.get("success") else "failed"
+                ),
+                "sql_explanation": result_item.get("sql_explanation"),
+                "skip_reason": result_item.get("skip_reason"),
+                "row_grain_hint": result_item.get("row_grain_hint"),
                 "result": result_item,
             }
         )
@@ -496,7 +502,16 @@ def summarize_node(state: AgentState) -> dict:
 
         if chart_gen:
             try:
-                payload = chart_gen.generate_chart(columns, data, original_query)
+                payload = chart_gen.generate_chart(
+                    columns,
+                    data,
+                    original_query,
+                    {
+                        "label": entry.get("label"),
+                        "sql_explanation": entry.get("sql_explanation"),
+                        "row_grain_hint": entry.get("row_grain_hint"),
+                    },
+                )
                 if payload:
                     label = entry.get("label")
                     if label:
@@ -541,31 +556,26 @@ def summarize_node(state: AgentState) -> dict:
         writer({"type": "text_delta", "content": table_block})
 
     # --- 3. SQL download / explanation / plan (collapsible, streamed as delta) ---
-    sql_entries = [entry for entry in artifact_entries if entry.get("sql")]
-    sql_queries = [entry["sql"] for entry in sql_entries]
-    labels = [entry.get("label") for entry in sql_entries]
-    explanation = state.get("sql_synthesis_explanation", "")
-    explanation_entries = state.get("sql_synthesis_explanations", []) or []
     plan = state.get("plan")
 
     has_accordion = False
-    if sql_queries or explanation_entries or explanation or plan or enrichment_futures:
+    if artifact_entries or plan or enrichment_futures or any(
+        entry.get("sql_explanation") or entry.get("skip_reason") for entry in artifact_entries
+    ):
         writer({"type": "text_delta", "content": "\n\n<div class=\"accordion-group\">\n\n"})
         has_accordion = True
 
-    if sql_queries:
+    if artifact_entries:
         from .summarize_agent import ResultSummarizeAgent
-        sql_block = ResultSummarizeAgent.format_sql_download(sql_queries, labels)
+        sql_block = ResultSummarizeAgent.format_sql_download(artifact_entries)
         summary += sql_block
         writer({"type": "text_delta", "content": sql_block})
 
     # --- 3b. SQL Explanation (collapsible, streamed as delta) ---
-    if explanation_entries or explanation:
+    if any(entry.get("sql_explanation") or entry.get("skip_reason") for entry in artifact_entries):
         from .summarize_agent import ResultSummarizeAgent
         explanation_block = ResultSummarizeAgent.format_sql_explanation(
-            explanation=explanation,
-            explanation_entries=explanation_entries,
-            labels=labels,
+            artifact_entries=artifact_entries,
         )
         summary += explanation_block
         writer({"type": "text_delta", "content": explanation_block})

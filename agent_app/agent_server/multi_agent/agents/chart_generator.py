@@ -23,6 +23,15 @@ MAX_CHART_POINTS = 30
 MAX_DOWNLOAD_ROWS = 200
 MAX_JSON_BYTES = 50_000
 SAMPLE_ROWS_FOR_LLM = 50
+_DEDUPED_METRIC_TOKENS = (
+    "total_",
+    "avg_",
+    "average_",
+    "distinct_",
+    "current_age",
+    "year_of_birth",
+    "enrollment_period_count",
+)
 
 
 def _json_default(o: Any) -> Any:
@@ -44,6 +53,7 @@ class ChartGenerator:
         columns: List[str],
         data: List[Dict[str, Any]],
         original_query: str = "",
+        result_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         End-to-end: LLM config -> Python assembly -> size guard.
@@ -53,11 +63,16 @@ class ChartGenerator:
             return None
 
         try:
-            config = self._get_llm_config(columns, data, original_query)
+            config = self._get_llm_config(columns, data, original_query, result_context or {})
             if config is None or not config.get("plottable", False):
                 return None
 
-            chart_data, aggregated, agg_note = self._assemble_data(columns, data, config)
+            chart_data, aggregated, agg_note = self._assemble_data(
+                columns,
+                data,
+                config,
+                result_context or {},
+            )
             if not chart_data:
                 return None
 
@@ -95,15 +110,23 @@ class ChartGenerator:
         columns: List[str],
         data: List[Dict[str, Any]],
         original_query: str,
+        result_context: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
         sample = data[:SAMPLE_ROWS_FOR_LLM]
         sample_json = json.dumps(sample, default=_json_default)
         if len(sample_json) > 4000:
             sample_json = sample_json[:4000] + "..."
 
+        label = result_context.get("label") or ""
+        sql_explanation = result_context.get("sql_explanation") or ""
+        row_grain_hint = result_context.get("row_grain_hint") or ""
+
         prompt = f"""You are a data-visualization expert. Given a query result, decide how to chart it.
 
 User query: {original_query}
+Result label: {label}
+Result explanation: {sql_explanation}
+Row grain hint: {row_grain_hint}
 Columns: {columns}
 Total rows: {len(data)}
 Sample data ({len(sample)} rows):
@@ -128,6 +151,9 @@ Rules:
 - High row count is NEVER a reason to skip; specify aggregation instead
 - aggregation types: topN, timeBucket, histogram, frequency
 - Keep series to <=3 fields
+- Prefer charts that match the current result label/explanation, not a previous result
+- If row grain indicates repeated detail rows (diagnosis, procedure, coverage, code-level rows),
+  do NOT choose a configuration that would sum repeated patient-level totals across those rows
 """
         try:
             content = ""
@@ -153,13 +179,14 @@ Rules:
         columns: List[str],
         data: List[Dict[str, Any]],
         config: Dict[str, Any],
+        result_context: Dict[str, Any],
     ) -> tuple[List[Dict], bool, Optional[str]]:
         """Returns (chart_data, aggregated, aggregation_note)."""
         aggregation = config.get("aggregation")
         sort_by = config.get("sortBy")
 
         if aggregation:
-            chart_data, note = self._apply_aggregation(data, config, aggregation)
+            chart_data, note = self._apply_aggregation(data, config, aggregation, result_context)
             return chart_data[:MAX_CHART_POINTS], True, note
 
         working = list(data)
@@ -182,6 +209,7 @@ Rules:
         data: List[Dict[str, Any]],
         config: Dict[str, Any],
         aggregation: Dict[str, Any],
+        result_context: Dict[str, Any],
     ) -> tuple[List[Dict], str]:
         agg_type = aggregation.get("type", "topN")
         metric = aggregation.get("metric", "")
@@ -190,7 +218,15 @@ Rules:
         if agg_type == "topN":
             n = aggregation.get("n", 20)
             other_label = aggregation.get("otherLabel", "Other")
-            return self._agg_top_n(data, x_field, metric, config.get("series", []), n, other_label)
+            return self._agg_top_n(
+                data,
+                x_field,
+                metric,
+                config.get("series", []),
+                n,
+                other_label,
+                result_context,
+            )
 
         if agg_type == "frequency":
             field = aggregation.get("field", x_field)
@@ -213,14 +249,25 @@ Rules:
         series: List[Dict],
         n: int,
         other_label: str,
+        result_context: Dict[str, Any],
     ) -> tuple[List[Dict], str]:
         groups: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        group_rows: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         series_fields = [s["field"] for s in series] if series else ([metric] if metric else [])
+        deduped_fields: set[str] = set()
 
         for row in data:
             key = str(row.get(x_field, ""))
+            group_rows[key].append(row)
+
+        for key, rows in group_rows.items():
             for f in series_fields:
-                groups[key][f] += _numeric(row.get(f, 0))
+                values = [_numeric(row.get(f, 0)) for row in rows]
+                if self._should_dedupe_metric(f, rows, result_context):
+                    groups[key][f] = max(values) if values else 0.0
+                    deduped_fields.add(f)
+                else:
+                    groups[key][f] = sum(values)
 
         sort_field = metric or (series_fields[0] if series_fields else "")
         sorted_keys = sorted(groups.keys(), key=lambda k: groups[k].get(sort_field, 0), reverse=True)
@@ -237,7 +284,32 @@ Rules:
             chart_data.append(other)
 
         note = f"Top {n} of {len(groups)} categories by {sort_field}"
+        if deduped_fields:
+            deduped_list = ", ".join(sorted(deduped_fields))
+            note += f"; repeated-grain guardrail used max/unique semantics for {deduped_list}"
         return chart_data, note
+
+    def _should_dedupe_metric(
+        self,
+        field: str,
+        rows: List[Dict[str, Any]],
+        result_context: Dict[str, Any],
+    ) -> bool:
+        """Avoid summing repeated higher-level metrics across detail rows."""
+        if len(rows) <= 1:
+            return False
+
+        values = [_numeric(row.get(field, 0)) for row in rows]
+        repeated_grain = bool(result_context.get("row_grain_hint"))
+        lower_field = field.lower()
+
+        if len({round(value, 9) for value in values}) == 1:
+            return True
+
+        if repeated_grain and any(token in lower_field for token in _DEDUPED_METRIC_TOKENS):
+            return True
+
+        return False
 
     # ------------------------------------------------------------------
     # Stage 3: Size guard

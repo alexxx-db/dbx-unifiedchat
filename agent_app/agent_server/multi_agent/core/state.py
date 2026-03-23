@@ -49,6 +49,7 @@ class IntentMetadata(TypedDict):
 
 class QueryExecutionResult(TypedDict, total=False):
     """Normalized execution result metadata used by summary/rendering layers."""
+    status: str
     success: bool
     sql: str
     result: Any
@@ -58,6 +59,9 @@ class QueryExecutionResult(TypedDict, total=False):
     error_type: str
     query_number: int
     query_label: Optional[str]
+    skip_reason: Optional[str]
+    sql_explanation: Optional[str]
+    row_grain_hint: Optional[str]
 
 
 class AgentState(TypedDict):

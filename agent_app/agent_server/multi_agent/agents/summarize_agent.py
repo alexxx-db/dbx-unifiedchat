@@ -84,16 +84,27 @@ class ResultSummarizeAgent:
         return summary
     
     @staticmethod
-    def format_sql_download(sql_queries: List[str], labels: List[str] | None = None) -> str:
+    def format_sql_download(artifact_entries: List[dict]) -> str:
         """Collapsible SQL section with small data-URI download link."""
-        if not sql_queries:
+        if not artifact_entries:
             return ""
         import base64
 
         parts: list[str] = ['\n\n<details name="sql-accordion"><summary>Show SQL</summary>\n\n<div class="accordion-content">\n\n']
-        for idx, sql in enumerate(sql_queries):
-            label = (labels[idx] if labels and idx < len(labels) and labels[idx] else "")
-            fname = f"query{'_' + str(idx + 1) if len(sql_queries) > 1 else ''}.sql"
+        for idx, entry in enumerate(artifact_entries):
+            sql = entry.get("sql") or ""
+            label = entry.get("label") or ""
+            status = entry.get("status", "success")
+            if not sql:
+                if status == "skipped":
+                    sql = (
+                        "-- No SQL generated for this planned query.\n"
+                        f"-- {entry.get('skip_reason', 'Skipped because the question was already covered.')}"
+                    )
+                else:
+                    sql = "-- No SQL captured for this query."
+
+            fname = f"query{'_' + str(idx + 1) if len(artifact_entries) > 1 else ''}.sql"
             encoded = base64.b64encode(sql.encode()).decode()
             # Use a custom language tag so the frontend renders copy+download buttons.
             # Format: ```sql-download:filename:base64data\n{sql}\n```
@@ -137,36 +148,41 @@ class ResultSummarizeAgent:
         return "\n".join(lines)
 
     @staticmethod
+    def _format_artifact_context(entry: dict, query_number: int) -> str:
+        label = entry.get("label") or f"Query {query_number}"
+        status = entry.get("status", "success")
+        lines = [f"### Query {query_number} — {label}", ""]
+        if status == "skipped":
+            lines.append("- **Status:** Skipped / already covered")
+        elif status == "failed":
+            lines.append("- **Status:** Failed")
+        else:
+            lines.append("- **Status:** Executed")
+
+        skip_reason = entry.get("skip_reason")
+        if skip_reason:
+            lines.append(f"- **Reason:** {skip_reason}")
+        return "\n".join(lines)
+
+    @staticmethod
     def format_sql_explanation(
-        explanation: str = "",
-        explanation_entries: List[dict] | None = None,
-        labels: List[str] | None = None,
+        artifact_entries: List[dict] | None = None,
     ) -> str:
         """Collapsible SQL explanation section with clean markdown formatting."""
-        entries = [entry for entry in (explanation_entries or []) if entry.get("explanation")]
-        if not entries and explanation:
-            entries = [{"explanation": explanation, "query_labels": labels or []}]
-        if not entries:
+        entries = list(artifact_entries or [])
+        if not any(entry.get("sql_explanation") or entry.get("skip_reason") for entry in entries):
             return ""
 
         parts: list[str] = ['\n\n<details name="sql-accordion"><summary>SQL Explanation</summary>\n\n<div class="accordion-content">\n\n']
 
-        if len(entries) == 1:
-            entry = entries[0]
-            query_labels = entry.get("query_labels") or labels or []
-            if query_labels:
-                rendered_labels = [f"- {label}" for label in query_labels if label]
-                if rendered_labels:
-                    parts.append("**Queries covered**\n\n")
-                    parts.append("\n".join(rendered_labels))
-                    parts.append("\n\n")
-            parts.append(ResultSummarizeAgent._normalize_markdown_block(entry.get("explanation", "")))
-        else:
-            for idx, entry in enumerate(entries, 1):
-                parts.append(ResultSummarizeAgent._format_attempt_context(entry, idx))
-                parts.append("\n\n")
-                parts.append(ResultSummarizeAgent._normalize_markdown_block(entry.get("explanation", "")))
-                parts.append("\n\n")
+        for idx, entry in enumerate(entries, 1):
+            if not entry.get("sql_explanation") and not entry.get("skip_reason"):
+                continue
+            parts.append(ResultSummarizeAgent._format_artifact_context(entry, idx))
+            parts.append("\n\n")
+            explanation = entry.get("sql_explanation") or entry.get("skip_reason") or ""
+            parts.append(ResultSummarizeAgent._normalize_markdown_block(explanation))
+            parts.append("\n\n")
 
         parts.append("\n\n</div>\n</details>\n")
         return "".join(parts)
@@ -222,16 +238,31 @@ class ResultSummarizeAgent:
         MAX_PREVIEW = 200
         MAX_JSON = 20000
         successful_results = [result for result in execution_results if result and result.get("success")]
+        skipped_results = [result for result in execution_results if result and result.get("status") == "skipped"]
+        failed_results = [
+            result
+            for result in execution_results
+            if result and not result.get("success") and result.get("status") != "skipped"
+        ]
 
         prompt += (
             f"**Result sets:** {len(execution_results)} total, "
-            f"{len(successful_results)} successful\n"
+            f"{len(successful_results)} successful, "
+            f"{len(skipped_results)} skipped, "
+            f"{len(failed_results)} failed\n"
         )
 
         for i, result in enumerate(execution_results):
+            status = result.get("status")
+            label = result.get("query_label")
+            label_suffix = f" — {label}" if label else ""
+            if status == "skipped":
+                prompt += (
+                    f"\n**Query {i+1}{label_suffix}:** Skipped — "
+                    f"{result.get('skip_reason', 'already covered by prior results')}\n"
+                )
+                continue
             if not result or not result.get('success'):
-                label = result.get("query_label")
-                label_suffix = f" — {label}" if label else ""
                 prompt += f"\n**Query {i+1}{label_suffix}:** Failed — {result.get('error', 'unknown')}\n"
                 continue
             row_count = result.get('row_count', 0)
@@ -241,10 +272,6 @@ class ResultSummarizeAgent:
             preview_json = self._safe_json_dumps(preview, indent=2)
             if len(preview_json) > MAX_JSON:
                 preview_json = preview_json[:MAX_JSON] + "\n..."
-
-            label = result.get("query_label")
-            label_suffix = f" — {label}" if label else ""
-
             prompt += f"""
 **Query {i+1}{label_suffix} Result:** {row_count} rows, columns: {', '.join(columns[:12])}{'...' if len(columns) > 12 else ''}
 Data preview:
