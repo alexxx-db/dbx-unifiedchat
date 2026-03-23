@@ -130,9 +130,11 @@ export function Chat({
     resume: id !== undefined && initialMessages.length > 0, // Enable automatic stream resumption
     transport: new ChatTransport({
       onStreamPart: (part) => {
-        // As soon as we recive a stream part, we fetch the chat history again for new chats
+        // For brand-new chats, wait until the first stream chunk arrives before
+        // navigating so we don't abort the initial request before the chat exists.
         if (isNewChat && !didFetchHistoryOnNewChat.current) {
           fetchChatHistory();
+          softNavigateToChatId(id, chatHistoryEnabled);
           didFetchHistoryOnNewChat.current = true;
         }
         // Reset resume attempts when we successfully receive stream parts
@@ -339,9 +341,8 @@ export function Chat({
       });
 
       setHasAppendedQuery(true);
-      softNavigateToChatId(id, chatHistoryEnabled);
     }
-  }, [query, sendMessage, hasAppendedQuery, id, chatHistoryEnabled]);
+  }, [query, sendMessage, hasAppendedQuery]);
 
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
 

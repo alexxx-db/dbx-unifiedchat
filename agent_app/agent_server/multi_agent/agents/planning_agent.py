@@ -34,8 +34,8 @@ from databricks_langchain import DatabricksVectorSearch
 from databricks.sdk import WorkspaceClient
 
 
-def _get_pat_workspace_client() -> WorkspaceClient:
-    """Build a WorkspaceClient with auth_type='pat' so databricks-vectorsearch can consume it."""
+def _get_vector_search_workspace_client() -> WorkspaceClient:
+    """Build a WorkspaceClient that databricks-vectorsearch can consume."""
     host = os.environ.get("DATABRICKS_HOST")
     token = os.environ.get("DATABRICKS_TOKEN")
     if host and token:
@@ -60,7 +60,7 @@ class PlanningAgent:
         """
         self.llm = llm
         self.vector_search_index = vector_search_index
-        self._workspace_client = _get_pat_workspace_client()
+        self._workspace_client = _get_vector_search_workspace_client()
         self.name = "Planning"
     
     def search_relevant_spaces(self, query: str, num_results: int = 5) -> List[Dict[str, Any]]:
@@ -81,6 +81,7 @@ class PlanningAgent:
         vs = DatabricksVectorSearch(
             index_name=self.vector_search_index,
             columns=["space_id", "space_title", "searchable_content"],
+            workspace_client=self._workspace_client,
         )
 
         docs_with_scores = vs.similarity_search_with_score(
