@@ -314,6 +314,7 @@ class SQLExecutionAgent:
             Each result includes a "query_number" field (1-indexed).
         """
         import concurrent.futures
+        import contextvars
         
         # Fast path: skip threading overhead for single query
         if len(sql_queries) <= 1:
@@ -326,10 +327,11 @@ class SQLExecutionAgent:
         print(f"⚡ Executing {len(sql_queries)} queries in parallel (max_workers={min(len(sql_queries), max_workers)})")
         
         results = [None] * len(sql_queries)  # Pre-allocate to preserve ordering
+        trace_ctx = contextvars.copy_context()
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(sql_queries), max_workers)) as executor:
             future_to_idx = {
-                executor.submit(self.execute_sql, query, max_rows, return_format): idx
+                executor.submit(trace_ctx.run, self.execute_sql, query, max_rows, return_format): idx
                 for idx, query in enumerate(sql_queries)
             }
             
