@@ -471,8 +471,50 @@ def summarize_node(state: AgentState) -> dict:
     summarize_agent = get_cached_summarize_agent()
     config = get_config()
     track_agent_model_usage("summarize", config.llm.summarize_endpoint)
+    chart_gen = _get_cached_chart_generator()
+    original_query = state.get("original_query", "")
 
     MAX_PREVIEW_ROWS = 200
+
+    # --- 0b. Kick off chart generation in background (parallel with summary) ---
+    chart_futures = {}
+    chart_pool = None
+    chartable_entries = [
+        entry
+        for entry in artifact_entries
+        if entry.get("result")
+        and entry["result"].get("success")
+        and entry["result"].get("columns")
+        and entry["result"].get("result")
+    ]
+    if chart_gen and chartable_entries:
+        try:
+            chart_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(4, len(chartable_entries))
+            )
+            for entry in chartable_entries:
+                result_item = entry["result"]
+                chart_futures[entry["index"]] = (
+                    entry,
+                    chart_pool.submit(
+                        chart_gen.generate_chart,
+                        result_item.get("columns", []),
+                        result_item.get("result", []),
+                        original_query,
+                        {
+                            "label": entry.get("label"),
+                            "sql_explanation": entry.get("sql_explanation"),
+                            "row_grain_hint": entry.get("row_grain_hint"),
+                        },
+                    ),
+                )
+            print(f"⚡ Chart generation submitted for {len(chart_futures)} result set(s)")
+        except Exception as e:
+            print(f"⚠ Chart generation setup failed: {e}")
+            chart_futures = {}
+            if chart_pool:
+                chart_pool.shutdown(wait=False)
+                chart_pool = None
 
     writer({
         "type": "summarize_step",
@@ -486,44 +528,29 @@ def summarize_node(state: AgentState) -> dict:
     else:
         summary = summarize_agent(context, writer=writer)
 
-    # --- 2. Chart generation per result set (streamed as deltas) ---
-    chart_gen = _get_cached_chart_generator()
-    original_query = state.get("original_query", "")
-
+    # --- 2. Collect chart generation result (already running in background) ---
     for entry in artifact_entries:
         idx = entry["index"]
-        result_item = entry["result"]
-        if not result_item or not result_item.get("success"):
+        future_entry = chart_futures.get(idx)
+        if not future_entry:
             continue
-        columns = result_item.get("columns", [])
-        data = result_item.get("result", [])
-        if not columns or not data:
-            continue
-
-        if chart_gen:
-            try:
-                payload = chart_gen.generate_chart(
-                    columns,
-                    data,
-                    original_query,
-                    {
-                        "label": entry.get("label"),
-                        "sql_explanation": entry.get("sql_explanation"),
-                        "row_grain_hint": entry.get("row_grain_hint"),
-                    },
-                )
-                if payload:
-                    label = entry.get("label")
-                    if label:
-                        payload.setdefault("config", {})
-                        payload["config"]["title"] = label
-                    chart_json = _json.dumps(payload, default=str)
-                    chart_block = f"\n\n```echarts-chart\n{chart_json}\n```\n"
-                    summary += chart_block
-                    writer({"type": "text_delta", "content": chart_block})
-                    print(f"✓ Chart block inserted for result {idx} ({len(chart_json)} bytes)")
-            except Exception as e:
-                print(f"⚠ Chart generation failed for result {idx}: {e}")
+        future_meta, future = future_entry
+        try:
+            payload = future.result(timeout=30)
+            if payload:
+                label = future_meta.get("label")
+                if label:
+                    payload.setdefault("config", {})
+                    payload["config"]["title"] = label
+                chart_json = _json.dumps(payload, default=str)
+                chart_block = f"\n\n```echarts-chart\n{chart_json}\n```\n"
+                summary += chart_block
+                writer({"type": "text_delta", "content": chart_block})
+                print(f"✓ Chart block inserted for result {idx} ({len(chart_json)} bytes)")
+        except Exception as e:
+            print(f"⚠ Chart generation failed for result {idx}: {e}")
+    if chart_pool:
+        chart_pool.shutdown(wait=False)
 
     # --- 3. Downloadable paginated tables (rendered after charts) ---
     import base64

@@ -1,6 +1,26 @@
 import { test, expect } from '../fixtures';
-import { mockResponsesApiMultiDeltaTextStream } from '../helpers';
 import { ChatPage } from '../pages/chat';
+
+function buildUiMessageStream(chunks: string[]) {
+  const messageId = crypto.randomUUID();
+  const textId = crypto.randomUUID();
+  const events = [
+    { type: 'start', messageId },
+    { type: 'start-step' },
+    { type: 'text-start', id: textId },
+    ...chunks.map((delta) => ({ type: 'text-delta', id: textId, delta })),
+    { type: 'text-end', id: textId },
+    { type: 'finish-step' },
+    { type: 'data-traceId', data: 'tr-chart-test' },
+  ];
+  return `${events.map((event) => `data: ${JSON.stringify(event)}`).join('\n\n')}\n\ndata: [DONE]\n\n`;
+}
+
+function buildChartStream(spec: Record<string, unknown>) {
+  return buildUiMessageStream([
+    `Here is a chart.\n\n\`\`\`echarts-chart\n${JSON.stringify(spec)}\n\`\`\`\n`,
+  ]);
+}
 
 test.describe('Chat', () => {
   test('should send a message and receive a streaming response', async ({
@@ -40,6 +60,93 @@ test.describe('Chat', () => {
 
     const userMsg = await chatPage.getRecentUserMessage();
     await expect(userMsg).toContainText(userText);
+  });
+});
+
+test.describe('Interactive Charts', () => {
+  test('should render streamed chart payload with interactive controls', async ({
+    adaContext,
+  }) => {
+    const { page } = adaContext;
+    const chatPage = new ChatPage(page);
+
+    await page.route('**/api/chat*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: buildChartStream({
+          config: {
+            chartType: 'dualAxis',
+            title: 'Monthly spend and claims',
+            xAxisField: 'service_month',
+            series: [
+              {
+                field: 'claim_count',
+                name: 'Claim Count',
+                format: 'number',
+                chartType: 'bar',
+                axis: 'primary',
+              },
+              {
+                field: 'paid_amount',
+                name: 'Paid Amount',
+                format: 'currency',
+                chartType: 'line',
+                axis: 'secondary',
+              },
+            ],
+            supportedChartTypes: ['dualAxis', 'bar', 'line'],
+            toolbox: true,
+          },
+          chartData: [
+            { service_month: '2024-01', claim_count: 10, paid_amount: 1200 },
+            { service_month: '2024-02', claim_count: 15, paid_amount: 1800 },
+          ],
+          downloadData: [
+            { service_month: '2024-01', claim_count: 10, paid_amount: 1200 },
+            { service_month: '2024-02', claim_count: 15, paid_amount: 1800 },
+          ],
+          totalRows: 2,
+          aggregated: false,
+          aggregationNote: null,
+        }),
+      });
+    });
+
+    await chatPage.createNewChat();
+    await chatPage.sendUserMessage('Show monthly spend and claims');
+    await chatPage.isGenerationComplete();
+
+    await expect(page.getByRole('button', { name: 'Dual Axis' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Bar' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Line' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Download CSV' })).toBeVisible();
+    await expect(page.getByRole('img').filter({ hasText: /\$/ }).first()).toBeVisible();
+  });
+
+  test('should fall back to regular code rendering for malformed chart payloads', async ({
+    adaContext,
+  }) => {
+    const { page } = adaContext;
+    const chatPage = new ChatPage(page);
+
+    await page.route('**/api/chat*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: buildUiMessageStream([
+          'Malformed chart below.\n\n```echarts-chart\n{"config":{"chartType":"bar","series":[]},"chartData":[]}\n```\n',
+        ]),
+      });
+    });
+
+    await chatPage.createNewChat();
+    await chatPage.sendUserMessage('Render malformed chart');
+    await chatPage.isGenerationComplete();
+
+    await expect(page.getByRole('button', { name: 'Download CSV' })).toHaveCount(0);
+    const { content } = await chatPage.getRecentAssistantMessage();
+    await expect(content).toContainText('"chartType":"bar"');
   });
 });
 

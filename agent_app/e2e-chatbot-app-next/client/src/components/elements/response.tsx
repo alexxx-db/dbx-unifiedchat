@@ -16,6 +16,7 @@ import { DatabricksMessageCitationStreamdownIntegration } from '../databricks-me
 import { Streamdown } from 'streamdown';
 import { PaginatedTable } from './paginated-table';
 import { TabWidget } from './tab-widget';
+import { parseChartSpec } from './chart-spec';
 
 const InteractiveChart = lazy(() =>
   import('./interactive-chart').then((m) => ({ default: m.InteractiveChart })),
@@ -206,8 +207,8 @@ function EChartsCodeBlock(props: Record<string, unknown>) {
   const children = typeof props.children === 'string' ? props.children : undefined;
 
   if (className === 'language-echarts-chart' && children) {
-    try {
-      const spec = JSON.parse(children);
+    const spec = parseChartSpec(children);
+    if (spec) {
       return (
         <ChartErrorBoundary>
           <Suspense fallback={<div className="h-[400px] animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />}>
@@ -215,8 +216,6 @@ function EChartsCodeBlock(props: Record<string, unknown>) {
           </Suspense>
         </ChartErrorBoundary>
       );
-    } catch {
-      // fall through to default code block
     }
   }
 
