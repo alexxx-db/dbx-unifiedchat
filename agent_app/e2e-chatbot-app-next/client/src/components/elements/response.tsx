@@ -7,7 +7,9 @@ import {
   memo,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { DatabricksMessageCitationStreamdownIntegration } from '../databricks-message-citation';
@@ -342,16 +344,54 @@ const streamdownComponents: Record<string, any> = {
 };
 
 type ResponseProps = ComponentProps<typeof Streamdown>;
+type BufferedResponseProps = ResponseProps & {
+  isStreaming?: boolean;
+};
+
+const STREAMDOWN_BUFFER_MS = 180;
 
 export const Response = memo(
-  (props: ResponseProps) => {
+  ({ isStreaming = false, ...props }: BufferedResponseProps) => {
+    const [bufferedChildren, setBufferedChildren] = useState(props.children);
+    const lastFlushAtRef = useRef(0);
+
+    useEffect(() => {
+      if (typeof props.children !== 'string') {
+        setBufferedChildren(props.children);
+        lastFlushAtRef.current = Date.now();
+        return;
+      }
+
+      if (!isStreaming) {
+        setBufferedChildren(props.children);
+        lastFlushAtRef.current = Date.now();
+        return;
+      }
+
+      const now = Date.now();
+      const elapsed = now - lastFlushAtRef.current;
+
+      if (elapsed >= STREAMDOWN_BUFFER_MS) {
+        setBufferedChildren(props.children);
+        lastFlushAtRef.current = now;
+        return;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        setBufferedChildren(props.children);
+        lastFlushAtRef.current = Date.now();
+      }, STREAMDOWN_BUFFER_MS - elapsed);
+
+      return () => window.clearTimeout(timeoutId);
+    }, [isStreaming, props.children]);
+
     const raw =
-      typeof props.children === 'string' ? props.children : '';
+      typeof bufferedChildren === 'string' ? bufferedChildren : '';
 
     const processed = useMemo(() => {
-      if (typeof props.children !== 'string') return props.children;
+      if (typeof bufferedChildren !== 'string') return bufferedChildren;
       try {
-        let text = props.children;
+        let text = bufferedChildren;
 
         // Auto-collapse the Processing Steps <details open> when summary content follows.
         const processingStepsStart = text.indexOf('<summary>Processing Steps</summary>');
@@ -387,9 +427,9 @@ export const Response = memo(
         return text;
       } catch (e) {
         console.error('Response processing error:', e);
-        return props.children;
+        return bufferedChildren;
       }
-    }, [props.children]);
+    }, [bufferedChildren]);
 
     return (
       <StreamdownErrorBoundary fallbackText={raw}>
@@ -402,7 +442,9 @@ export const Response = memo(
       </StreamdownErrorBoundary>
     );
   },
-  (prevProps, nextProps) => prevProps.children === nextProps.children,
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children &&
+    prevProps.isStreaming === nextProps.isStreaming,
 );
 
 Response.displayName = 'Response';

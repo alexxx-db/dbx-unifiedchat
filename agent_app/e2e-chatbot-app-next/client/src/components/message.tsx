@@ -200,7 +200,9 @@ const PurePreviewMessage = ({
                           : undefined
                       }
                     >
-                      <Response>
+                      <Response
+                        isStreaming={isLoading && message.role === 'assistant'}
+                      >
                         {sanitizeText(joinMessagePartSegments(parts))}
                       </Response>
                     </MessageContent>
