@@ -19,11 +19,6 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
 import { useChatData } from '@/hooks/useChatData';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from './ui/collapsible';
-import {
   CircleCheck,
   ChevronDownIcon,
   GlobeIcon,
@@ -65,8 +60,9 @@ const PureChatItem = ({
     chatId: chat.id,
     initialVisibilityType: chat.visibility,
   });
-  const { chatData, isLoading } = useChatData(chat.id, isActive);
   const [isExpanded, setIsExpanded] = useState(isActive);
+  // Lazy-load: only fetch when active or when user has expanded this item
+  const { chatData, isLoading } = useChatData(chat.id, isActive || isExpanded);
   const turnMessages = useMemo(
     () =>
       (chatData?.messages ?? []).filter((message) => message.role === 'user'),
@@ -79,10 +75,20 @@ const PureChatItem = ({
     }
   }, [isActive]);
 
-  return (
+  const hasTurnData = isLoading || turnMessages.length > 0;
+
+  const chatRow = (
     <SidebarMenuItem data-testid="chat-history-item">
       <SidebarMenuButton asChild isActive={isActive}>
         <Link to={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+          <ChevronDownIcon
+            className={`size-3 shrink-0 text-sidebar-foreground/50 transition-transform ${isExpanded ? '' : '-rotate-90'}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsExpanded((v) => !v);
+            }}
+          />
           <span>{chat.title}</span>
         </Link>
       </SidebarMenuButton>
@@ -145,49 +151,37 @@ const PureChatItem = ({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {isActive && (isLoading || turnMessages.length > 0) && (
-        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="mt-1 flex w-full items-center gap-1 px-2 text-sidebar-foreground/70 text-xs transition-colors hover:text-sidebar-foreground"
-            >
-              <ChevronDownIcon
-                className={`size-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-              />
-              <span>
-                {isLoading ? 'Loading turns...' : `Turns (${turnMessages.length})`}
-              </span>
-            </button>
-          </CollapsibleTrigger>
-
-          <CollapsibleContent className="mt-1">
-            <div className="ml-3 border-sidebar-border/60 border-l pl-2">
-              {isLoading ? (
-                <div className="flex items-center gap-2 px-2 py-1 text-sidebar-foreground/60 text-xs">
-                  <LoaderIcon className="size-3 animate-spin" />
-                  <span>Loading turns...</span>
-                </div>
-              ) : (
-                turnMessages.map((message, index) => (
-                  <Link
-                    key={message.id}
-                    to={`/chat/${chat.id}?turn=${message.id}`}
-                    onClick={() => setOpenMobile(false)}
-                    className="flex w-full rounded-md px-2 py-1 text-left text-sidebar-foreground/80 text-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                  >
-                    <span className="truncate">
-                      {index + 1}. {getTurnLabel(message, index)}
-                    </span>
-                  </Link>
-                ))
-              )}
+      {isExpanded && (
+        <div className="mt-1 ml-3 border-sidebar-border/60 border-l pl-2">
+          {isLoading ? (
+            <div className="flex items-center gap-2 px-2 py-1 text-sidebar-foreground/60 text-xs">
+              <LoaderIcon className="size-3 animate-spin" />
+              <span>Loading turns...</span>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
+          ) : hasTurnData ? (
+            turnMessages.map((message, index) => (
+              <Link
+                key={message.id}
+                to={`/chat/${chat.id}?turn=${message.id}`}
+                onClick={() => setOpenMobile(false)}
+                className="flex w-full rounded-md px-2 py-1 text-left text-sidebar-foreground/80 text-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <span className="truncate">
+                  {index + 1}. {getTurnLabel(message, index)}
+                </span>
+              </Link>
+            ))
+          ) : (
+            <div className="px-2 py-1 text-sidebar-foreground/40 text-xs">
+              No turns yet
+            </div>
+          )}
+        </div>
       )}
     </SidebarMenuItem>
   );
+
+  return chatRow;
 };
 
 export const ChatItem = memo(PureChatItem, (prevProps, nextProps) => {
