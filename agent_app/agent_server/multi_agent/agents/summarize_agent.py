@@ -170,19 +170,53 @@ class ResultSummarizeAgent:
     ) -> str:
         """Collapsible SQL explanation section with clean markdown formatting."""
         entries = list(artifact_entries or [])
-        if not any(entry.get("sql_explanation") or entry.get("skip_reason") for entry in entries):
+        relevant = [e for e in entries if e.get("sql_explanation") or e.get("skip_reason")]
+        if not relevant:
             return ""
 
-        parts: list[str] = ['\n\n<details name="sql-accordion"><summary>SQL Explanation</summary>\n\n<div class="accordion-content">\n\n']
+        normalize = ResultSummarizeAgent._normalize_markdown_block
+        format_ctx = ResultSummarizeAgent._format_artifact_context
 
-        for idx, entry in enumerate(entries, 1):
-            if not entry.get("sql_explanation") and not entry.get("skip_reason"):
-                continue
-            parts.append(ResultSummarizeAgent._format_artifact_context(entry, idx))
+        parts: list[str] = [
+            '\n\n<details name="sql-accordion"><summary>SQL Explanation</summary>'
+            '\n\n<div class="accordion-content">\n\n'
+        ]
+
+        if len(relevant) > 1:
+            per_entry_text = [
+                normalize(e.get("sql_explanation") or e.get("skip_reason") or "")
+                for e in relevant
+            ]
+            from collections import Counter
+            counts = Counter(t for t in per_entry_text if t)
+            shared_texts = {t for t, c in counts.items() if c > 1}
+
+            if shared_texts:
+                for shared in shared_texts:
+                    parts.append(shared)
+                    parts.append("\n\n")
+                for idx, (entry, text) in enumerate(zip(relevant, per_entry_text), 1):
+                    parts.append(format_ctx(entry, idx))
+                    parts.append("\n\n")
+                    if text and text not in shared_texts:
+                        parts.append(text)
+                        parts.append("\n\n")
+            else:
+                for idx, (entry, text) in enumerate(zip(relevant, per_entry_text), 1):
+                    parts.append(format_ctx(entry, idx))
+                    parts.append("\n\n")
+                    if text:
+                        parts.append(text)
+                        parts.append("\n\n")
+        else:
+            entry = relevant[0]
+            parts.append(format_ctx(entry, 1))
             parts.append("\n\n")
             explanation = entry.get("sql_explanation") or entry.get("skip_reason") or ""
-            parts.append(ResultSummarizeAgent._normalize_markdown_block(explanation))
-            parts.append("\n\n")
+            normalized = normalize(explanation)
+            if normalized:
+                parts.append(normalized)
+                parts.append("\n\n")
 
         parts.append("\n\n</div>\n</details>\n")
         return "".join(parts)
