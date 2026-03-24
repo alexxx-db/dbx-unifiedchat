@@ -8,6 +8,7 @@ MLflow GenAI Server decorated functions (Databricks Apps).
 import contextvars
 import json
 import logging
+import threading
 import time
 from typing import AsyncGenerator
 from uuid import uuid4
@@ -83,20 +84,28 @@ except Exception as e:
     logger.warning(f"Failed to load config at import time: {e}")
 
 _store = None
+_store_lock = threading.Lock()
 
 
 def _get_store():
     """Lazy initialization of DatabricksStore for long-term memory."""
     global _store
-    if _store is None and LAKEBASE_INSTANCE_NAME:
+    if _store is not None:
+        return _store
+    if not LAKEBASE_INSTANCE_NAME:
+        return None
+    with _store_lock:
+        if _store is not None:
+            return _store
         from databricks_langchain import DatabricksStore
         logger.info(f"Initializing DatabricksStore with instance: {LAKEBASE_INSTANCE_NAME}")
-        _store = DatabricksStore(
+        store = DatabricksStore(
             instance_name=LAKEBASE_INSTANCE_NAME,
             embedding_endpoint=EMBEDDING_ENDPOINT,
             embedding_dims=EMBEDDING_DIMS,
         )
-        _store.setup()
+        store.setup()
+        _store = store
         logger.info("DatabricksStore initialized")
     return _store
 
