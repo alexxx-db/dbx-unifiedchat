@@ -124,7 +124,7 @@ export const TabWidget = memo(function TabWidget({ tabs, components }: TabWidget
         <Streamdown
           key={activeIdx}
           components={components}
-          className="flex flex-col gap-4"
+          className="markdown-content flex flex-col gap-4"
         >
           {tabs[activeIdx].content}
         </Streamdown>

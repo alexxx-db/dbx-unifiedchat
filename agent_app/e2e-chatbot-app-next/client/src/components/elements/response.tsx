@@ -434,7 +434,7 @@ export const Response = memo(
       <StreamdownErrorBoundary fallbackText={raw}>
         <Streamdown
           components={streamdownComponents}
-          className="flex flex-col gap-4"
+          className="markdown-content flex flex-col gap-4"
           {...props}
           children={processed}
         />

@@ -210,6 +210,33 @@
   }
 }
 
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.markdown-content ul {
+  list-style: disc;
+}
+
+.markdown-content ol {
+  list-style: decimal;
+}
+
+.markdown-content li {
+  display: list-item;
+  margin: 0.25rem 0;
+}
+
+.markdown-content ul ul {
+  list-style: circle;
+}
+
+.markdown-content ol ol {
+  list-style: lower-alpha;
+}
+
 .skeleton {
   * {
     pointer-events: none !important;
