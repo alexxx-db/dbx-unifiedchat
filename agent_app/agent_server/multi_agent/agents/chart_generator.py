@@ -217,7 +217,7 @@ class ChartGenerator:
         sql_explanation = result_context.get("sql_explanation") or ""
         row_grain_hint = result_context.get("row_grain_hint") or ""
 
-        return f"""You are a data-visualization expert. Given a query result, decide how to chart it.
+        return f"""You are a data-visualization expert who creates visually diverse, insightful charts. Given a query result, choose the BEST chart type for the data shape — not the most common one.
 
 User query: {original_query}
 Result label: {label}
@@ -236,11 +236,25 @@ You may ONLY choose options from this capability model:
 - time buckets: {", ".join(SUPPORTED_TIME_BUCKETS)}
 - aggregate functions: {", ".join(SUPPORTED_AGGREGATIONS)}
 
+CHART SELECTION GUIDE — pick the type that best fits the data:
+- bar/grouped bar: comparing discrete categories on ONE metric (e.g. top 10 providers by spend)
+- line: trends over time with a date/time x-axis
+- area/stackedArea: trends over time where you want to show volume or composition changing
+- scatter: relationship between TWO numeric variables (e.g. age vs. cost)
+- pie: share/composition when there are <=6 categories and one metric
+- stackedBar: composition across categories when you have a groupBy dimension
+- normalizedStackedBar: percent-of-total composition across categories
+- heatmap: density or magnitude across TWO categorical dimensions (e.g. benefit_type vs. service_year)
+- boxplot: distribution spread of a numeric field across groups
+- dualAxis: comparing TWO metrics with very different scales (e.g. count on left, dollars on right)
+- rankingSlope: how entity rankings change between two periods
+- deltaComparison: period-over-period change (e.g. this year vs last year)
+
 Return ONLY valid JSON (no markdown, no explanation):
 {{
   "plottable": true,
-  "chartType": "bar",
-  "title": "short chart title",
+  "chartType": "<choose the best type from the guide above>",
+  "title": "short descriptive chart title",
   "xAxisField": "category_or_time_field",
   "groupByField": "optional_group_field_or_period_field",
   "layout": "grouped"|"stacked"|"normalized"|null,
@@ -263,18 +277,31 @@ Return ONLY valid JSON (no markdown, no explanation):
   ]
 }}
 
-Examples:
-- Time series: chartType=line, transform={{"type":"timeBucket","field":"service_date","bucket":"month","metric":"paid_amount","function":"sum"}}
-- Distribution: chartType=bar, transform={{"type":"histogram","field":"paid_amount","bins":12}}
-- Composition: chartType=stackedBar, layout=stacked, transform={{"type":"topN","metric":"total_paid_amount","n":10,"otherLabel":"Other"}}
+Examples for EACH chart type:
+- Trend over time: chartType=line, xAxisField="service_date", transform={{"type":"timeBucket","field":"service_date","bucket":"month","metric":"paid_amount","function":"sum"}}
+- Stacked area trend: chartType=stackedArea, layout=stacked, xAxisField="service_date", groupByField="benefit_type", transform={{"type":"timeBucket","field":"service_date","bucket":"quarter","metric":"paid_amount","function":"sum"}}
+- Distribution histogram: chartType=bar, transform={{"type":"histogram","field":"paid_amount","bins":12}}
+- Top N categories: chartType=bar, transform={{"type":"topN","metric":"total_paid_amount","n":10,"otherLabel":"Other"}}, sortBy={{"field":"total_paid_amount","order":"desc"}}
+- Stacked composition: chartType=stackedBar, layout=stacked, groupByField="benefit_type", transform={{"type":"topN","metric":"paid_amount","n":8,"otherLabel":"Other"}}
 - Percent composition: chartType=normalizedStackedBar, layout=normalized, transform={{"type":"percentOfTotal","metric":"member_count"}}
-- Heatmap: chartType=heatmap, groupByField="benefit_type", transform={{"type":"heatmap","metric":"paid_amount","function":"sum"}}
-- Comparison: chartType=dualAxis with one bar series on primary axis and one line series on secondary axis
+- Scatter correlation: chartType=scatter, xAxisField="current_age", series=[{{"field":"total_paid","name":"Total Paid","format":"currency"}}]
+- Pie share: chartType=pie, xAxisField="gender", series=[{{"field":"member_count","name":"Members","format":"number"}}]
+- Heatmap: chartType=heatmap, xAxisField="service_year", groupByField="benefit_type", transform={{"type":"heatmap","metric":"paid_amount","function":"sum"}}
+- Boxplot spread: chartType=boxplot, xAxisField="benefit_type", transform={{"type":"boxplot","field":"paid_amount"}}
+- Dual axis comparison: chartType=dualAxis, series=[{{"field":"total_paid","name":"Total Paid","format":"currency","chartType":"bar","axis":"primary"}},{{"field":"claim_count","name":"Claims","format":"number","chartType":"line","axis":"secondary"}}]
+- Ranking change: chartType=rankingSlope, xAxisField="provider_name", transform={{"type":"rankingSlope","entityField":"provider_name","periodField":"service_year","metric":"paid_amount","function":"sum","topN":10}}
+- Period delta: chartType=deltaComparison, xAxisField="benefit_type", transform={{"type":"deltaComparison","entityField":"benefit_type","periodField":"service_year","metric":"paid_amount","function":"sum"}}
 
 Rules:
+- DO NOT default to bar chart — actively consider which type best reveals the insight
 - plottable=false ONLY for single scalars, all-text, or no numeric dimension
 - High row count is NEVER a reason to skip; prefer a transform
 - Keep total series to <=3
+- If two numeric fields exist and no date, strongly consider scatter or dualAxis
+- If a date field exists, prefer line, area, or stackedArea over bar
+- If <=6 categories with one metric, consider pie
+- If two categorical dimensions with a metric, consider heatmap
+- If you see period/year columns, consider rankingSlope or deltaComparison
 - Prefer charts that match the current result label/explanation, not a previous result
 - If row grain indicates repeated detail rows (diagnosis, procedure, coverage, code-level rows),
   do NOT choose a configuration that would sum repeated patient-level totals across those rows
@@ -632,8 +659,16 @@ Rules:
             return "stackedBar"
         if x_field and kinds.get(x_field) == "date":
             return "line"
+
+        num_numeric = sum(1 for k in kinds.values() if k == "numeric")
+        num_categorical = sum(1 for k in kinds.values() if k == "categorical")
+
+        if num_numeric >= 2 and x_field and kinds.get(x_field) == "numeric":
+            return "scatter"
+        if num_categorical <= 6 and num_categorical >= 2 and len(series) == 1:
+            return "pie"
         if len(series) >= 2:
-            return "bar"
+            return "dualAxis"
         if len(series) == 1:
             return "bar"
 
