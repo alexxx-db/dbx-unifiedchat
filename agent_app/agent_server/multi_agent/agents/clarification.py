@@ -366,7 +366,6 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
             print(f"[generate_meta_answer] error: {e}")
             answer = "## Available Data Sources\n\nSorry, I encountered an error retrieving the data source information."
 
-        writer({"type": "meta_answer_content", "content": answer})
         writer({"type": "summary_complete", "content": "Meta-answer complete"})
 
         turn = dict(state.get("current_turn") or {})

@@ -531,9 +531,19 @@ Guidelines:
             else:
                 input_data = initial_state
 
-            for event in app.stream(input_data, run_config, stream_mode=["updates", "messages", "custom", "tasks"]):
-                event_type = event[0]
-                event_data = event[1]
+            for raw_event in app.stream(input_data, run_config, stream_mode=["updates", "messages", "custom", "tasks"], subgraphs=True):
+                # subgraphs=True: 3-tuple (ns, mode, data) or 2-tuple (ns, (mode, data))
+                if len(raw_event) == 3:
+                    ns, event_type, event_data = raw_event
+                elif isinstance(raw_event[0], tuple):
+                    ns = raw_event[0]
+                    event_type, event_data = raw_event[1]
+                else:
+                    ns, event_type, event_data = (), raw_event[0], raw_event[1]
+
+                # Skip subgraph-internal updates
+                if event_type == "updates" and ns:
+                    continue
                 
                 # Handle streaming text deltas (messages mode)
                 if event_type == "messages":

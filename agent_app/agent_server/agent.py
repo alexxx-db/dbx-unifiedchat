@@ -363,14 +363,28 @@ Guidelines:
                     else:
                         input_data = initial_state
 
-                    for event in app.stream(
+                    for raw_event in app.stream(
                         input_data,
                         run_config,
                         stream_mode=["updates", "messages", "custom", "tasks"],
+                        subgraphs=True,
                     ):
-                        if event[0] == "updates" and isinstance(event[1], dict):
-                            last_state.update(event[1])
-                        loop.call_soon_threadsafe(queue.put_nowait, event)
+                        # subgraphs=True: 3-tuple (ns, mode, data)
+                        # or 2-tuple (ns, (mode, data)) depending on LangGraph version
+                        if len(raw_event) == 3:
+                            ns, mode, data = raw_event
+                        elif isinstance(raw_event[0], tuple):
+                            ns = raw_event[0]
+                            mode, data = raw_event[1]
+                        else:
+                            ns, mode, data = (), raw_event[0], raw_event[1]
+
+                        if mode == "updates" and not ns and isinstance(data, dict):
+                            last_state.update(data)
+                        # Normalise to 3-tuple for downstream consumer
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait, (ns, mode, data)
+                        )
 
                 workflow_output: dict = {"status": "completed"}
                 if summary := last_state.get("final_summary"):
@@ -434,8 +448,13 @@ Guidelines:
             break
         if isinstance(event, Exception):
             raise event
-        event_type = event[0]
-        event_data = event[1]
+
+        # Normalised 3-tuple from _run_workflow: (namespace, mode, data)
+        ns, event_type, event_data = event
+
+        # Skip subgraph-internal updates (avoid noise and premature final-node detection)
+        if event_type == "updates" and ns:
+            continue
 
         # ── tasks: detect errors ──
         if event_type == "tasks":
