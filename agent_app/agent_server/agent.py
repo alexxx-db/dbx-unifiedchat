@@ -154,7 +154,7 @@ def _make_json_serializable(obj):
         if hasattr(obj, "id") and obj.id:
             msg_dict["id"] = str(obj.id)
         if hasattr(obj, "tool_calls") and obj.tool_calls:
-            msg_dict["tool_calls"] = [_make_json_serializable(tc) for tc in obj.tool_calls[:2]]
+            msg_dict["tool_calls"] = [_make_json_serializable(tc) for tc in obj.tool_calls]
         return msg_dict
     if isinstance(obj, dict):
         return {str(k): _make_json_serializable(v) for k, v in obj.items()}
@@ -170,13 +170,13 @@ def _make_json_serializable(obj):
 
 _CUSTOM_FORMATTERS = {
     "agent_thinking": lambda d: f"{d['agent'].upper()}: {d['content']}",
-    "agent_start": lambda d: f"Starting {d['agent']} agent for: {d.get('query', '')[:50]}...",
+    "agent_start": lambda d: f"Starting {d['agent']} agent for: {d.get('query', '')}",
     "intent_detection": lambda d: f"Intent: {d['result']} - {d.get('reasoning', '')}",
     "clarity_analysis": lambda d: f"Query {'clear' if d['clear'] else 'unclear'}: {d.get('reasoning', '')}",
     "vector_search_start": lambda d: f"Searching vector index: {d['index']}",
     "vector_search_results": lambda d: f"Found {d['count']} relevant spaces",
     "plan_formulation": lambda d: f"Execution plan: {d.get('strategy', 'unknown')} strategy",
-    "sql_generated": lambda d: f"SQL generated: {d.get('query_preview', '')}...",
+    "sql_generated": lambda d: f"SQL generated: {d.get('query', d.get('query_preview', ''))}",
     "sql_validation_start": lambda d: "Validating SQL query...",
     "sql_execution_start": lambda d: "Executing SQL query...",
     "sql_execution_complete": lambda d: f"Query complete: {d.get('rows', 0)} rows",
@@ -391,9 +391,9 @@ Guidelines:
 
                 workflow_output: dict = {"status": "completed"}
                 if summary := last_state.get("final_summary"):
-                    workflow_output["final_summary"] = summary[:4000] if len(summary) > 4000 else summary
+                    workflow_output["final_summary"] = summary
                 if sql := last_state.get("sql_query"):
-                    workflow_output["sql_query"] = sql[:2000] if len(sql) > 2000 else sql
+                    workflow_output["sql_query"] = sql
                 if er := last_state.get("execution_result"):
                     workflow_output["execution_result_status"] = er.get("status")
                     workflow_output["row_count"] = er.get("row_count")

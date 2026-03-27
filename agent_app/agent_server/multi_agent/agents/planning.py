@@ -309,7 +309,7 @@ def planning_node(state: AgentState) -> dict:
     planning_query = context_summary or query
     
     # Emit agent start event
-    writer({"type": "agent_start", "agent": "planning", "query": planning_query[:100]})
+    writer({"type": "agent_start", "agent": "planning", "query": planning_query})
     
     print(f"Query: {query}")
     print(f"Is follow-up: {is_followup}")

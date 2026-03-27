@@ -270,10 +270,9 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
             if hasattr(obj, 'name') and obj.name:
                 msg_dict["name"] = obj.name
             if hasattr(obj, 'tool_calls') and obj.tool_calls:
-                # Recursively serialize tool calls
                 msg_dict["tool_calls"] = [
-                    self.make_json_serializable(tc) for tc in obj.tool_calls[:2]
-                ]  # Limit to 2 for brevity
+                    self.make_json_serializable(tc) for tc in obj.tool_calls
+                ]
             return msg_dict
         
         # Handle dictionaries recursively
@@ -309,14 +308,14 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
         formatters = {
             # Existing formatters
             "agent_thinking": lambda d: f"💭 {d['agent'].upper()}: {d['content']}",
-            "agent_start": lambda d: f"🚀 Starting {d['agent']} agent for: {d.get('query', '')[:50]}...",
+            "agent_start": lambda d: f"🚀 Starting {d['agent']} agent for: {d.get('query', '')}",
             "intent_detection": lambda d: f"🎯 Intent: {d['result']} - {d.get('reasoning', '')}",
             "clarity_analysis": lambda d: f"✓ Query {'clear' if d['clear'] else 'unclear'}: {d.get('reasoning', '')}",
             "vector_search_start": lambda d: f"🔍 Searching vector index: {d['index']}",
             "vector_search_results": lambda d: f"📊 Found {d['count']} relevant spaces: {[s.get('space_id', 'unknown') for s in d.get('spaces', [])]}",
             "plan_formulation": lambda d: f"📋 Execution plan: {d.get('strategy', 'unknown')} strategy",
             "uc_function_call": lambda d: f"🔧 Calling UC function: {d['function']}",
-            "sql_generated": lambda d: f"📝 SQL generated: {d.get('query_preview', '')}...",
+            "sql_generated": lambda d: f"📝 SQL generated: {d.get('query', d.get('query_preview', ''))}",
             "sql_validation_start": lambda d: f"✅ Validating SQL query...",
             "sql_execution_start": lambda d: f"⚡ Executing SQL query...",
             "sql_execution_complete": lambda d: f"✓ Query complete: {d.get('rows', 0)} rows, {len(d.get('columns', []))} columns",
@@ -650,11 +649,11 @@ Guidelines:
                         elif hasattr(msg, '__class__') and msg.__class__.__name__ == 'ToolMessage':
                             try:
                                 tool_name = getattr(msg, 'name', 'unknown')
-                                tool_content = str(msg.content)[:200] if msg.content else "No content"
+                                tool_content = str(msg.content) if msg.content else "No content"
                                 yield ResponsesAgentStreamEvent(
                                     type="response.output_item.done",
                                     item=self.create_text_output_item(
-                                        text=f"🔨 Tool result ({tool_name}): {tool_content}...",
+                                        text=f"🔨 Tool result ({tool_name}): {tool_content}",
                                         id=str(uuid4())
                                     ),
                                 )

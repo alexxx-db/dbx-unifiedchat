@@ -429,7 +429,7 @@ def sql_synthesis_table_node(state: AgentState) -> dict:
                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
             
-            writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query_preview": sql_queries[0][:200], "content": f"{len(sql_queries)} SQL Queries Generated"})
+            writer({"type": "sql_generated", "agent": "sql_synthesis_table", "query": sql_queries[0], "content": f"{len(sql_queries)} SQL Queries Generated"})
             
             return {
                 "sql_queries": sql_queries,
@@ -648,7 +648,7 @@ def sql_synthesis_genie_node(state: AgentState) -> dict:
                 label_info = f" [{query_labels[i-1]}]" if i <= len(query_labels) and query_labels[i-1] else ""
                 print(f"  Query {i}{label_info} preview: {query[:100]}...")
             
-            writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query_preview": sql_queries[0][:200], "content": f"{len(sql_queries)} SQL Queries Generated"})
+            writer({"type": "sql_generated", "agent": "sql_synthesis_genie", "query": sql_queries[0], "content": f"{len(sql_queries)} SQL Queries Generated"})
             
             return {
                 "sql_queries": sql_queries,

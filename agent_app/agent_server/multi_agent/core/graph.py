@@ -23,17 +23,37 @@ from ..agents.summarize import summarize_node
 def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
     """Capture the full agent state for trace inputs/outputs.
 
-    Messages are excluded (already captured by LangChain autologging)
-    and replaced with a count to avoid duplication.
+    Messages are included so the full conversation is visible in MLflow traces.
     """
     if not isinstance(payload, dict):
         return {"payload_type": type(payload).__name__}
+
+    from langchain_core.messages import BaseMessage
+
+    def _serialize_message(message: Any) -> Any:
+        if isinstance(message, BaseMessage):
+            message_dict: dict[str, Any] = {
+                "type": message.__class__.__name__,
+                "content": message.content,
+            }
+            if getattr(message, "id", None):
+                message_dict["id"] = str(message.id)
+            if getattr(message, "name", None):
+                message_dict["name"] = message.name
+            if getattr(message, "tool_calls", None):
+                message_dict["tool_calls"] = message.tool_calls
+            if getattr(message, "additional_kwargs", None):
+                message_dict["additional_kwargs"] = message.additional_kwargs
+            return message_dict
+        return message
 
     snapshot: dict[str, Any] = {}
     for key, value in payload.items():
         if key == "messages":
             if isinstance(value, list):
-                snapshot["message_count"] = len(value)
+                snapshot["messages"] = [_serialize_message(message) for message in value]
+            else:
+                snapshot["messages"] = value
         else:
             snapshot[key] = value
     return snapshot
