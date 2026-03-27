@@ -112,7 +112,7 @@ export function AgentSettingsPanel({
         <div
           id="agent-settings-panel"
           data-testid="agent-settings-panel"
-          className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          className="absolute bottom-full right-0 z-50 mb-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
         >
           <div className="mb-3 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
             Agent Settings
