@@ -10,7 +10,7 @@ import json
 import logging
 import threading
 import time
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from uuid import uuid4
 
 import litellm
@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 # the SDK auth chain (e.g. databricks-vectorsearch).
 # ---------------------------------------------------------------------------
 import os
-
 _is_databricks_apps = bool(os.environ.get("DATABRICKS_CLIENT_ID"))
 if not _is_databricks_apps and not os.environ.get("DATABRICKS_TOKEN"):
     try:
@@ -414,6 +413,7 @@ Guidelines:
     in_summarize = False
     streaming_item_id = str(uuid4())
     text_deltas_emitted = False
+    seen_content_events: set[tuple[str, str]] = set()
 
     def _emit_progress_step(step_text: str):
         """Append a step to the live progress block (returns events to yield)."""
@@ -494,6 +494,13 @@ Guidelines:
                             **_create_text_delta(delta=delta_content, id=streaming_item_id),
                         )
                 elif et in ("meta_answer_content", "clarification_content", "clarification_requested"):
+                    content_key = (et, str(event_data.get("content", "")) if isinstance(event_data, dict) else str(event_data))
+                    if content_key in seen_content_events:
+                        continue
+                    seen_content_events.add(content_key)
+                    if not details_finalized:
+                        for ev in _finalize_progress():
+                            yield ev
                     yield ResponsesAgentStreamEvent(
                         type="response.output_item.done",
                         item=_create_text_output_item(text=_format_custom_event(event_data), id=str(uuid4())),
@@ -531,9 +538,20 @@ Guidelines:
         # ── updates: stream node progress, only emit AIMessages from final nodes ──
         if event_type == "updates":
             events_dict = event_data
+            if isinstance(events_dict, tuple):
+                flattened = {}
+                for item in events_dict:
+                    if isinstance(item, dict):
+                        flattened.update(item)
+                events_dict = flattened
+            if not isinstance(events_dict, dict):
+                logger.warning(f"Skipping malformed updates event: {type(event_data).__name__}")
+                continue
             node_names = list(events_dict.keys())
             new_msgs = [
-                msg for v in events_dict.values()
+                msg
+                for v in events_dict.values()
+                if isinstance(v, dict)
                 for msg in v.get("messages", [])
                 if hasattr(msg, "id") and msg.id not in seen_ids
             ]
@@ -541,6 +559,8 @@ Guidelines:
             seen_ids.update(msg.id for msg in new_msgs)
 
             for node_name, update in events_dict.items():
+                if not isinstance(update, dict):
+                    continue
                 if node_name != "summarize":
                     step = f"Step: {node_name}"
                     extra = [k for k in update if k != "messages"]
@@ -558,6 +578,8 @@ Guidelines:
             is_final_node = "summarize" in node_names
             if not is_final_node:
                 for update in events_dict.values():
+                    if not isinstance(update, dict):
+                        continue
                     if update.get("is_meta_question") or update.get("is_irrelevant"):
                         is_final_node = True
                         break

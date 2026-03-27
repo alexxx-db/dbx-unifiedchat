@@ -194,6 +194,8 @@ export function Chat({
       isError,
       messages: finishedMessages,
     }) => {
+      const lastMessage = finishedMessages?.at(-1);
+
       // Reset state for next message
       didFetchHistoryOnNewChat.current = false;
 
@@ -206,7 +208,6 @@ export function Chat({
 
       // Check if the last message contains an OAuth credential error
       // If so, don't try to resume - the user needs to authenticate first
-      const lastMessage = finishedMessages?.at(-1);
       const hasOAuthError = lastMessage?.parts?.some(
         (part) =>
           part.type === 'data-error' &&
@@ -228,9 +229,9 @@ export function Chat({
       // 2. It was a disconnect/error that terminated the stream
       // 3. We haven't exceeded max resume attempts
       const streamIncomplete = lastPartRef.current?.type !== 'finish';
-      const shouldResume =
-        streamIncomplete &&
-        (isDisconnect || isError || lastPartRef.current === undefined);
+      // Clarification turns intentionally end without a finish part, so only
+      // retry on actual disconnects or stream errors.
+      const shouldResume = streamIncomplete && (isDisconnect || isError);
 
       if (shouldResume && resumeAttemptCountRef.current < maxResumeAttempts) {
         console.log(

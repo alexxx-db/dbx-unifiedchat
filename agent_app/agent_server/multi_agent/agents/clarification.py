@@ -22,6 +22,7 @@ which routes on all available state in one place:
 """
 
 import json
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -282,7 +283,6 @@ If the query is a normal data or business intelligence question (even a vague on
         current_query = _latest_human_content(messages)
         space_context = load_space_context(self.table_name)
         clarification_sensitivity = _get_clarification_sensitivity(state)
-        writer({"type": "agent_start", "agent": "unified_intent_context_clarification", "query": current_query})
 
         print(f"[check_clarity] query={current_query!r} (messages count={len(messages)}, types={[type(m).__name__ for m in messages]})")
         prior_turn = state.get("current_turn") or {}
@@ -452,6 +452,7 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
         clarification_reason = metadata.get("clarification_reason", "Query needs more specificity")
         clarification_options = metadata.get("clarification_options") or []
         context_summary = turn.get("context_summary", "")
+        prompt_already_sent = bool(metadata.get("clarification_prompt_sent"))
 
         writer = get_stream_writer()
         markdown = f"### Clarification Needed\n\n{clarification_reason}\n\n"
@@ -459,8 +460,17 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
             markdown += "**Please choose from the following options:**\n\n"
             for i, opt in enumerate(clarification_options, 1):
                 markdown += f"{i}. {opt}\n\n"
-
-        writer({"type": "clarification_content", "content": markdown.strip()})
+        if not prompt_already_sent:
+            metadata["clarification_prompt_sent"] = True
+            turn["metadata"] = metadata
+            writer(
+                {
+                    "type": "agent_step",
+                    "agent": "clarification",
+                    "content": "Clarification required before planning can continue.",
+                }
+            )
+            writer({"type": "clarification_content", "content": markdown.strip()})
 
         print("[clarify] pausing via interrupt()")
         user_response = interrupt({

@@ -67,6 +67,7 @@ _performance_metrics = {
         "total_requests": 0
     }
 }
+
 class SuperAgentHybridResponsesAgent(ResponsesAgent):
     """
     Enhanced ResponsesAgent with both short-term and long-term memory for distributed Model Serving.
@@ -512,6 +513,7 @@ Guidelines:
         
         first_message = True
         seen_ids = set()
+    seen_content_events: set[tuple[str, str]] = set()
         
         # Execute workflow with CheckpointSaver for distributed serving
         # CRITICAL: CheckpointSaver as context manager ensures all instances share state
@@ -572,9 +574,19 @@ Guidelines:
                 # Handle node updates (updates mode)
                 elif event_type == "updates":
                     events = event_data
+                    if isinstance(events, tuple):
+                        flattened = {}
+                        for item in events:
+                            if isinstance(item, dict):
+                                flattened.update(item)
+                        events = flattened
+                    if not isinstance(events, dict):
+                        logger.warning(f"Skipping malformed updates event: {type(event_data).__name__}")
+                        continue
                     new_msgs = [
                         msg
                         for v in events.values()
+                        if isinstance(v, dict)
                         for msg in v.get("messages", [])
                         if hasattr(msg, 'id') and msg.id not in seen_ids
                     ]
@@ -589,6 +601,8 @@ Guidelines:
                         if events:
                             node_name = tuple(events.keys())[0]
                             node_update = events[node_name]
+                            if not isinstance(node_update, dict):
+                                continue
                             updated_keys = [k for k in node_update.keys() if k != "messages"]
                             
                             # Enhanced step indicator with state keys
@@ -668,6 +682,13 @@ Guidelines:
                                     **self.create_text_delta(delta=delta_content, item_id=str(uuid4())),
                                 )
                         elif et in ("meta_answer_content", "clarification_content", "clarification_requested"):
+                            content_key = (et, str(custom_data.get("content", "")))
+                            if content_key in seen_content_events:
+                                continue
+                            seen_content_events.add(content_key)
+                            if not details_finalized:
+                                for ev in _finalize_progress():
+                                    yield ev
                             yield ResponsesAgentStreamEvent(
                                 type="response.output_item.done",
                                 item=self.create_text_output_item(
