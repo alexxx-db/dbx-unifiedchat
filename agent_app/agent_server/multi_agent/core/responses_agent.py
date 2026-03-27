@@ -478,6 +478,8 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
         run_config = {"configurable": {"thread_id": thread_id}}
         if user_id:
             run_config["configurable"]["user_id"] = user_id
+
+        clarification_sensitivity = ci.get("clarification_sensitivity", "medium")
         
         # SIMPLIFIED: Unified state initialization for all scenarios
         # CheckpointSaver will restore previous conversation context automatically
@@ -485,6 +487,7 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
         initial_state = {
             **RESET_STATE_TEMPLATE,  # Reset all per-query execution fields
             "original_query": latest_query,
+            "clarification_sensitivity": clarification_sensitivity,
             "messages": [
                 SystemMessage(content="""You are a multi-agent Q&A analysis system.
 Your role is to help users query and analyze cross-domain data.

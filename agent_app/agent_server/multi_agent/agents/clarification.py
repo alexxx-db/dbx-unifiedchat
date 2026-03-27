@@ -78,6 +78,41 @@ def _latest_human_content(messages: list) -> str:
 
 _space_context_cache: dict = {"data": None, "timestamp": None, "table_name": None}
 _SPACE_CONTEXT_CACHE_TTL = timedelta(minutes=30)
+_VALID_CLARIFICATION_SENSITIVITIES = {"off", "low", "medium", "high", "on"}
+
+
+def _get_clarification_sensitivity(state: AgentState) -> str:
+    sensitivity = state.get("clarification_sensitivity") or "medium"
+    if sensitivity in _VALID_CLARIFICATION_SENSITIVITIES:
+        return sensitivity
+    return "medium"
+
+
+def _clarification_policy_text(sensitivity: str) -> str:
+    policies = {
+        "off": (
+            "Never ask a clarification question. Always set question_clear=True and "
+            "set clarification_reason / clarification_options to null."
+        ),
+        "low": (
+            "Be very lenient. Ask for clarification only when critical information is "
+            "missing and the request cannot be answered responsibly without it."
+        ),
+        "medium": (
+            "Use balanced judgment. Ask for clarification when key scope, metric, or "
+            "timeframe details are missing and would materially change the answer."
+        ),
+        "high": (
+            "Be strict. Ask for clarification whenever important scope, metric, grain, "
+            "or timeframe details are not explicit."
+        ),
+        "on": (
+            "Always ask a clarification question before planning. Always set "
+            "question_clear=False and provide a concise clarification_reason plus 2-3 "
+            "specific clarification_options, even if the request seems answerable."
+        ),
+    }
+    return policies.get(sensitivity, policies["medium"])
 
 
 def load_space_context(table_name: str) -> dict:
@@ -245,6 +280,7 @@ If the query is a normal data or business intelligence question (even a vague on
         writer = get_stream_writer()
         messages = state.get("messages", [])
         current_query = _latest_human_content(messages)
+        clarification_sensitivity = _get_clarification_sensitivity(state)
         writer({"type": "agent_start", "agent": "unified_intent_context_clarification", "query": current_query})
 
         print(f"[check_clarity] query={current_query!r} (messages count={len(messages)}, types={[type(m).__name__ for m in messages]})")
@@ -254,6 +290,10 @@ If the query is a normal data or business intelligence question (even a vague on
 
 Most recent user query: {current_query}
 Prior conversation context: {prior_summary or "None — this is the first message"}
+Clarification sensitivity: {clarification_sensitivity}
+
+Clarification policy for this request:
+{_clarification_policy_text(clarification_sensitivity)}
 
 Answer the following:
 
@@ -261,9 +301,9 @@ Answer the following:
    clearly what the user wants, and (c) is actionable for SQL query planning. If there is no prior
    context, summarize only the current query.
 
-2. question_clear: True if there is enough information to write a SQL query. Be lenient — only
-   mark False if CRITICAL information is missing (e.g. no time range when it is required, ambiguous
-   metric with no way to infer it). Vague questions are usually still clear enough.
+2. question_clear: True if there is enough information to write a SQL query, based on the
+   clarification policy above. Mark False when the current sensitivity setting says clarification
+   is needed before planning.
 
 3. clarification_reason: If question_clear=False, a brief explanation of what is missing.
    Otherwise null.
@@ -277,6 +317,21 @@ Answer the following:
             context_summary = result.get("context_summary") or current_query
             clarification_reason = result.get("clarification_reason") or "Query needs more specificity"
             clarification_options = result.get("clarification_options") or []
+            if clarification_sensitivity == "off":
+                question_clear = True
+                clarification_reason = ""
+                clarification_options = []
+            elif clarification_sensitivity == "on":
+                question_clear = False
+                clarification_reason = (
+                    result.get("clarification_reason")
+                    or "Before I proceed, I want to confirm the exact scope you want."
+                )
+                clarification_options = result.get("clarification_options") or [
+                    "Specify the metric or outcome you care about",
+                    "Specify the time range or comparison window",
+                    "Specify the breakdown or segment you want",
+                ]
             print(f"[check_clarity] clear={question_clear}")
         except Exception as e:
             print(f"[check_clarity] error: {e} — defaulting to clear")

@@ -291,12 +291,14 @@ async def stream_handler(
     # Agent settings from UI (via custom_inputs)
     execution_mode = ci.get("execution_mode", "parallel")
     force_synthesis_route = ci.get("force_synthesis_route", "auto")
+    clarification_sensitivity = ci.get("clarification_sensitivity", "medium")
 
     initial_state = {
         **RESET_STATE_TEMPLATE,
         "original_query": latest_query,
         "execution_mode": execution_mode,
         "force_synthesis_route": force_synthesis_route,
+        "clarification_sensitivity": clarification_sensitivity,
         "messages": [
             SystemMessage(content="""You are a multi-agent Q&A analysis system.
 Your role is to help users query and analyze cross-domain data.
@@ -336,6 +338,7 @@ Guidelines:
                     "thread_id": thread_id,
                     "execution_mode": execution_mode,
                     "force_synthesis_route": force_synthesis_route,
+                    "clarification_sensitivity": clarification_sensitivity,
                 },
             ) as span:
                 span.set_inputs(
@@ -345,6 +348,7 @@ Guidelines:
                         "user_id": user_id,
                         "execution_mode": execution_mode,
                         "force_synthesis_route": force_synthesis_route,
+                        "clarification_sensitivity": clarification_sensitivity,
                     }
                 )
                 last_state: dict = {}

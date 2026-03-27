@@ -4,17 +4,53 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ExecutionMode = 'parallel' | 'sequential';
 export type SynthesisRoute = 'auto' | 'table_route' | 'genie_route';
+export type ClarificationSensitivity =
+  | 'off'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'on';
 
 export interface AgentSettings {
   executionMode: ExecutionMode;
   synthesisRoute: SynthesisRoute;
+  clarificationSensitivity: ClarificationSensitivity;
+}
+
+function normalizeExecutionMode(
+  value: AgentSettings['executionMode'] | undefined,
+): AgentSettings['executionMode'] {
+  return value === 'sequential' ? 'sequential' : 'parallel';
+}
+
+function normalizeSynthesisRoute(
+  value: AgentSettings['synthesisRoute'] | undefined,
+): AgentSettings['synthesisRoute'] {
+  return value === 'table_route' || value === 'genie_route' ? value : 'auto';
+}
+
+function normalizeClarificationSensitivity(
+  value: AgentSettings['clarificationSensitivity'] | undefined,
+): AgentSettings['clarificationSensitivity'] {
+  return value === 'off' || value === 'low' || value === 'high' || value === 'on'
+    ? value
+    : 'medium';
+}
+
+function normalizeSettings(
+  settings?: Partial<AgentSettings>,
+): AgentSettings {
+  return {
+    executionMode: normalizeExecutionMode(settings?.executionMode),
+    synthesisRoute: normalizeSynthesisRoute(settings?.synthesisRoute),
+    clarificationSensitivity: normalizeClarificationSensitivity(
+      settings?.clarificationSensitivity,
+    ),
+  };
 }
 
 function loadSettings(initialSettings?: Partial<AgentSettings>): AgentSettings {
-  return {
-    executionMode: initialSettings?.executionMode ?? 'parallel',
-    synthesisRoute: initialSettings?.synthesisRoute ?? 'auto',
-  };
+  return normalizeSettings(initialSettings);
 }
 
 export function useAgentSettings(initialSettings?: Partial<AgentSettings>) {
@@ -44,6 +80,22 @@ const routeLabels: Record<SynthesisRoute, string> = {
   genie_route: 'Genie',
 };
 
+const clarificationSensitivityLevels = [
+  'off',
+  'low',
+  'medium',
+  'high',
+  'on',
+] as const satisfies readonly ClarificationSensitivity[];
+
+const clarificationSensitivityLabels: Record<ClarificationSensitivity, string> = {
+  off: 'Off',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  on: 'On',
+};
+
 export function AgentSettingsPanel({
   settings,
   onUpdate,
@@ -52,11 +104,11 @@ export function AgentSettingsPanel({
   onUpdate: (patch: Partial<AgentSettings>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [draftSettings, setDraftSettings] = useState(settings);
+  const [draftSettings, setDraftSettings] = useState(() => normalizeSettings(settings));
 
   useEffect(() => {
     if (!open) {
-      setDraftSettings(settings);
+      setDraftSettings(normalizeSettings(settings));
     }
   }, [open, settings]);
 
@@ -64,21 +116,29 @@ export function AgentSettingsPanel({
     setOpen((prev) => {
       const next = !prev;
       if (next) {
-        setDraftSettings(settings);
+        setDraftSettings(normalizeSettings(settings));
       }
       return next;
     });
   }, [settings]);
 
   const handleCancel = useCallback(() => {
-    setDraftSettings(settings);
+    setDraftSettings(normalizeSettings(settings));
     setOpen(false);
   }, [settings]);
 
   const handleConfirm = useCallback(() => {
-    onUpdate(draftSettings);
+    onUpdate(normalizeSettings(draftSettings));
     setOpen(false);
   }, [draftSettings, onUpdate]);
+
+  const normalizedDraftSettings = normalizeSettings(draftSettings);
+  const clarificationSensitivityIndex = Math.max(
+    0,
+    clarificationSensitivityLevels.indexOf(
+      normalizedDraftSettings.clarificationSensitivity,
+    ),
+  );
 
   return (
     <div className="relative">
@@ -200,6 +260,54 @@ export function AgentSettingsPanel({
             <p className="mt-0.5 text-[10px] text-zinc-400">
               Auto lets the planner decide; Table uses UC functions; Genie uses
               Genie agents
+            </p>
+          </div>
+
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
+              Clarification Sensitivity
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={clarificationSensitivityLevels.length - 1}
+              step={1}
+              value={clarificationSensitivityIndex}
+              onChange={(event) => {
+                const nextIndex = Number.parseInt(event.currentTarget.value, 10);
+                const boundedIndex = Number.isNaN(nextIndex)
+                  ? clarificationSensitivityLevels.indexOf('medium')
+                  : Math.min(
+                      clarificationSensitivityLevels.length - 1,
+                      Math.max(0, nextIndex),
+                    );
+
+                setDraftSettings((prev) => ({
+                  ...prev,
+                  clarificationSensitivity:
+                    clarificationSensitivityLevels[boundedIndex] ?? 'medium',
+                }));
+              }}
+              aria-label="Clarification sensitivity"
+              data-testid="clarification-sensitivity-slider"
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-200 accent-blue-600 dark:bg-zinc-700"
+            />
+            <div className="mt-1 flex justify-between text-[10px] text-zinc-400">
+              {clarificationSensitivityLevels.map((level) => (
+                <span key={level}>{clarificationSensitivityLabels[level]}</span>
+              ))}
+            </div>
+            <div
+              data-testid="clarification-sensitivity-value"
+              className="mt-2 text-xs text-zinc-600 dark:text-zinc-300"
+            >
+              {clarificationSensitivityLabels[
+                normalizedDraftSettings.clarificationSensitivity
+              ]}
+            </div>
+            <p className="mt-0.5 text-[10px] text-zinc-400">
+              Off skips clarification, Low is lenient, High is strict, and On
+              always asks before planning
             </p>
           </div>
 

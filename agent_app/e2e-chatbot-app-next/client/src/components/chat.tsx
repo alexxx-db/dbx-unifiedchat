@@ -35,6 +35,7 @@ type ChatDataCache = {
   chat: {
     executionMode: AgentSettings['executionMode'];
     synthesisRoute: AgentSettings['synthesisRoute'];
+    clarificationSensitivity: AgentSettings['clarificationSensitivity'];
   };
   messages: ChatMessage[];
   feedback: FeedbackMap;
@@ -303,6 +304,7 @@ export function Chat({
                   ...currentData.chat,
                   executionMode: settings.executionMode,
                   synthesisRoute: settings.synthesisRoute,
+                  clarificationSensitivity: settings.clarificationSensitivity,
                 },
               }
             : currentData,

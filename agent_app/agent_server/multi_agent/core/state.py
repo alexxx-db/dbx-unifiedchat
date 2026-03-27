@@ -52,6 +52,7 @@ class AgentState(TypedDict):
 
     # Clarification
     question_clear: bool
+    clarification_sensitivity: Optional[str]  # "off" | "low" | "medium" | "high" | "on"
 
     # Meta-question handling
     is_meta_question: Optional[bool]
@@ -150,6 +151,7 @@ def get_reset_state_template() -> Dict[str, Any]:
     return {
         # Clarification fields (per-query)
         "question_clear": False,
+        "clarification_sensitivity": "medium",
         "is_meta_question": False,
         "meta_answer": None,
         "is_irrelevant": False,
