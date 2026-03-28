@@ -2,9 +2,10 @@ import { useState, useCallback } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { X } from 'lucide-react';
+import { CheckIcon, CopyIcon, X } from 'lucide-react';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { ChatMessage } from '@chat-template/core';
+import { toast } from './toast';
 
 export interface ClarificationData {
   reason: string;
@@ -39,6 +40,22 @@ export function ClarificationModal({
     },
     [],
   );
+
+  const handleCopyOption = useCallback(async (option: string) => {
+    try {
+      await navigator.clipboard.writeText(option);
+      toast({
+        type: 'success',
+        description: 'Option copied to clipboard.',
+      });
+    } catch (error) {
+      console.error('Failed to copy clarification option:', error);
+      toast({
+        type: 'error',
+        description: 'Unable to copy option.',
+      });
+    }
+  }, []);
 
   const handleConfirm = useCallback(() => {
     if (!confirmValue) return;
@@ -88,19 +105,41 @@ export function ClarificationModal({
             <div className="mt-4 flex flex-col gap-2">
               <p className="font-medium text-sm">Select an option:</p>
               {data.options.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => handleOptionSelect(option)}
-                  className={cn(
-                    'w-full cursor-pointer rounded-md border px-4 py-2.5 text-left text-sm transition-colors',
-                    selectedOption === option
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-background text-foreground hover:border-primary/50 hover:bg-muted',
+                <div key={option} className="group relative">
+                  {selectedOption === option && (
+                    <div className="pointer-events-none absolute top-2.5 left-3 z-10 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground shadow-sm">
+                      <CheckIcon className="size-3.5" />
+                      Selected
+                    </div>
                   )}
-                >
-                  {option}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOptionSelect(option)}
+                    className={cn(
+                      'w-full cursor-pointer rounded-xl border px-4 pb-4 text-left text-sm leading-relaxed shadow-sm transition-all',
+                      selectedOption === option ? 'pt-12' : 'pt-4',
+                      selectedOption === option
+                        ? 'border-primary bg-primary/10 text-foreground shadow-[0_0_0_1px_hsl(var(--primary)/0.25),0_10px_30px_-12px_hsl(var(--primary)/0.35)]'
+                        : 'border-border/70 bg-background text-foreground hover:border-primary/30 hover:bg-muted/40 hover:shadow-md',
+                    )}
+                  >
+                    {option}
+                  </button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="invisible absolute top-2 right-2.5 z-10 h-8 rounded-full border border-border/60 bg-background/90 px-2.5 text-muted-foreground opacity-0 shadow-sm backdrop-blur-sm transition-all duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 hover:bg-accent hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleCopyOption(option);
+                    }}
+                    aria-label={`Copy option: ${option}`}
+                  >
+                    <CopyIcon />
+                    Copy
+                  </Button>
+                </div>
               ))}
             </div>
           )}
