@@ -70,7 +70,7 @@ export const PromptInputTextarea = forwardRef<
     return (
       <Textarea
         className={cn(
-          'w-full resize-none rounded-none border-none p-3 shadow-none outline-hidden ring-0',
+          'h-auto min-h-0! w-full resize-none rounded-none border-none p-3 shadow-none outline-hidden ring-0',
           disableAutoResize
             ? 'field-sizing-fixed'
             : resizeOnNewLinesOnly
@@ -86,6 +86,11 @@ export const PromptInputTextarea = forwardRef<
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
+        style={{
+          minHeight,
+          maxHeight,
+          ...(props.style ?? {}),
+        }}
         {...props}
         ref={ref}
       />
