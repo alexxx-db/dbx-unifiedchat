@@ -284,7 +284,7 @@ If the query is a normal data or business intelligence question (even a vague on
         space_context = load_space_context(self.table_name)
         clarification_sensitivity = _get_clarification_sensitivity(state)
 
-        print(f"[check_clarity] query={current_query!r} (messages count={len(messages)}, types={[type(m).__name__ for m in messages]})")
+        print(f"[check_clarity] query={current_query!r} (messages count={len(messages)}, last 3 types={[type(m).__name__ for m in messages[-3:]]})")
         prior_turn = state.get("current_turn") or {}
         prior_summary = prior_turn.get("context_summary", "")
         prompt = f"""You are analyzing a user query for a data analytics assistant.
@@ -383,7 +383,10 @@ Answer the following:
         )
 
         writer = get_stream_writer()
+        writer({"type": "agent_step", "agent": "clarification", "content": "Checking query intent and clarity..."})
+        writer({"type": "summary_start", "content": "Generating response..."})
         writer({"type": "text_delta", "content": refusal})
+        writer({"type": "summary_complete", "content": f"Response generated ({len(refusal)} chars)"})
 
         return {
             "current_turn": turn,
@@ -391,6 +394,7 @@ Answer the following:
             "question_clear": True,
             "is_irrelevant": True,
             "is_meta_question": False,
+            "final_summary": refusal,
             "messages": [AIMessage(content=refusal)],
         }
 
@@ -417,6 +421,7 @@ Provide a clear, informative markdown answer about what's available.
 Use ## headings, **bold** keywords, and bullet lists. Be professional and helpful.
 """
         writer = get_stream_writer()
+        writer({"type": "agent_step", "agent": "clarification", "content": "Checking query intent and clarity..."})
         writer({"type": "summary_start", "content": "Generating meta-answer..."})
         print("[generate_meta_answer] generating")
         try:
@@ -429,8 +434,9 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
         except Exception as e:
             print(f"[generate_meta_answer] error: {e}")
             answer = "## Available Data Sources\n\nSorry, I encountered an error retrieving the data source information."
+            writer({"type": "text_delta", "content": answer})
 
-        writer({"type": "summary_complete", "content": "Meta-answer complete"})
+        writer({"type": "summary_complete", "content": f"Meta-answer generated ({len(answer)} chars)"})
 
         turn = dict(state.get("current_turn") or {})
         turn.setdefault("metadata", {})["is_meta_question"] = True
@@ -441,6 +447,7 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
             "question_clear": True,
             "is_meta_question": True,
             "meta_answer": answer,
+            "final_summary": answer,
             "messages": [AIMessage(content=answer)],
         }
 
