@@ -12,6 +12,7 @@ import {
   PencilLineIcon,
   ThumbsUp,
   ThumbsDown,
+  Activity,
 } from 'lucide-react';
 
 function PureMessageActions({
@@ -34,7 +35,7 @@ function PureMessageActions({
   initialFeedback?: Feedback;
 }) {
   // All hooks MUST be called before any early returns
-  const { feedbackEnabled } = useAppConfig();
+  const { feedbackEnabled, mlflowExperiment } = useAppConfig();
   const [_, copyToClipboard] = useCopyToClipboard();
   const [feedback, setFeedback] = useState<'thumbs_up' | 'thumbs_down' | null>(
     initialFeedback?.feedbackType || null,
@@ -63,6 +64,17 @@ function PureMessageActions({
     | { type: 'data-traceId'; data: string | null }
     | undefined;
   const feedbackSupported = traceIdPart === undefined || traceIdPart.data !== null;
+
+  let traceUrl: string | undefined;
+  if (mlflowExperiment?.url && traceIdPart?.data) {
+    try {
+      const url = new URL(mlflowExperiment.url);
+      url.pathname = `${url.pathname}/traces/${traceIdPart.data}`;
+      traceUrl = url.toString();
+    } catch (e) {
+      // Ignore invalid URL
+    }
+  }
 
   const handleFeedback = useCallback(
     async (feedbackType: 'thumbs_up' | 'thumbs_down') => {
@@ -169,6 +181,15 @@ function PureMessageActions({
         </Action>
       )}
       {feedbackEnabled && feedbackSupported && feedbackButtons}
+      {traceUrl && (
+        <Action
+          tooltip="View MLflow Trace"
+          onClick={() => window.open(traceUrl, '_blank')}
+          data-testid="view-trace-button"
+        >
+          <Activity />
+        </Action>
+      )}
       {errorCount > 0 && onToggleErrors && (
         <Action
           tooltip={showErrors ? 'Hide errors' : 'Show errors'}
