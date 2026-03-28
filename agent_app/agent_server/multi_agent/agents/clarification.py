@@ -116,6 +116,16 @@ def _clarification_policy_text(sensitivity: str) -> str:
     return policies.get(sensitivity, policies["medium"])
 
 
+def _emit_clarification_result(writer, result: str, content: str) -> None:
+    writer(
+        {
+            "type": "clarification_result",
+            "result": result,
+            "content": content,
+        }
+    )
+
+
 def load_space_context(table_name: str) -> dict:
     """Load Genie space summaries from Delta with 30-minute TTL caching."""
     global _space_context_cache
@@ -384,6 +394,11 @@ Answer the following:
 
         writer = get_stream_writer()
         writer({"type": "agent_step", "agent": "clarification", "content": "Checking query intent and clarity..."})
+        _emit_clarification_result(
+            writer,
+            "irrelevant_query",
+            "Clarification result: irrelevant query.",
+        )
         writer({"type": "summary_start", "content": "Generating response..."})
         writer({"type": "text_delta", "content": refusal})
         writer({"type": "summary_complete", "content": f"Response generated ({len(refusal)} chars)"})
@@ -422,6 +437,11 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
 """
         writer = get_stream_writer()
         writer({"type": "agent_step", "agent": "clarification", "content": "Checking query intent and clarity..."})
+        _emit_clarification_result(
+            writer,
+            "meta_question",
+            "Clarification result: meta question.",
+        )
         writer({"type": "summary_start", "content": "Generating meta-answer..."})
         print("[generate_meta_answer] generating")
         try:
@@ -479,6 +499,11 @@ Use ## headings, **bold** keywords, and bullet lists. Be professional and helpfu
                     "agent": "clarification",
                     "content": "Clarification required before planning can continue.",
                 }
+            )
+            _emit_clarification_result(
+                writer,
+                "needs_clarification",
+                "Clarification result: more detail needed before planning.",
             )
             writer({
                 "type": "clarification_content",
@@ -557,6 +582,12 @@ is_clarification_response=False -> they changed the subject or asked something e
     def _handle_clear(self, state: AgentState) -> dict:
         """Pure Python. Confirm clarity and forward to planning."""
         print("[handle_clear] query is clear")
+        writer = get_stream_writer()
+        _emit_clarification_result(
+            writer,
+            "clear_continue_to_planning",
+            "Clarification result: clear, continue to planning.",
+        )
         turn = state.get("current_turn", {})
         return {
             "current_turn": turn,

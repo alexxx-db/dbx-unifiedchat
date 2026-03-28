@@ -184,6 +184,7 @@ _CUSTOM_FORMATTERS = {
     "genie_agent_call": lambda d: f"Calling Genie agent for space: {d.get('space_id', 'unknown')}",
     "meta_answer_content": lambda d: f"\n\n{d.get('content', '')}",
     "clarification_content": lambda d: f"\n\n{d.get('content', '')}",
+    "clarification_result": lambda d: d.get("content", f"Clarification result: {d.get('result', 'unknown')}"),
     "tool_call_start": lambda d: d.get("content", "Calling " + d.get("tool", "tool") + "..."),
     "tool_call_end": lambda d: d.get("content", "Tool returned result"),
     "agent_step": lambda d: d.get("content", f"Step: {d.get('step', '')}"),
@@ -576,6 +577,12 @@ Guidelines:
 
             seen_ids.update(msg.id for msg in new_msgs)
 
+            routing_nodes = {
+                "planning",
+                "sql_synthesis_table",
+                "sql_synthesis_genie",
+                "sql_execution",
+            }
             for node_name, update in events_dict.items():
                 if not isinstance(update, dict):
                     continue
@@ -587,7 +594,7 @@ Guidelines:
                     progress_steps.append(step)
                     for ev in _emit_progress_step(step):
                         yield ev
-                    if "next_agent" in update:
+                    if node_name in routing_nodes and "next_agent" in update:
                         routing = f"Routing → {update['next_agent']}"
                         progress_steps.append(routing)
                         for ev in _emit_progress_step(routing):

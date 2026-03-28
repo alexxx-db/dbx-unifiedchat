@@ -329,6 +329,7 @@ class SuperAgentHybridResponsesAgent(ResponsesAgent):
             "meta_question_detected": lambda d: f"\n💡 Meta-question detected",
             "clarification_requested": lambda d: f"\n❓ Clarification needed: {d.get('reason', 'unknown')}",
             "clarification_skipped": lambda d: f"\n⏭️ Clarification skipped: {d.get('reason', 'unknown')}",
+            "clarification_result": lambda d: f"\n🧭 {d.get('content', f\"Clarification result: {d.get('result', 'unknown')}\")}",
             "agent_step": lambda d: f"\n📍 {d.get('agent', 'agent').upper()}: {d.get('content', d.get('step', 'processing'))}",
             "agent_result": lambda d: f"\n✅ {d.get('agent', 'agent').upper()}: {d.get('result', 'completed')} - {d.get('content', '')}",
             "sql_synthesis_start": lambda d: f"\n🔧 Starting SQL synthesis via {d.get('route', 'unknown')} route for {len(d.get('spaces', []))} space(s)",
