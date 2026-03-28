@@ -240,7 +240,7 @@ export function AgentSettingsPanel({
             </p>
           </div>
 
-          <div className="mb-3">
+          <div className="mb-3 border-zinc-200 border-t pt-3 dark:border-zinc-700">
             <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
               SQL Synthesis Agent Route
             </label>
@@ -279,7 +279,7 @@ export function AgentSettingsPanel({
             </p>
           </div>
 
-          <div className="mt-3">
+          <div className="border-zinc-200 border-t pt-3 dark:border-zinc-700">
             <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
               Clarification Sensitivity
             </label>
@@ -331,7 +331,7 @@ export function AgentSettingsPanel({
             </p>
           </div>
 
-          <div>
+          <div className="border-zinc-200 border-t pt-3 dark:border-zinc-700">
             <label className="mb-1 block text-xs text-zinc-500 dark:text-zinc-400">
               Count Only
             </label>

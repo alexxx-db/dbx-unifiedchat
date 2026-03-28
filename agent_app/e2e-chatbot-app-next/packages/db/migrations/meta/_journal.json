@@ -36,6 +36,13 @@
       "when": 1774593603268,
       "tag": "0004_optimal_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774736980130,
+      "tag": "0005_bitter_wolfsbane",
+      "breakpoints": true
     }
   ]
 }
