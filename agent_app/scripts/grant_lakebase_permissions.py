@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 from dotenv import load_dotenv
 
@@ -65,6 +66,11 @@ SHARED_SCHEMAS: dict[str, list[str]] = {
 def quote_ident(identifier: str) -> str:
     """Quote a Postgres identifier safely."""
     return f'"{identifier.replace(chr(34), chr(34) * 2)}"'
+
+
+def quote_sql_ident(identifier: str) -> str:
+    """Quote a Databricks SQL identifier safely."""
+    return f"`{identifier.replace('`', '``')}`"
 
 
 def format_privileges(privileges) -> str:
@@ -155,7 +161,27 @@ def grant_uc_permissions(
     schema_name: str,
     uc_catalog,
     schema_privileges,
+    warehouse_id: str | None,
 ) -> None:
+    if warehouse_id:
+        print(
+            "Granting Unity Catalog privileges via SQL GRANT "
+            f"using warehouse '{warehouse_id}'..."
+        )
+        grant_uc_permissions_via_sql(
+            workspace_client=workspace_client,
+            warehouse_id=warehouse_id,
+            grantee=grantee,
+            catalog_name=catalog_name,
+            schema_name=schema_name,
+            schema_privileges=schema_privileges,
+        )
+        print(
+            "  Granted Unity Catalog privileges on "
+            f"'{catalog_name}.{schema_name}'."
+        )
+        return
+
     schema_full_name = f"{catalog_name}.{schema_name}"
     grants = [
         (
@@ -187,6 +213,51 @@ def grant_uc_permissions(
             )
         except Exception as e:
             print(f"  Warning: Unity Catalog {label} grant failed: {e}")
+
+
+def _execute_sql_statement(workspace_client, warehouse_id: str, statement: str) -> None:
+    from databricks.sdk.service.sql import StatementState
+
+    response = workspace_client.statement_execution.execute_statement(
+        statement=statement,
+        warehouse_id=warehouse_id,
+        wait_timeout="30s",
+    )
+    status = response.status
+    while status and status.state in {StatementState.PENDING, StatementState.RUNNING}:
+        time.sleep(1)
+        response = workspace_client.statement_execution.get_statement(response.statement_id)
+        status = response.status
+
+    if status and status.state.name == "FAILED":
+        error = status.error.message if status.error else "Unknown SQL execution failure"
+        raise RuntimeError(error)
+    if status and status.state.name in {"CANCELED", "CLOSED"}:
+        raise RuntimeError(f"SQL execution ended with state {status.state.name}")
+
+
+def grant_uc_permissions_via_sql(
+    workspace_client,
+    warehouse_id: str,
+    grantee: str,
+    catalog_name: str,
+    schema_name: str,
+    schema_privileges,
+) -> None:
+    catalog_stmt = (
+        f"GRANT USE CATALOG ON CATALOG {quote_sql_ident(catalog_name)} "
+        f"TO {quote_sql_ident(grantee)}"
+    )
+    schema_privilege_sql = ", ".join(privilege.value for privilege in schema_privileges)
+    schema_stmt = (
+        f"GRANT {schema_privilege_sql} ON SCHEMA "
+        f"{quote_sql_ident(catalog_name)}.{quote_sql_ident(schema_name)} "
+        f"TO {quote_sql_ident(grantee)}"
+    )
+    print(f"  SQL: {catalog_stmt}")
+    _execute_sql_statement(workspace_client, warehouse_id, catalog_stmt)
+    print(f"  SQL: {schema_stmt}")
+    _execute_sql_statement(workspace_client, warehouse_id, schema_stmt)
 
 
 def main():
@@ -255,6 +326,12 @@ def main():
         "--branch",
         default=os.getenv("LAKEBASE_AUTOSCALING_BRANCH"),
         help="Lakebase autoscaling branch name (default: LAKEBASE_AUTOSCALING_BRANCH from .env)",
+    )
+    parser.add_argument(
+        "--warehouse-id",
+        default=os.getenv("SQL_WAREHOUSE_ID"),
+        help="SQL warehouse ID used for Unity Catalog SQL GRANT fallback "
+        "(default: SQL_WAREHOUSE_ID from .env)",
     )
     args = parser.parse_args()
 
@@ -448,6 +525,7 @@ def main():
                 uc_catalog.Privilege.SELECT,
                 uc_catalog.Privilege.EXECUTE,
             ],
+            warehouse_id=args.warehouse_id,
         )
 
     if args.data_catalog_name and args.data_schema_name:
@@ -467,6 +545,7 @@ def main():
                     uc_catalog.Privilege.USE_SCHEMA,
                     uc_catalog.Privilege.SELECT,
                 ],
+                warehouse_id=args.warehouse_id,
             )
 
     print(

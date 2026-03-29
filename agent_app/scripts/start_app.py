@@ -43,6 +43,7 @@ def grant_lakebase_permissions():
     schema_name = os.environ.get("SCHEMA_NAME")
     data_catalog_name = os.environ.get("DATA_CATALOG_NAME")
     data_schema_name = os.environ.get("DATA_SCHEMA_NAME")
+    warehouse_id = os.environ.get("SQL_WAREHOUSE_ID")
     if catalog_name and schema_name:
         extra_args.extend(["--catalog-name", catalog_name, "--schema-name", schema_name])
     if data_catalog_name and data_schema_name:
@@ -54,6 +55,8 @@ def grant_lakebase_permissions():
                 data_schema_name,
             ]
         )
+    if warehouse_id:
+        extra_args.extend(["--warehouse-id", warehouse_id])
 
     for memory_type in ("langgraph-short-term", "langgraph-long-term"):
         rc = _run(

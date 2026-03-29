@@ -97,6 +97,7 @@ CATALOG_NAME="$(resolve_bundle_var catalog || true)"
 SCHEMA_NAME="$(resolve_bundle_var schema || true)"
 DATA_CATALOG_NAME="$(resolve_bundle_var data_catalog || true)"
 DATA_SCHEMA_NAME="$(resolve_bundle_var data_schema || true)"
+SQL_WAREHOUSE_ID="$(resolve_bundle_var warehouse_id || true)"
 
 bootstrap_lakebase_role() {
   local phase="${1:-bootstrap}"
@@ -117,6 +118,9 @@ bootstrap_lakebase_role() {
   fi
   if [[ -n "${DATA_CATALOG_NAME:-}" && -n "${DATA_SCHEMA_NAME:-}" ]]; then
     grant_args+=(--data-catalog-name "$DATA_CATALOG_NAME" --data-schema-name "$DATA_SCHEMA_NAME")
+  fi
+  if [[ -n "${SQL_WAREHOUSE_ID:-}" ]]; then
+    grant_args+=(--warehouse-id "$SQL_WAREHOUSE_ID")
   fi
 
   for memory_type in langgraph-short-term langgraph-long-term; do
