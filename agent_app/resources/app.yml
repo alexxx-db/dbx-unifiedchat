@@ -8,7 +8,7 @@ resources:
         command: ["uv", "run", "start-app", "--port", "9000"]
         env:
           - name: CHAT_PROXY_TIMEOUT_SECONDS
-            value: "300"
+            value: ${var.chat_proxy_timeout_seconds}
           - name: CATALOG_NAME
             value: ${var.catalog}
           - name: SCHEMA_NAME
@@ -18,7 +18,7 @@ resources:
           - name: DATA_SCHEMA_NAME
             value: ${var.data_schema}
           - name: UC_FUNCTION_NAMES
-            value: "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details"
+            value: ${var.uc_function_names}
           - name: LLM_ENDPOINT
             value: ${var.llm_endpoint}
           - name: LLM_ENDPOINT_CLARIFICATION
@@ -40,15 +40,15 @@ resources:
           - name: VS_ENDPOINT_NAME
             value: ${var.vs_endpoint_name}
           - name: SAMPLE_SIZE
-            value: "20"
+            value: ${var.sample_size}
           - name: MAX_UNIQUE_VALUES
-            value: "20"
+            value: ${var.max_unique_values}
           - name: VOLUME_NAME
-            value: "volume"
+            value: ${var.volume_name}
           - name: ENRICHED_DOCS_TABLE
-            value: "enriched_genie_docs"
+            value: ${var.enriched_docs_table}
           - name: SOURCE_TABLE
-            value: "enriched_genie_docs_chunks"
+            value: ${var.source_table}
           - name: SQL_WAREHOUSE_ID
             value: ${var.warehouse_id}
           - name: GENIE_SPACE_IDS
@@ -58,13 +58,13 @@ resources:
           - name: LAKEBASE_EMBEDDING_ENDPOINT
             value: ${var.embedding_model}
           - name: LAKEBASE_EMBEDDING_DIMS
-            value: "1024"
+            value: ${var.lakebase_embedding_dims}
           - name: MLFLOW_EXPERIMENT_ID
             value_from: experiment
           - name: MLFLOW_TRACKING_URI
-            value: "databricks"
+            value: ${var.mlflow_tracking_uri}
           - name: MLFLOW_REGISTRY_URI
-            value: "databricks-uc"
+            value: ${var.mlflow_registry_uri}
 
       resources:
         - name: 'experiment'

@@ -14,6 +14,8 @@ variables:
     default: "healthverity_claims_sample_patient_dataset_dev"
   data_schema:
     default: "hv_claims_sample"
+  uc_function_names:
+    default: "get_space_summary,get_table_overview,get_column_detail,get_space_instructions,get_space_details"
 
   # SQL warehouse
   warehouse_id:
@@ -50,8 +52,28 @@ variables:
   # Embedding & vector search
   embedding_model:
     default: "databricks-gte-large-en"
+  lakebase_embedding_dims:
+    default: "1024"
   vs_endpoint_name:
     default: "genie_multi_agent_vs"
+
+  # App runtime
+  chat_proxy_timeout_seconds:
+    default: "300"
+  sample_size:
+    default: "20"
+  max_unique_values:
+    default: "20"
+  volume_name:
+    default: "volume"
+  enriched_docs_table:
+    default: "enriched_genie_docs"
+  source_table:
+    default: "enriched_genie_docs_chunks"
+  mlflow_tracking_uri:
+    default: "databricks"
+  mlflow_registry_uri:
+    default: "databricks-uc"
 
   # Genie spaces
   genie_space_id_1:

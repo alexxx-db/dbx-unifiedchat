@@ -1,8 +1,9 @@
 # Databricks Apps runtime configuration.
 #
 # When deploying via DABs (databricks bundle deploy), the config: block in
-# resources/app.yml takes precedence over this file.  This app.yaml serves as
-# a reference for standalone CLI deployments or local development.
+# resources/app.yml takes precedence over this file, and `databricks.yml` is the
+# source of truth for bundle-managed defaults. This app.yaml serves as a
+# standalone reference for CLI deployments or local development.
 
 command:
   - "uv"
