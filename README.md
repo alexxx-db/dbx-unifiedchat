@@ -74,7 +74,7 @@ The system leverages:
 
 See [Architecture Documentation](docs/ARCHITECTURE.md) for detailed design.
 
----
+
 
 ## Presentation
 
@@ -83,6 +83,12 @@ See [Architecture Documentation](docs/ARCHITECTURE.md) for detailed design.
   <br />
   <b>🚀 Click here to view the Interactive Presentation Slides</b>
 </a>
+
+
+
+## UI Illustration
+
+![UI Tutorial Annotated](docs/UI/UI_tutorial_annotated.png)
 
 ---
 
