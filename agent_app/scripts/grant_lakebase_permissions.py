@@ -279,8 +279,8 @@ def main():
     parser.add_argument(
         "--profile",
         default=os.getenv("DATABRICKS_CONFIG_PROFILE"),
-        help="Databricks CLI profile to use when resolving --app-name "
-        "(default: DATABRICKS_CONFIG_PROFILE from .env)",
+        help="Databricks profile to use for app lookup, Lakebase, and "
+        "Unity Catalog grants (default: DATABRICKS_CONFIG_PROFILE from .env)",
     )
     parser.add_argument(
         "--catalog-name",
@@ -383,10 +383,14 @@ def main():
     from databricks.sdk import WorkspaceClient
     from databricks.sdk.service import catalog as uc_catalog
 
+    workspace_client = (
+        WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
+    )
     client = LakebaseClient(
         instance_name=args.instance_name or None,
         project=args.project or None,
         branch=args.branch or None,
+        workspace_client=workspace_client,
     )
     if args.app_name:
         sp_id = resolve_app_sp_client_id(args.app_name, args.profile)
@@ -507,9 +511,7 @@ def main():
         (args.catalog_name and args.schema_name)
         or (args.data_catalog_name and args.data_schema_name)
     ):
-        workspace_client = (
-            WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
-        )
+        pass
     else:
         workspace_client = None
 
