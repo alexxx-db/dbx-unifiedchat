@@ -8,35 +8,40 @@ This directory includes a notebook-friendly deploy path that does **not** replac
 
 ## Purpose
 
-Use the notebook path when you want to run bundle deploy/bootstrap steps from a Databricks notebook while keeping the current shell-based workflow unchanged.
+Use the notebook path when you want an interactive Databricks-native operator flow while keeping the supported CLI deployment workflow unchanged.
 
 The notebook flow covers:
 
 - resolving deploy settings from `databricks.yml`
-- optional `bundle sync`
-- `bundle deploy`
-- optional `bundle run`
+- workspace auth and app/SP preflight checks
+- printing exact `bundle sync`, `bundle deploy`, and optional `bundle run` commands for the web terminal
 - Lakebase role bootstrap
 - Unity Catalog grants for app and source-data schemas
+- post-deploy verification and manual grant reminders
 
 ## Files
 
 - `scripts/deploy_notebook.py`
   - Repo-backed Databricks notebook source
   - Provides widgets for `project_dir`, `target`, `profile`, `sync_first`, and `run_after`
+  - Organized into preflight, terminal handoff, bootstrap, and verification sections
 
 - `scripts/notebook_deploy_lib.py`
   - Python helper library used by the notebook
-  - Reuses grant logic from `scripts/grant_lakebase_permissions.py`
+  - Resolves bundle settings, inspects app state, prints terminal commands, and runs SDK-based bootstrap logic
+
+- `scripts/grant_lakebase_permissions.py`
+  - Still works as a CLI utility
+  - Also exposes importable grant helpers that the notebook can call directly
 
 ## Prerequisites
 
 - The repo must be available on the notebook driver filesystem, typically via Databricks Repos.
-- The `databricks` CLI must be available in the notebook environment for:
+- The `databricks` CLI must be available in the Databricks web terminal for:
   - `databricks bundle sync`
   - `databricks bundle deploy`
   - `databricks bundle run`
-- The notebook environment must be able to import the project Python code and installed dependencies.
+- The notebook environment must be able to import the project Python code and the Databricks SDK / Lakebase dependencies.
 - If you use `profile`, that profile must be available in the notebook environment. If omitted, the notebook uses workspace-native auth.
 
 ## Source Of Truth
@@ -44,6 +49,7 @@ The notebook flow covers:
 - Bundle-managed deploy settings come from `databricks.yml`.
 - The notebook deploy path does not read `.env`.
 - `profile` is supplied explicitly via the notebook widget, or left blank to use workspace-native auth.
+- `deploy.sh` remains the local and CI automation entrypoint.
 
 ## How To Use
 
@@ -54,12 +60,15 @@ The notebook flow covers:
    - `profile`: optional Databricks CLI profile
    - `sync_first`: `true` or `false`
    - `run_after`: `true` or `false`
-3. Run the notebook cells top to bottom.
+3. Run the preflight cell to review resolved settings and current app state.
+4. Copy the printed commands into the Databricks web terminal and run them from the `agent_app` directory.
+5. Return to the notebook and rerun the bootstrap and verification cells.
 
 ## Notes
 
 - This notebook path is for deploy orchestration only.
+- It does **not** replace `deploy.sh`, which is still the supported local and CI wrapper around bundle deploy/run.
 - It does **not** replace `start_app.py`, which is designed for long-running local subprocess management.
 - Bundle-managed values still come from `databricks.yml`.
 - The notebook wrapper is `.env`-independent by design.
-- Existing scripts remain the source for the local CLI workflow.
+- Bundle commands should run in the Databricks web terminal, not in notebook cells.

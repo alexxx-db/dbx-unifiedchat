@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-import os
 import shlex
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 from databricks.sdk import WorkspaceClient
 
+from scripts.grant_lakebase_permissions import (
+    PermissionGrantConfig,
+    apply_permission_grants,
+)
 
-AUTH_ENV_VARS = (
-    "DATABRICKS_CONFIG_PROFILE",
-    "DATABRICKS_HOST",
-    "DATABRICKS_CLIENT_ID",
-    "DATABRICKS_CLIENT_SECRET",
-    "DATABRICKS_TOKEN",
+
+MANUAL_GRANT_NOTES = (
+    "HealthVerity source tables still require manual SELECT grants after deploy.",
 )
 
 
@@ -33,45 +32,38 @@ class NotebookDeployConfig:
         return f"multi-agent-genie-app-{self.target}"
 
 
+@dataclass
+class PreflightReport:
+    settings: dict[str, str | None]
+    workspace_user: str | None
+    app_exists: bool
+    service_principal_client_id: str | None
+    source_code_path: Path | None
+    warnings: list[str]
+
+
 def _workspace_client(profile: str | None) -> WorkspaceClient:
     return WorkspaceClient(profile=profile) if profile else WorkspaceClient()
-
-
-def _cli_env(profile: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    for var in AUTH_ENV_VARS:
-        env.pop(var, None)
-    if profile:
-        env["DATABRICKS_CONFIG_PROFILE"] = profile
-    return env
 
 
 def _profile_args(profile: str | None) -> list[str]:
     return ["--profile", profile] if profile else []
 
 
-def _run_command(
-    command: list[str],
-    *,
-    cwd: Path,
-    profile: str | None,
-    label: str,
-) -> None:
-    rendered = shlex.join(command)
-    print(f"$ {rendered}")
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        env=_cli_env(profile),
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit code {result.returncode}")
+def _render_command(command: list[str]) -> str:
+    return shlex.join(command)
+
+
+def load_yaml(path: Path) -> dict:
+    return yaml.safe_load(path.read_text()) or {}
 
 
 def load_bundle_config(project_dir: Path) -> dict:
-    config_path = project_dir / "databricks.yml"
-    return yaml.safe_load(config_path.read_text()) or {}
+    return load_yaml(project_dir / "databricks.yml")
+
+
+def load_app_resource(project_dir: Path) -> dict:
+    return load_yaml(project_dir / "resources" / "app.yml")
 
 
 def resolve_bundle_var(project_dir: Path, target: str, var_name: str) -> str | None:
@@ -99,168 +91,128 @@ def bundle_settings(project_dir: Path, target: str) -> dict[str, str | None]:
         "data_schema",
         "warehouse_id",
         "lakebase_instance_name",
+        "experiment_id",
     )
     return {key: resolve_bundle_var(project_dir, target, key) for key in keys}
 
 
-def app_exists(app_name: str, profile: str | None) -> bool:
-    try:
-        _workspace_client(profile).apps.get(app_name)
-        return True
-    except Exception:
-        return False
-
-
-def resolve_app_sp_client_id(app_name: str, profile: str | None) -> str:
-    app = _workspace_client(profile).apps.get(app_name)
-    sp_client_id = getattr(app, "service_principal_client_id", None)
-    if not sp_client_id:
-        raise RuntimeError(
-            f"Databricks app '{app_name}' did not return service_principal_client_id."
-        )
-    return sp_client_id
-
-
-def grant_permissions_for_app(
-    *,
+def resolve_source_code_path(
     project_dir: Path,
-    app_name: str,
-    memory_type: str,
-    profile: str | None,
-    instance_name: str | None,
-    project: str | None = None,
-    branch: str | None = None,
-    catalog_name: str | None = None,
-    schema_name: str | None = None,
-    data_catalog_name: str | None = None,
-    data_schema_name: str | None = None,
-    warehouse_id: str | None = None,
-) -> None:
-    command = [
-        "uv",
-        "run",
-        "python",
-        "scripts/grant_lakebase_permissions.py",
-        "--app-name",
-        app_name,
-        "--memory-type",
-        memory_type,
-    ]
-    if profile:
-        command.extend(["--profile", profile])
-    if instance_name:
-        command.extend(["--instance-name", instance_name])
-    if project:
-        command.extend(["--project", project])
-    if branch:
-        command.extend(["--branch", branch])
-    if catalog_name and schema_name:
-        command.extend(["--catalog-name", catalog_name, "--schema-name", schema_name])
-    if data_catalog_name and data_schema_name:
-        command.extend(
-            [
-                "--data-catalog-name",
-                data_catalog_name,
-                "--data-schema-name",
-                data_schema_name,
-            ]
-        )
-    if warehouse_id:
-        command.extend(["--warehouse-id", warehouse_id])
-
-    _run_command(
-        command,
-        cwd=project_dir,
-        profile=profile,
-        label=f"grant permissions ({memory_type})",
-    )
-
-
-def bootstrap_lakebase_role(
-    config: NotebookDeployConfig,
     *,
-    phase: str,
-    fail_ok: bool,
-) -> None:
-    settings = bundle_settings(config.project_dir, config.target)
-    instance_name = settings["lakebase_instance_name"]
-    if not instance_name:
-        return
-    if not app_exists(config.app_name, config.profile):
-        return
-
-    print(f"Bootstrapping Lakebase role ({phase}) in {instance_name}...")
-    for memory_type in ("langgraph-short-term", "langgraph-long-term"):
-        try:
-            grant_permissions_for_app(
-                project_dir=config.project_dir,
-                app_name=config.app_name,
-                profile=config.profile,
-                memory_type=memory_type,
-                instance_name=instance_name,
-                catalog_name=settings["catalog"],
-                schema_name=settings["schema"],
-                data_catalog_name=settings["data_catalog"],
-                data_schema_name=settings["data_schema"],
-                warehouse_id=settings["warehouse_id"],
-            )
-        except Exception as e:
-            if fail_ok:
-                print(
-                    f"WARNING: Lakebase bootstrap ({phase}, {memory_type}) failed; "
-                    f"continuing. {e}"
-                )
-            else:
-                raise
-    print(f"✅ Lakebase role bootstrap complete ({phase})")
-    print()
-
-
-def deploy_bundle(config: NotebookDeployConfig) -> None:
-    print(f"=== Deploy: {config.app_name} ===")
-    print(f"  Target  : {config.target}")
-    print(f"  Profile : {config.profile or '<workspace auth>'}")
-    print()
-
-    if config.sync_first:
-        _run_command(
-            [
-                "databricks",
-                "bundle",
-                "sync",
-                "-t",
-                config.target,
-                *_profile_args(config.profile),
-            ],
-            cwd=config.project_dir,
-            profile=config.profile,
-            label="bundle sync",
-        )
-        print("✅ Sync complete")
-        print()
-
-    bootstrap_lakebase_role(config, phase="pre-deploy", fail_ok=False)
-
-    _run_command(
-        [
-            "databricks",
-            "bundle",
-            "deploy",
-            "-t",
-            config.target,
-            *_profile_args(config.profile),
-        ],
-        cwd=config.project_dir,
-        profile=config.profile,
-        label="bundle deploy",
+    bundle_app_key: str,
+) -> tuple[str | None, Path | None]:
+    app_resource = load_app_resource(project_dir)
+    app_config = ((app_resource.get("resources") or {}).get("apps") or {}).get(
+        bundle_app_key
     )
-    print("✅ Deploy complete")
+    if not app_config:
+        raise RuntimeError(
+            f"Unable to locate apps.{bundle_app_key} in resources/app.yml."
+        )
+
+    raw_path = app_config.get("source_code_path")
+    if not raw_path:
+        return None, None
+    resolved = (project_dir / "resources" / raw_path).resolve()
+    return str(raw_path), resolved
+
+
+def get_workspace_user(profile: str | None) -> str:
+    user = _workspace_client(profile).current_user.me()
+    user_name = getattr(user, "user_name", None)
+    if not user_name:
+        raise RuntimeError("Workspace auth succeeded but current user name was empty.")
+    return user_name
+
+
+def get_app_info(app_name: str, profile: str | None) -> tuple[bool, str | None]:
+    try:
+        app = _workspace_client(profile).apps.get(app_name)
+    except Exception:
+        return False, None
+    return True, getattr(app, "service_principal_client_id", None)
+
+
+def collect_preflight_report(config: NotebookDeployConfig) -> PreflightReport:
+    warnings: list[str] = []
+    workspace_user = None
+    try:
+        workspace_user = get_workspace_user(config.profile)
+    except Exception as e:
+        warnings.append(f"Workspace auth check failed: {e}")
+
+    settings = bundle_settings(config.project_dir, config.target)
+    app_exists, sp_client_id = get_app_info(config.app_name, config.profile)
+
+    raw_source_code_path = None
+    source_code_path = None
+    try:
+        raw_source_code_path, source_code_path = resolve_source_code_path(
+            config.project_dir,
+            bundle_app_key=config.bundle_app_key,
+        )
+    except Exception as e:
+        warnings.append(str(e))
+
+    if source_code_path and not source_code_path.exists():
+        warnings.append(f"Resolved source_code_path does not exist: {source_code_path}")
+    if raw_source_code_path == "../":
+        warnings.append(
+            "App source_code_path resolves to the bundle root directory. Run bundle "
+            "commands from agent_app so Databricks packages the intended bundle content."
+        )
+
+    return PreflightReport(
+        settings=settings,
+        workspace_user=workspace_user,
+        app_exists=app_exists,
+        service_principal_client_id=sp_client_id,
+        source_code_path=source_code_path,
+        warnings=warnings,
+    )
+
+
+def print_preflight_report(config: NotebookDeployConfig, report: PreflightReport) -> None:
+    print("Notebook deploy configuration")
+    print(f"  project_dir: {config.project_dir}")
+    print(f"  target: {config.target}")
+    print(f"  profile: {config.profile or '<workspace auth>'}")
+    print(f"  app_name: {config.app_name}")
+    print(f"  sync_first: {config.sync_first}")
+    print(f"  run_after: {config.run_after}")
     print()
 
-    bootstrap_lakebase_role(config, phase="post-deploy", fail_ok=True)
+    print("Resolved bundle settings")
+    for key, value in report.settings.items():
+        print(f"  {key}: {value or '<unset>'}")
+    print()
 
+    print("Workspace preflight")
+    print(f"  workspace_user: {report.workspace_user or '<unavailable>'}")
+    print(f"  app_exists: {report.app_exists}")
+    print(
+        "  service_principal_client_id: "
+        f"{report.service_principal_client_id or '<not available yet>'}"
+    )
+    print(f"  source_code_path: {report.source_code_path or '<unresolved>'}")
+    if report.warnings:
+        print()
+        print("Warnings")
+        for warning in report.warnings:
+            print(f"  - {warning}")
+
+
+def build_bundle_commands(config: NotebookDeployConfig) -> list[str]:
+    commands: list[list[str]] = []
+    if config.sync_first:
+        commands.append(
+            ["databricks", "bundle", "sync", "-t", config.target, *_profile_args(config.profile)]
+        )
+    commands.append(
+        ["databricks", "bundle", "deploy", "-t", config.target, *_profile_args(config.profile)]
+    )
     if config.run_after:
-        _run_command(
+        commands.append(
             [
                 "databricks",
                 "bundle",
@@ -269,16 +221,98 @@ def deploy_bundle(config: NotebookDeployConfig) -> None:
                 "-t",
                 config.target,
                 *_profile_args(config.profile),
-            ],
-            cwd=config.project_dir,
-            profile=config.profile,
-            label="bundle run",
+            ]
         )
-        print("✅ App started")
-        print()
-        bootstrap_lakebase_role(config, phase="post-run", fail_ok=True)
+    return [_render_command(command) for command in commands]
 
-    print("=== Done ===")
+
+def print_terminal_handoff(config: NotebookDeployConfig) -> None:
+    print("Run these commands in the Databricks web terminal")
+    print(f"  cd {shlex.quote(str(config.project_dir))}")
+    for command in build_bundle_commands(config):
+        print(f"  {command}")
+    print()
+    print("After the terminal commands finish, rerun the bootstrap and verification cells.")
+
+
+def bootstrap_lakebase_role(
+    config: NotebookDeployConfig,
+    *,
+    phase: str,
+    fail_ok: bool,
+) -> list[tuple[str, bool, str | None]]:
+    settings = bundle_settings(config.project_dir, config.target)
+    instance_name = settings["lakebase_instance_name"]
+    if not instance_name:
+        print("Skipping Lakebase bootstrap: no lakebase_instance_name resolved.")
+        return []
+
+    app_exists, _ = get_app_info(config.app_name, config.profile)
+    if not app_exists:
+        print(
+            f"Skipping Lakebase bootstrap ({phase}): app '{config.app_name}' does not exist yet."
+        )
+        return []
+
+    print(f"Bootstrapping Lakebase role ({phase}) in {instance_name}...")
+    workspace_client = _workspace_client(config.profile)
+    results: list[tuple[str, bool, str | None]] = []
+    for memory_type in ("langgraph-short-term", "langgraph-long-term"):
+        try:
+            apply_permission_grants(
+                PermissionGrantConfig(
+                    memory_type=memory_type,
+                    app_name=config.app_name,
+                    profile=config.profile,
+                    instance_name=instance_name,
+                    catalog_name=settings["catalog"],
+                    schema_name=settings["schema"],
+                    data_catalog_name=settings["data_catalog"],
+                    data_schema_name=settings["data_schema"],
+                    warehouse_id=settings["warehouse_id"],
+                ),
+                workspace_client=workspace_client,
+            )
+            results.append((memory_type, True, None))
+        except Exception as e:
+            if fail_ok:
+                print(
+                    f"WARNING: Lakebase bootstrap ({phase}, {memory_type}) failed; "
+                    f"continuing. {e}"
+                )
+                results.append((memory_type, False, str(e)))
+            else:
+                raise
+
+    if results:
+        print(f"✅ Lakebase role bootstrap complete ({phase})")
+    print()
+    return results
+
+
+def print_bootstrap_results(
+    phase: str,
+    results: list[tuple[str, bool, str | None]],
+) -> None:
+    if not results:
+        return
+    print(f"Bootstrap summary ({phase})")
+    for memory_type, success, message in results:
+        status = "ok" if success else "failed"
+        suffix = f" - {message}" if message else ""
+        print(f"  {memory_type}: {status}{suffix}")
+
+
+def verify_deployment(config: NotebookDeployConfig) -> None:
+    app_exists, sp_client_id = get_app_info(config.app_name, config.profile)
+    print("Post-deploy verification")
+    print(f"  app_exists: {app_exists}")
+    print(f"  service_principal_client_id: {sp_client_id or '<not available yet>'}")
+    if MANUAL_GRANT_NOTES:
+        print()
+        print("Manual follow-up")
+        for note in MANUAL_GRANT_NOTES:
+            print(f"  - {note}")
 
 
 def locate_project_dir(default: str | None = None) -> Path:

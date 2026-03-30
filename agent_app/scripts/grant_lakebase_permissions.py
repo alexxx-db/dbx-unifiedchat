@@ -17,16 +17,9 @@ Usage:
 """
 
 import argparse
-import json
-import os
-import subprocess
 import sys
 import time
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
+from dataclasses import dataclass
 
 # Per-memory-type table definitions for public schema.
 MEMORY_TYPE_TABLES: dict[str, list[str]] = {
@@ -61,6 +54,28 @@ MEMORY_TYPE_SEQUENCE_SCHEMAS = {
 SHARED_SCHEMAS: dict[str, list[str]] = {
     "ai_chatbot": ["Chat", "Message", "User", "Vote", "__drizzle_migrations"],
 }
+
+
+@dataclass
+class PermissionGrantConfig:
+    memory_type: str
+    sp_client_id: str | None = None
+    app_name: str | None = None
+    profile: str | None = None
+    catalog_name: str | None = None
+    schema_name: str | None = None
+    data_catalog_name: str | None = None
+    data_schema_name: str | None = None
+    instance_name: str | None = None
+    project: str | None = None
+    branch: str | None = None
+    warehouse_id: str | None = None
+
+
+def build_workspace_client(profile: str | None):
+    from databricks.sdk import WorkspaceClient
+
+    return WorkspaceClient(profile=profile) if profile else WorkspaceClient()
 
 
 def quote_ident(identifier: str) -> str:
@@ -116,41 +131,26 @@ def _execute_grant(use_direct: bool, sdk_fn, direct_fn, label: str) -> None:
     except Exception as e:
         error_text = str(e).lower()
         if use_direct and "role" in error_text and "does not exist" in error_text:
-            print(
-                "  Error: the app service principal role is not ready in Postgres yet.\n"
-                "  Start the Databricks App once so it connects to Lakebase, then "
-                "re-run this script.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise RuntimeError(
+                "The app service principal role is not ready in Postgres yet. "
+                "Start the Databricks App once so it connects to Lakebase, then "
+                "re-run the grant step."
+            ) from e
         print(f"  Warning: {label} grant failed (may not exist yet): {e}")
 
 
-def resolve_app_sp_client_id(app_name: str, profile: str | None) -> str:
-    cmd = ["databricks", "apps", "get", app_name, "--output", "json"]
-    if profile:
-        cmd.extend(["--profile", profile])
-
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        error_text = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(
-            f"Failed to resolve service principal for app '{app_name}': {error_text}"
-        )
-
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(
-            f"Failed to parse Databricks app metadata for '{app_name}': {e}"
-        ) from e
-
-    sp_client_id = payload.get("service_principal_client_id")
+def resolve_app_sp_client_id(
+    app_name: str,
+    profile: str | None = None,
+    workspace_client=None,
+) -> str:
+    workspace_client = workspace_client or build_workspace_client(profile)
+    app = workspace_client.apps.get(app_name)
+    sp_client_id = getattr(app, "service_principal_client_id", None)
     if not sp_client_id:
         raise RuntimeError(
             f"Databricks app '{app_name}' did not return service_principal_client_id."
         )
-
     return sp_client_id
 
 
@@ -260,169 +260,92 @@ def grant_uc_permissions_via_sql(
     _execute_sql_statement(workspace_client, warehouse_id, schema_stmt)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Grant Lakebase and Unity Catalog permissions to an app service principal."
-    )
-    parser.add_argument(
-        "sp_client_id",
-        nargs="?",
-        help="Service principal client ID (UUID). Get it via: "
-        "databricks apps get <app-name> --output json "
-        "| jq -r '.service_principal_client_id'",
-    )
-    parser.add_argument(
-        "--app-name",
-        help="Databricks App name. If provided, the script resolves the app "
-        "service_principal_client_id automatically.",
-    )
-    parser.add_argument(
-        "--profile",
-        default=os.getenv("DATABRICKS_CONFIG_PROFILE"),
-        help="Databricks profile to use for app lookup, Lakebase, and "
-        "Unity Catalog grants (default: DATABRICKS_CONFIG_PROFILE from .env)",
-    )
-    parser.add_argument(
-        "--catalog-name",
-        default=os.getenv("CATALOG_NAME"),
-        help="Unity Catalog catalog name for app data access "
-        "(default: CATALOG_NAME from .env)",
-    )
-    parser.add_argument(
-        "--schema-name",
-        default=os.getenv("SCHEMA_NAME"),
-        help="Unity Catalog schema name for app data access "
-        "(default: SCHEMA_NAME from .env)",
-    )
-    parser.add_argument(
-        "--data-catalog-name",
-        default=os.getenv("DATA_CATALOG_NAME"),
-        help="Optional second Unity Catalog catalog name for source data access "
-        "(default: DATA_CATALOG_NAME from .env)",
-    )
-    parser.add_argument(
-        "--data-schema-name",
-        default=os.getenv("DATA_SCHEMA_NAME"),
-        help="Optional second Unity Catalog schema name for source data access "
-        "(default: DATA_SCHEMA_NAME from .env)",
-    )
-    parser.add_argument(
-        "--memory-type",
-        required=True,
-        choices=list(MEMORY_TYPE_TABLES.keys()),
-        help="Memory type to grant permissions for",
-    )
-    parser.add_argument(
-        "--instance-name",
-        default=os.getenv("LAKEBASE_INSTANCE_NAME"),
-        help="Lakebase instance name for provisioned instances (default: LAKEBASE_INSTANCE_NAME from .env)",
-    )
-    parser.add_argument(
-        "--project",
-        default=os.getenv("LAKEBASE_AUTOSCALING_PROJECT"),
-        help="Lakebase autoscaling project name (default: LAKEBASE_AUTOSCALING_PROJECT from .env)",
-    )
-    parser.add_argument(
-        "--branch",
-        default=os.getenv("LAKEBASE_AUTOSCALING_BRANCH"),
-        help="Lakebase autoscaling branch name (default: LAKEBASE_AUTOSCALING_BRANCH from .env)",
-    )
-    parser.add_argument(
-        "--warehouse-id",
-        default=os.getenv("SQL_WAREHOUSE_ID"),
-        help="SQL warehouse ID used for Unity Catalog SQL GRANT fallback "
-        "(default: SQL_WAREHOUSE_ID from .env)",
-    )
-    args = parser.parse_args()
+def validate_permission_config(config: PermissionGrantConfig) -> None:
+    if config.memory_type not in MEMORY_TYPE_TABLES:
+        raise ValueError(
+            f"Unsupported memory_type '{config.memory_type}'. "
+            f"Expected one of: {', '.join(sorted(MEMORY_TYPE_TABLES))}."
+        )
 
-    has_provisioned = bool(args.instance_name)
-    has_autoscaling = bool(args.project and args.branch)
+    has_provisioned = bool(config.instance_name)
+    has_autoscaling = bool(config.project and config.branch)
 
     if not has_provisioned and not has_autoscaling:
-        print(
-            "Error: Lakebase connection is required. Provide one of:\n"
-            "  Provisioned:  --instance-name <name>  (or set LAKEBASE_INSTANCE_NAME in .env)\n"
-            "  Autoscaling:  --project <proj> --branch <branch>  (or set LAKEBASE_AUTOSCALING_PROJECT + LAKEBASE_AUTOSCALING_BRANCH in .env)",
-            file=sys.stderr,
+        raise ValueError(
+            "Lakebase connection is required. Provide either "
+            "--instance-name or both --project and --branch."
         )
-        sys.exit(1)
 
-    if bool(args.sp_client_id) == bool(args.app_name):
-        print(
-            "Error: provide exactly one of:\n"
-            "  <sp-client-id>\n"
-            "  --app-name <app-name>",
-            file=sys.stderr,
+    if bool(config.sp_client_id) == bool(config.app_name):
+        raise ValueError("Provide exactly one of sp_client_id or app_name.")
+
+    if bool(config.catalog_name) != bool(config.schema_name):
+        raise ValueError(
+            "Provide both catalog_name and schema_name together, or omit both."
         )
-        sys.exit(1)
 
-    if bool(args.catalog_name) != bool(args.schema_name):
-        print(
-            "Error: provide both Unity Catalog values together:\n"
-            "  --catalog-name <catalog> --schema-name <schema>\n"
-            "or omit both to skip Unity Catalog grants.",
-            file=sys.stderr,
+    if bool(config.data_catalog_name) != bool(config.data_schema_name):
+        raise ValueError(
+            "Provide both data_catalog_name and data_schema_name together, or omit both."
         )
-        sys.exit(1)
 
-    if bool(args.data_catalog_name) != bool(args.data_schema_name):
-        print(
-            "Error: provide both source-data Unity Catalog values together:\n"
-            "  --data-catalog-name <catalog> --data-schema-name <schema>\n"
-            "or omit both to skip source-data UC grants.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
+def apply_permission_grants(
+    config: PermissionGrantConfig,
+    *,
+    workspace_client=None,
+) -> str:
     from databricks_ai_bridge.lakebase import (
         LakebaseClient,
         SchemaPrivilege,
         SequencePrivilege,
         TablePrivilege,
     )
-    from databricks.sdk import WorkspaceClient
     from databricks.sdk.service import catalog as uc_catalog
 
-    workspace_client = (
-        WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
-    )
+    validate_permission_config(config)
+
+    workspace_client = workspace_client or build_workspace_client(config.profile)
     client = LakebaseClient(
-        instance_name=args.instance_name or None,
-        project=args.project or None,
-        branch=args.branch or None,
+        instance_name=config.instance_name or None,
+        project=config.project or None,
+        branch=config.branch or None,
         workspace_client=workspace_client,
     )
-    if args.app_name:
-        sp_id = resolve_app_sp_client_id(args.app_name, args.profile)
-        print(
-            f"Resolved app '{args.app_name}' to service principal client ID: {sp_id}"
+    sp_id = config.sp_client_id
+    if config.app_name:
+        sp_id = resolve_app_sp_client_id(
+            config.app_name,
+            profile=config.profile,
+            workspace_client=workspace_client,
         )
-    else:
-        sp_id = args.sp_client_id
-    memory_type = args.memory_type
+        print(
+            f"Resolved app '{config.app_name}' to service principal client ID: {sp_id}"
+        )
 
-    if has_provisioned:
-        print(f"Using provisioned instance: {args.instance_name}")
+    if not sp_id:
+        raise RuntimeError("Unable to resolve service principal client ID.")
+
+    if config.instance_name:
+        print(f"Using provisioned instance: {config.instance_name}")
     else:
-        print(f"Using autoscaling project: {args.project}, branch: {args.branch}")
-    print(f"Memory type: {memory_type}")
-    if args.catalog_name and args.schema_name:
-        print(f"Unity Catalog target: {args.catalog_name}.{args.schema_name}")
+        print(f"Using autoscaling project: {config.project}, branch: {config.branch}")
+    print(f"Memory type: {config.memory_type}")
+    if config.catalog_name and config.schema_name:
+        print(f"Unity Catalog target: {config.catalog_name}.{config.schema_name}")
     else:
         print("Unity Catalog target: not provided, skipping UC grants")
-    if args.data_catalog_name and args.data_schema_name:
+    if config.data_catalog_name and config.data_schema_name:
         print(
             f"Source data Unity Catalog target: "
-            f"{args.data_catalog_name}.{args.data_schema_name}"
+            f"{config.data_catalog_name}.{config.data_schema_name}"
         )
 
-    # Build schema -> tables map for the selected memory type
     schema_tables: dict[str, list[str]] = {
-        "public": MEMORY_TYPE_TABLES[memory_type],
+        "public": MEMORY_TYPE_TABLES[config.memory_type],
         **SHARED_SCHEMAS,
     }
 
-    # 1. Create role
     print(f"Creating role for SP {sp_id}...")
     use_direct_grants = False
     try:
@@ -450,7 +373,6 @@ def main():
         else:
             raise
 
-    # 2. Grant schema + table privileges
     schema_privileges = [SchemaPrivilege.USAGE, SchemaPrivilege.CREATE]
     table_privileges = [
         TablePrivilege.SELECT,
@@ -485,9 +407,8 @@ def main():
             label="table",
         )
 
-    # 3. Grant sequence privileges where needed.
     sequence_schemas = set(SHARED_SEQUENCE_SCHEMAS)
-    sequence_schemas.update(MEMORY_TYPE_SEQUENCE_SCHEMAS.get(memory_type, set()))
+    sequence_schemas.update(MEMORY_TYPE_SEQUENCE_SCHEMAS.get(config.memory_type, set()))
     if sequence_schemas:
         sequence_privileges = [
             SequencePrivilege.USAGE,
@@ -507,47 +428,39 @@ def main():
                 label="sequence",
             )
 
-    if (
-        (args.catalog_name and args.schema_name)
-        or (args.data_catalog_name and args.data_schema_name)
-    ):
-        pass
-    else:
-        workspace_client = None
-
-    if args.catalog_name and args.schema_name:
+    if config.catalog_name and config.schema_name:
         grant_uc_permissions(
             workspace_client=workspace_client,
             grantee=sp_id,
-            catalog_name=args.catalog_name,
-            schema_name=args.schema_name,
+            catalog_name=config.catalog_name,
+            schema_name=config.schema_name,
             uc_catalog=uc_catalog,
             schema_privileges=[
                 uc_catalog.Privilege.USE_SCHEMA,
                 uc_catalog.Privilege.SELECT,
                 uc_catalog.Privilege.EXECUTE,
             ],
-            warehouse_id=args.warehouse_id,
+            warehouse_id=config.warehouse_id,
         )
 
-    if args.data_catalog_name and args.data_schema_name:
+    if config.data_catalog_name and config.data_schema_name:
         if (
-            args.data_catalog_name == args.catalog_name
-            and args.data_schema_name == args.schema_name
+            config.data_catalog_name == config.catalog_name
+            and config.data_schema_name == config.schema_name
         ):
             print("Source data Unity Catalog target matches primary target, skipping.")
         else:
             grant_uc_permissions(
                 workspace_client=workspace_client,
                 grantee=sp_id,
-                catalog_name=args.data_catalog_name,
-                schema_name=args.data_schema_name,
+                catalog_name=config.data_catalog_name,
+                schema_name=config.data_schema_name,
                 uc_catalog=uc_catalog,
                 schema_privileges=[
                     uc_catalog.Privilege.USE_SCHEMA,
                     uc_catalog.Privilege.SELECT,
                 ],
-                warehouse_id=args.warehouse_id,
+                warehouse_id=config.warehouse_id,
             )
 
     print(
@@ -555,6 +468,92 @@ def main():
         "exist yet, that's expected on a fresh branch — they'll be created on first "
         "agent usage. Re-run this script after the first run to grant remaining permissions."
     )
+    return sp_id
+
+
+def _build_config_from_args(args) -> PermissionGrantConfig:
+    return PermissionGrantConfig(
+        memory_type=args.memory_type,
+        sp_client_id=args.sp_client_id,
+        app_name=args.app_name,
+        profile=args.profile,
+        catalog_name=args.catalog_name,
+        schema_name=args.schema_name,
+        data_catalog_name=args.data_catalog_name,
+        data_schema_name=args.data_schema_name,
+        instance_name=args.instance_name,
+        project=args.project,
+        branch=args.branch,
+        warehouse_id=args.warehouse_id,
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Grant Lakebase and Unity Catalog permissions to an app service principal."
+    )
+    parser.add_argument(
+        "sp_client_id",
+        nargs="?",
+        help="Service principal client ID (UUID). Get it via: "
+        "databricks apps get <app-name> --output json "
+        "| jq -r '.service_principal_client_id'",
+    )
+    parser.add_argument(
+        "--app-name",
+        help="Databricks App name. If provided, the script resolves the app "
+        "service_principal_client_id automatically.",
+    )
+    parser.add_argument(
+        "--profile",
+        help="Databricks profile to use for app lookup, Lakebase, and Unity Catalog grants. "
+        "If omitted, the script uses ambient Databricks auth.",
+    )
+    parser.add_argument(
+        "--catalog-name",
+        help="Unity Catalog catalog name for app data access.",
+    )
+    parser.add_argument(
+        "--schema-name",
+        help="Unity Catalog schema name for app data access.",
+    )
+    parser.add_argument(
+        "--data-catalog-name",
+        help="Optional second Unity Catalog catalog name for source data access.",
+    )
+    parser.add_argument(
+        "--data-schema-name",
+        help="Optional second Unity Catalog schema name for source data access.",
+    )
+    parser.add_argument(
+        "--memory-type",
+        required=True,
+        choices=list(MEMORY_TYPE_TABLES.keys()),
+        help="Memory type to grant permissions for",
+    )
+    parser.add_argument(
+        "--instance-name",
+        help="Lakebase instance name for provisioned instances.",
+    )
+    parser.add_argument(
+        "--project",
+        help="Lakebase autoscaling project name.",
+    )
+    parser.add_argument(
+        "--branch",
+        help="Lakebase autoscaling branch name.",
+    )
+    parser.add_argument(
+        "--warehouse-id",
+        help="SQL warehouse ID used for Unity Catalog SQL GRANT fallback.",
+    )
+    args = parser.parse_args()
+
+    try:
+        apply_permission_grants(_build_config_from_args(args))
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

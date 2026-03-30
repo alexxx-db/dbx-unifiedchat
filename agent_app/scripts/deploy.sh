@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
 # deploy.sh — Deploy the multi-agent Genie app to Databricks Apps via DAB.
 #
-# Usage:
-#   ./scripts/deploy.sh                       # deploy to dev target (default)
-#   ./scripts/deploy.sh --target prod          # deploy to prod target
-#   ./scripts/deploy.sh --profile my-profile   # use a specific Databricks profile
-#   ./scripts/deploy.sh --run                  # deploy + start the app
-#   ./scripts/deploy.sh --sync                 # sync files first, then deploy
+# Local / CI workflow:
+#   Use this script when deploying from your terminal or CI runner.
+#   For the Databricks workspace hybrid flow, use `scripts/deploy_notebook.py`
+#   and run the printed `databricks bundle ...` commands in the Databricks web terminal.
+#
+# Recommended usage:
+#   ./scripts/deploy.sh --target dev --profile my-profile --run
+#     Deploy to the dev target and start the app.
+#
+#   ./scripts/deploy.sh --target dev --profile my-profile
+#     Deploy to the dev target without starting the app.
+#
+#   ./scripts/deploy.sh --target prod --profile my-profile
+#     Deploy to the prod target.
+#
+#   ./scripts/deploy.sh --target dev --profile my-profile --sync --run
+#     Sync workspace files first, then deploy and start the app.
+#
+# Config sources:
+#   - Bundle variables come from `databricks.yml`.
+#   - Auth comes from `--profile`, target workspace config in `databricks.yml`,
+#     or ambient Databricks auth in your shell / CI environment.
+#   - This script does not read `.env`.
+#
+# Arguments:
+#   --target,  -t   Bundle target to deploy. Default: dev
+#   --profile, -p   Databricks CLI profile to use. Optional if target config or ambient auth is available.
+#   --run           Start the app after a successful deploy.
+#   --sync          Run `databricks bundle sync` before deploy.
+#   --help,    -h   Show this help text and exit.
 #
 # This is a convenience wrapper around 'databricks bundle deploy' and
 # 'databricks bundle run'.
@@ -15,12 +39,40 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="$APP_DIR/.env"
 
 TARGET="dev"
-PROFILE="dev"
+PROFILE=""
 RUN_AFTER=false
 SYNC_FIRST=false
+
+print_help() {
+  awk '
+    NR == 2, /^set -euo pipefail$/ {
+      if ($0 ~ /^set -euo pipefail$/) {
+        exit
+      }
+      sub(/^# ?/, "")
+      print
+    }
+  ' "$0"
+}
+
+resolve_target_workspace_profile() {
+  python - "$APP_DIR" "$TARGET" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+app_dir = pathlib.Path(sys.argv[1])
+target = sys.argv[2]
+config = yaml.safe_load((app_dir / "databricks.yml").read_text()) or {}
+workspace = ((config.get("targets") or {}).get(target) or {}).get("workspace") or {}
+profile = (workspace.get("profile") or "").strip()
+if profile:
+    print(profile)
+PY
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,24 +80,13 @@ while [[ $# -gt 0 ]]; do
     --profile|-p) PROFILE="$2"; shift 2 ;;
     --run)        RUN_AFTER=true; shift ;;
     --sync)       SYNC_FIRST=true; shift ;;
+    --help|-h)    print_help; exit 0 ;;
     *)            echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
 
-# Resolve profile from .env if not passed
-if [[ -z "$PROFILE" && -f "$ENV_FILE" ]]; then
-  PROFILE=$(grep -E "^DATABRICKS_CONFIG_PROFILE=.+" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)
-fi
-
-# Clear shell-level auth settings so .env / --profile wins consistently.
-for var in DATABRICKS_CONFIG_PROFILE DATABRICKS_HOST DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET; do
-  if [[ -n "${!var:-}" ]]; then
-    unset "$var"
-  fi
-done
-
-if [[ -n "$PROFILE" ]]; then
-  export DATABRICKS_CONFIG_PROFILE="$PROFILE"
+if [[ -z "$PROFILE" ]]; then
+  PROFILE="$(resolve_target_workspace_profile || true)"
 fi
 
 PROFILE_ARGS=()
@@ -153,12 +194,18 @@ bootstrap_lakebase_role() {
   fi
 
   for memory_type in langgraph-short-term langgraph-long-term; do
-    if uv run python scripts/grant_lakebase_permissions.py \
-      --app-name "$APP_NAME" \
-      --profile "${PROFILE:-}" \
-      --memory-type "$memory_type" \
-      --instance-name "$LAKEBASE_INSTANCE_NAME" \
-      "${grant_args[@]}"; then
+    local cmd=(
+      uv run python scripts/grant_lakebase_permissions.py
+      --app-name "$APP_NAME"
+      --memory-type "$memory_type"
+      --instance-name "$LAKEBASE_INSTANCE_NAME"
+      "${grant_args[@]}"
+    )
+    if [[ -n "${PROFILE:-}" ]]; then
+      cmd+=(--profile "$PROFILE")
+    fi
+
+    if "${cmd[@]}"; then
       continue
     fi
 

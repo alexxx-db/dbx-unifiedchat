@@ -2,22 +2,28 @@
 # MAGIC %md
 # MAGIC # Multi-Agent Genie Deploy
 # MAGIC
-# MAGIC Repo-backed notebook wrapper for bundle deploy/run plus Lakebase and Unity Catalog bootstrapping.
+# MAGIC Use this notebook as an interactive deploy companion for the DAB app.
 # MAGIC
-# MAGIC Notes:
-# MAGIC - Keep the repository checked out in a Databricks Repo or otherwise available on the driver filesystem.
-# MAGIC - `databricks` CLI must be available in the notebook environment for bundle commands.
-# MAGIC - This notebook does not replace the app runtime; it replaces the local deploy orchestration flow.
+# MAGIC What this notebook does:
+# MAGIC - resolves target-specific bundle settings from `databricks.yml`
+# MAGIC - checks workspace auth and current app state
+# MAGIC - prints the exact `databricks bundle ...` commands to run in the web terminal
+# MAGIC - applies Lakebase and Unity Catalog bootstrap grants after deploy
+# MAGIC - verifies the app service principal after deployment
+# MAGIC
+# MAGIC What it does not do:
+# MAGIC - it does not replace `deploy.sh` for local or CI automation
+# MAGIC - it does not execute `databricks bundle deploy` or `databricks bundle run` in notebook cells
 
 # COMMAND ----------
 
-# MAGIC %pip install pyyaml databricks-sdk uv
+# MAGIC %pip install pyyaml databricks-sdk databricks-ai-bridge python-dotenv
 
 # COMMAND ----------
 
+import importlib.util
 import os
 import sys
-import importlib.util
 from pathlib import Path
 
 
@@ -33,6 +39,7 @@ def _widget(name: str, default: str, *, choices: list[str] | None = None) -> str
         pass
     return dbutils.widgets.get(name)
 
+
 initial_project_dir = Path(os.getcwd()).expanduser().resolve()
 project_dir_value = _widget("project_dir", str(initial_project_dir))
 project_dir = Path(project_dir_value).expanduser().resolve()
@@ -40,20 +47,26 @@ target = _widget("target", "dev", choices=["dev", "prod"])
 profile = _widget("profile", "")
 run_after = _widget("run_after", "false", choices=["false", "true"]) == "true"
 sync_first = _widget("sync_first", "false", choices=["false", "true"]) == "true"
+
 if str(project_dir) not in sys.path:
     sys.path.insert(0, str(project_dir))
+
 lib_path = project_dir / "scripts" / "notebook_deploy_lib.py"
 spec = importlib.util.spec_from_file_location("notebook_deploy_lib", lib_path)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Unable to load notebook deploy library from {lib_path}")
+
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 NotebookDeployConfig = module.NotebookDeployConfig
-deploy_bundle = module.deploy_bundle
-
-# COMMAND ----------
+collect_preflight_report = module.collect_preflight_report
+print_preflight_report = module.print_preflight_report
+print_terminal_handoff = module.print_terminal_handoff
+bootstrap_lakebase_role = module.bootstrap_lakebase_role
+print_bootstrap_results = module.print_bootstrap_results
+verify_deployment = module.verify_deployment
 
 config = NotebookDeployConfig(
     project_dir=project_dir,
@@ -63,14 +76,57 @@ config = NotebookDeployConfig(
     sync_first=sync_first,
 )
 
-print("Notebook deploy configuration")
-print(f"  project_dir: {config.project_dir}")
-print(f"  target: {config.target}")
-print(f"  profile: {config.profile or '<workspace auth>'}")
-print(f"  sync_first: {config.sync_first}")
-print(f"  run_after: {config.run_after}")
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1. Preflight
+# MAGIC
+# MAGIC Run this cell first to resolve target-scoped settings, verify workspace auth,
+# MAGIC and inspect whether the app already exists.
 
 # COMMAND ----------
 
-deploy_bundle(config)
+preflight = collect_preflight_report(config)
+print_preflight_report(config, preflight)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Terminal Handoff
+# MAGIC
+# MAGIC Run the printed commands in the Databricks web terminal. The bundle root for
+# MAGIC this repo is the `agent_app` directory, so start there.
+
+# COMMAND ----------
+
+print_terminal_handoff(config)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3. Post-Deploy Bootstrap
+# MAGIC
+# MAGIC After the terminal deploy completes, rerun this cell to grant Lakebase and
+# MAGIC Unity Catalog access to the app service principal.
+
+# COMMAND ----------
+
+bootstrap_results = bootstrap_lakebase_role(
+    config,
+    phase="post-deploy",
+    fail_ok=True,
+)
+print_bootstrap_results("post-deploy", bootstrap_results)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4. Verification
+# MAGIC
+# MAGIC Run this last cell after bootstrap to confirm the app exists and to review
+# MAGIC any remaining manual grant follow-up.
+
+# COMMAND ----------
+
+verify_deployment(config)
 
