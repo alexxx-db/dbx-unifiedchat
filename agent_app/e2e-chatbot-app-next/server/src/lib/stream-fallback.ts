@@ -1,9 +1,8 @@
 import {
-  generateText,
+  streamText,
   type LanguageModelUsage,
   type UIMessageStreamWriter,
 } from 'ai';
-import { generateUUID } from '@chat-template/core';
 
 /**
  * Reads all chunks from a UI message stream, forwarding non-error parts to the
@@ -56,129 +55,81 @@ export async function drainStreamToWriter(
 }
 
 /**
- * Converts a generateText result's content array into UIMessageChunks and
- * writes them to the stream writer. This is the non-streaming equivalent of
- * streamText's toUIMessageStream: it walks the unified `content` array and
- * emits the matching chunk types so the client sees the same parts regardless
- * of whether the response was streamed or generated as a whole.
- *
- * The ContentPart → UIMessageChunk mapping mirrors the transform in the AI SDK's
- * streamText().toUIMessageStream() (ai/src/generate-text/stream-text.ts). All
- * content part types are handled:
- *   text       → text-start / text-delta / text-end
- *   reasoning  → reasoning-start / reasoning-delta / reasoning-end
- *   file       → file  (data URL, same as the SDK streaming path)
- *   source     → source-url | source-document
- *   tool-call  → tool-input-available
- *   tool-result→ tool-output-available
- *   tool-error, tool-approval-request → ignored (not expected in fallback)
+ * Retries with streamText so the fallback preserves incremental UI streaming
+ * instead of waiting for a full generateText result before emitting chunks.
  */
-function writeGenerateTextResultToStream(
-  result: Awaited<ReturnType<typeof generateText>>,
+export async function fallbackToStreamText(
+  params: Parameters<typeof streamText>[0],
   writer: UIMessageStreamWriter,
-) {
-  for (const part of result.content) {
-    const id = generateUUID();
-
-    switch (part.type) {
-      case 'text': {
-        if (part.text.length > 0) {
-          writer.write({ type: 'text-start', id });
-          writer.write({ type: 'text-delta', id, delta: part.text });
-          writer.write({ type: 'text-end', id });
-        }
-        break;
-      }
-      case 'reasoning': {
-        if (part.text.length > 0) {
-          writer.write({ type: 'reasoning-start', id });
-          writer.write({ type: 'reasoning-delta', id, delta: part.text });
-          writer.write({ type: 'reasoning-end', id });
-        }
-        break;
-      }
-      case 'file': {
-        writer.write({
-          type: 'file',
-          mediaType: part.file.mediaType,
-          url: `data:${part.file.mediaType};base64,${part.file.base64}`,
-        });
-        break;
-      }
-      case 'source': {
-        if (part.sourceType === 'url') {
-          writer.write({
-            type: 'source-url',
-            sourceId: part.id,
-            url: part.url,
-            title: part.title,
-            ...(part.providerMetadata != null
-              ? { providerMetadata: part.providerMetadata }
-              : {}),
-          });
-        } else if (part.sourceType === 'document') {
-          writer.write({
-            type: 'source-document',
-            sourceId: part.id,
-            mediaType: part.mediaType,
-            title: part.title,
-            filename: part.filename,
-            ...(part.providerMetadata != null
-              ? { providerMetadata: part.providerMetadata }
-              : {}),
-          });
-        }
-        break;
-      }
-      case 'tool-call': {
-        writer.write({
-          type: 'tool-input-available',
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          input: part.input,
-          dynamic: part.dynamic,
-        });
-        break;
-      }
-      case 'tool-result': {
-        writer.write({
-          type: 'tool-output-available',
-          toolCallId: part.toolCallId,
-          output: part.output,
-        });
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  writer.write({ type: 'finish', finishReason: result.finishReason });
-}
-
-/**
- * Falls back to a non-streaming generateText call and writes the result as
- * stream parts via writeGenerateTextResultToStream.
- * Returns the usage on success, or undefined if the fallback itself fails.
- */
-export async function fallbackToGenerateText(
-  params: Parameters<typeof generateText>[0],
-  writer: UIMessageStreamWriter,
-): Promise<{ usage: LanguageModelUsage; traceId?: string } | undefined> {
+): Promise<{
+  usage?: LanguageModelUsage;
+  traceId?: string;
+  clarificationData?: { reason: string; options: string[] };
+} | undefined> {
   try {
-    const fallback = await generateText(params);
+    let traceId: string | undefined;
+    let clarificationData:
+      | {
+          reason: string;
+          options: string[];
+        }
+      | undefined;
+    let usage: LanguageModelUsage | undefined;
 
-    const traceId = (fallback?.response?.body as {
-      metadata: {
-        trace_id: string;
-      };
-    })?.metadata?.trace_id;
+    const fallback = streamText({
+      ...params,
+      includeRawChunks: true,
+      onChunk: ({ chunk }) => {
+        params.onChunk?.({ chunk });
 
-    writeGenerateTextResultToStream(fallback, writer);
+        if (chunk.type !== 'raw') {
+          return;
+        }
 
-    return { usage: fallback.usage, traceId };
+        const raw = chunk.rawValue as any;
+        if (raw?.type === 'response.output_item.done') {
+          const traceIdFromChunk = raw?.databricks_output?.trace?.info?.trace_id;
+          if (typeof traceIdFromChunk === 'string') {
+            traceId = traceIdFromChunk;
+          }
+        }
+
+        if (!traceId && typeof raw?.trace_id === 'string') {
+          traceId = raw.trace_id;
+        }
+
+        if (raw?.databricks_output?.clarification) {
+          clarificationData = raw.databricks_output.clarification;
+        }
+      },
+      onFinish: ({ usage: finishUsage }) => {
+        usage = finishUsage;
+        params.onFinish?.({ usage: finishUsage });
+      },
+    });
+
+    const fallbackUiStream = fallback.toUIMessageStream({
+      sendReasoning: true,
+      sendSources: true,
+      sendFinish: false,
+      onError: (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        writer.onError?.(error);
+        return msg;
+      },
+    });
+
+    const { failed } = await drainStreamToWriter(fallbackUiStream, writer);
+    if (failed) {
+      throw new Error('streamText fallback failed before first text chunk');
+    }
+
+    return { usage, traceId, clarificationData };
   } catch (fallbackError) {
-    console.error('[fallbackToGenerateText] generateText fallback also failed:', fallbackError);
+    console.error(
+      '[fallbackToStreamText] streamText fallback also failed:',
+      fallbackError,
+    );
     const errorMessage =
       fallbackError instanceof Error
         ? fallbackError.message

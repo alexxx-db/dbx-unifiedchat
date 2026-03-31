@@ -63,7 +63,7 @@ import {
 } from '@chat-template/core';
 import { ChatSDKError } from '@chat-template/core/errors';
 import { storeMessageMeta } from '../lib/message-meta-store';
-import { drainStreamToWriter, fallbackToGenerateText } from '../lib/stream-fallback';
+import { drainStreamToWriter, fallbackToStreamText } from '../lib/stream-fallback';
 
 export const chatRouter: RouterType = Router();
 
@@ -332,7 +332,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     /**
      * We manually read from toUIMessageStream instead of using writer.merge
      * so the execute promise (and thus the outer stream) stays alive if we
-     * need to fall back to generateText after a streaming error.
+     * need to retry with a second streamText call after a streaming error.
      */
     const stream = createUIMessageStream({
       // Pass originalMessages so that continuation responses reuse the existing
@@ -366,8 +366,8 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         const { failed } = await drainStreamToWriter(aiStream, writer);
 
         if (failed) {
-          console.log('Streaming failed, falling back to generateText...');
-          const fallbackResult = await fallbackToGenerateText(
+          console.log('Streaming failed, retrying with fallback streamText...');
+          const fallbackResult = await fallbackToStreamText(
             {
               model,
               messages: modelMessages,
@@ -382,6 +382,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
 
           finalUsage = fallbackResult?.usage;
           traceId = fallbackResult?.traceId ?? null;
+          clarificationData = fallbackResult?.clarificationData ?? clarificationData;
         }
 
         // Write clarification data so the client can show a structured modal.
