@@ -226,7 +226,12 @@ async function startServer() {
 
   app.listen(PORT, () => {
     console.log(`Backend server is running on http://localhost:${PORT}`);
-    console.log(`Environment: ${isDevelopment ? 'development' : 'production'}`);
+    console.log(
+      `Runtime mode: ${isDevelopment ? 'development' : 'production'}`,
+    );
+    if (process.env.LOCAL_DATABRICKS_TARGET) {
+      console.log(`Databricks target: ${process.env.LOCAL_DATABRICKS_TARGET}`);
+    }
   });
 }
 
