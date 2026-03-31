@@ -26,7 +26,9 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install pyyaml=6.0.2 databricks-sdk==0.67.0 databricks-ai-bridge[memory]==0.17.0
+# MAGIC %pip install pyyaml=6.0.2 databricks-sdk==0.102.0 databricks-ai-bridge[memory]==0.17.0
+# MAGIC # old version of databricks-sdk==0.67.0
+# MAGIC %restart_python
 
 # COMMAND ----------
 
@@ -139,7 +141,7 @@ for cmd in commands:
 
 # DBTITLE 1,SDK-based validate and deploy
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.apps import AppDeployment, AppDeploymentMode
+from databricks.sdk.service.apps import App, AppDeployment, AppDeploymentMode
 
 effective_profile = resolve_effective_profile(project_dir, target, profile or None)
 w = WorkspaceClient(profile=effective_profile) if effective_profile else WorkspaceClient()
@@ -160,8 +162,7 @@ try:
 except Exception as e:
     print(f"  App '{app_name}' not found – creating …")
     app = w.apps.create_and_wait(
-        name=app_name,
-        description="Multi-agent Genie system on Databricks Apps",
+        App(name=app_name, description="Multi-agent Genie system on Databricks Apps")
     )
     print(f"  Created app: {app.name}")
 
@@ -221,4 +222,3 @@ print_bootstrap_results("post-deploy", bootstrap_results)
 # COMMAND ----------
 
 verify_deployment(config)
-
