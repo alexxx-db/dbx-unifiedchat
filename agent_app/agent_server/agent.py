@@ -94,6 +94,7 @@ try:
     LAKEBASE_INSTANCE_NAME = _cfg.lakebase.instance_name
     EMBEDDING_ENDPOINT = _cfg.lakebase.embedding_endpoint
     EMBEDDING_DIMS = _cfg.lakebase.embedding_dims
+    logger.info(f"Using Lakebase instance: {LAKEBASE_INSTANCE_NAME}")
 except Exception as e:
     logger.warning(f"Failed to load config at import time: {e}")
 

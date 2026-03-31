@@ -34,6 +34,14 @@ export interface ClientSession {
   } | null;
 }
 
+interface ScimUser {
+  id: string;
+  userName: string;
+  displayName: string;
+  emails: { value: string; primary: boolean }[];
+  orgId?: string | null;
+}
+
 // ============================================================================
 // Caching
 // ============================================================================
@@ -52,7 +60,7 @@ let cliUserIdentityExpiresAt = 0;
 const USER_IDENTITY_CACHE_DURATION = 30 * 60 * 1000; // Cache for 30 minutes
 
 // SCIM user data caching (for local development)
-let cachedScimUser: any = null;
+let cachedScimUser: ScimUser | null = null;
 let cacheExpiry = 0;
 
 function invalidateCachedToken(method: AuthMethod): void {
@@ -518,17 +526,14 @@ async function getDatabricksCurrentUser(retryAttempted = false): Promise<any> {
     );
   }
 
-  const scimUser = (await scimResponse.json()) as {
-    id: string;
-    userName: string;
-    displayName: string;
-    emails: { value: string; primary: boolean }[];
-  };
+  const scimUser = (await scimResponse.json()) as ScimUser;
+  scimUser.orgId = scimResponse.headers.get('x-databricks-org-id');
   console.log('[getDatabricksCurrentUser] SCIM user retrieved:', {
     id: scimUser.id,
     userName: scimUser.userName,
     displayName: scimUser.displayName,
     emails: scimUser.emails,
+    orgId: scimUser.orgId,
   });
 
   // Cache for 30 minutes in development (longer since user won't change)
@@ -539,6 +544,26 @@ async function getDatabricksCurrentUser(retryAttempted = false): Promise<any> {
   );
 
   return scimUser;
+}
+
+function buildCanonicalPrincipalId(userId: string, orgId?: string | null): string {
+  const trimmedUserId = userId.trim();
+  const trimmedOrgId = orgId?.trim();
+
+  if (!trimmedUserId) {
+    return trimmedUserId;
+  }
+
+  // Databricks Apps already sends canonical principal ids in X-Forwarded-User.
+  if (trimmedUserId.includes('@')) {
+    return trimmedUserId;
+  }
+
+  if (!trimmedOrgId) {
+    return trimmedUserId;
+  }
+
+  return `${trimmedUserId}@${trimmedOrgId}`;
 }
 
 /**
@@ -614,9 +639,14 @@ export async function getAuthSession({
       `${scimUser.userName}@databricks.com`;
 
     // Map SCIM user to AuthUser object
+    const canonicalPrincipalId = buildCanonicalPrincipalId(
+      scimUser.id,
+      scimUser.orgId,
+    );
+
     const user = await getUserFromHeaders({
       getRequestHeader: (name: string) => {
-        if (name === 'X-Forwarded-User') return scimUser.id;
+        if (name === 'X-Forwarded-User') return canonicalPrincipalId;
         if (name === 'X-Forwarded-Email') return primaryEmail;
         if (name === 'X-Forwarded-Preferred-Username') return scimUser.userName;
         return null;
