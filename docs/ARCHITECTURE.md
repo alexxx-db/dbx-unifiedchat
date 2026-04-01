@@ -31,6 +31,7 @@ Visual representations of the system architecture:
 - [**Simple Architecture**](architecture/architecture_diagram_simple.svg) - High-level overview
 - [**Detailed Architecture**](architecture/architecture_diagram.svg) - Complete system
 - [**Clarification Flow**](architecture/clarification_flow_diagram.mmd) - Clarification handling
+- [**AgentRx Feedback Loop**](architecture/agentrx_feedback_loop.svg) - Admin-guided improvement workflow from upstream issue `#30`
 
 All diagrams are in the [`architecture/`](architecture/) directory in multiple formats (SVG, PNG, PDF, Mermaid).
 
