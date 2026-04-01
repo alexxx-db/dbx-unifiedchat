@@ -34,6 +34,27 @@ def get_workspace_client() -> WorkspaceClient:
     return WorkspaceClient()
 
 
+def _has_vector_search_compatible_credentials(workspace_client: WorkspaceClient) -> bool:
+    """Return whether the SDK client exposes credentials databricks-langchain understands."""
+    config = workspace_client.config
+    auth_type = getattr(config, "auth_type", None)
+
+    if auth_type == "model_serving_user_credentials":
+        return True
+
+    if auth_type == "pat":
+        return bool(getattr(config, "host", None) and getattr(config, "token", None))
+
+    if auth_type == "oauth-m2m":
+        return bool(
+            getattr(config, "host", None)
+            and getattr(config, "client_id", None)
+            and getattr(config, "client_secret", None)
+        )
+
+    return False
+
+
 def get_vector_search_workspace_client() -> WorkspaceClient:
     """Build a WorkspaceClient compatible with databricks-vectorsearch.
 
@@ -44,7 +65,10 @@ def get_vector_search_workspace_client() -> WorkspaceClient:
     workspace_client = get_workspace_client()
     auth_type = getattr(workspace_client.config, "auth_type", None)
 
-    if auth_type in _VECTOR_SEARCH_COMPATIBLE_AUTH_TYPES:
+    if (
+        auth_type in _VECTOR_SEARCH_COMPATIBLE_AUTH_TYPES
+        and _has_vector_search_compatible_credentials(workspace_client)
+    ):
         return workspace_client
 
     auth_header = _extract_authorization_header(
@@ -67,4 +91,5 @@ def get_vector_search_workspace_client() -> WorkspaceClient:
     return WorkspaceClient(
         host=workspace_client.config.host,
         token=auth_header[7:],
+        auth_type="pat",
     )
