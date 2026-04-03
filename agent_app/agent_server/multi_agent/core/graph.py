@@ -27,6 +27,9 @@ def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
         return {"payload_type": type(payload).__name__}
 
     from langchain_core.messages import BaseMessage
+    MAX_RECENT_MESSAGES = 5
+    MAX_RESULT_SAMPLE_ROWS = 5
+    MAX_SQL_PREVIEW_CHARS = 2000
 
     def _preview_text(value: Any, max_chars: int = 400) -> str:
         if value is None:
@@ -85,7 +88,7 @@ def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
 
         return {
             "count": len(messages),
-            "recent_messages": serialized_messages[-5:],
+            "recent_messages": serialized_messages[-MAX_RECENT_MESSAGES:],
             "last_user_message_preview": (
                 last_user_message.get("content_preview") if last_user_message else None
             ),
@@ -96,8 +99,57 @@ def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
             ),
             "message_ids": [
                 message["id"] for message in serialized_messages if message.get("id")
-            ][-5:],
-            "truncated": len(messages) > 5,
+            ][-MAX_RECENT_MESSAGES:],
+            "truncated": len(messages) > MAX_RECENT_MESSAGES,
+        }
+
+    def _summarize_execution_result(result: Any) -> Any:
+        if not isinstance(result, dict):
+            return result
+
+        sample_rows = result.get("result")
+        sample_rows_summary = None
+        if isinstance(sample_rows, list):
+            sample_rows_summary = sample_rows[:MAX_RESULT_SAMPLE_ROWS]
+
+        sql_text = result.get("sql")
+        sql_preview = (
+            _preview_text(sql_text, max_chars=MAX_SQL_PREVIEW_CHARS)
+            if isinstance(sql_text, str)
+            else None
+        )
+
+        return {
+            "status": result.get("status"),
+            "success": result.get("success"),
+            "query_number": result.get("query_number"),
+            "query_label": result.get("query_label"),
+            "row_count": result.get("row_count"),
+            "columns": result.get("columns"),
+            "column_count": len(result.get("columns", []) or []),
+            "sql_preview": sql_preview,
+            "sql_length": len(sql_text) if isinstance(sql_text, str) else None,
+            "sql_truncated": isinstance(sql_text, str)
+            and len(sql_text) > MAX_SQL_PREVIEW_CHARS,
+            "error_preview": _preview_text(result.get("error"))
+            if result.get("error")
+            else None,
+            "skip_reason_preview": _preview_text(result.get("skip_reason"))
+            if result.get("skip_reason")
+            else None,
+            "sql_explanation_preview": _preview_text(result.get("sql_explanation"))
+            if result.get("sql_explanation")
+            else None,
+            "row_grain_hint": result.get("row_grain_hint"),
+            "result_sample_rows": sample_rows_summary,
+            "result_sample_row_count": len(sample_rows_summary)
+            if sample_rows_summary is not None
+            else None,
+            "result_total_row_count": len(sample_rows)
+            if isinstance(sample_rows, list)
+            else None,
+            "result_payload_truncated": isinstance(sample_rows, list)
+            and len(sample_rows) > MAX_RESULT_SAMPLE_ROWS,
         }
 
     snapshot: dict[str, Any] = {}
@@ -107,6 +159,15 @@ def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
                 snapshot["messages"] = _summarize_messages(value)
             else:
                 snapshot["messages"] = {"payload_type": type(value).__name__}
+        elif key == "execution_result":
+            snapshot["execution_result"] = _summarize_execution_result(value)
+        elif key == "execution_results":
+            if isinstance(value, list):
+                snapshot["execution_results"] = [
+                    _summarize_execution_result(result) for result in value
+                ]
+            else:
+                snapshot["execution_results"] = {"payload_type": type(value).__name__}
         else:
             snapshot[key] = value
     return snapshot
