@@ -4,6 +4,7 @@ LangGraph workflow construction for the multi-agent system.
 This module defines the graph structure, routing logic, and workflow compilation.
 """
 
+import json
 from functools import wraps
 from typing import Any, Callable, Optional, Union
 
@@ -21,39 +22,152 @@ from ..agents.summarize import summarize_node
 
 
 def _trace_state_snapshot(payload: Any) -> dict[str, Any]:
-    """Capture the full agent state for trace inputs/outputs.
-
-    Messages are included so the full conversation is visible in MLflow traces.
-    """
+    """Capture agent state for traces without repeating full transcripts on each span."""
     if not isinstance(payload, dict):
         return {"payload_type": type(payload).__name__}
 
     from langchain_core.messages import BaseMessage
+    MAX_RECENT_MESSAGES = 5
+    MAX_RESULT_SAMPLE_ROWS = 5
+    MAX_SQL_PREVIEW_CHARS = 2000
+
+    def _preview_text(value: Any, max_chars: int = 400) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, default=str)
+            except Exception:
+                text = str(value)
+        return text if len(text) <= max_chars else f"{text[:max_chars]}... [truncated]"
 
     def _serialize_message(message: Any) -> Any:
         if isinstance(message, BaseMessage):
             message_dict: dict[str, Any] = {
                 "type": message.__class__.__name__,
-                "content": message.content,
+                "content_preview": _preview_text(message.content),
+                "content_length": len(_preview_text(message.content, max_chars=100000)),
             }
             if getattr(message, "id", None):
                 message_dict["id"] = str(message.id)
             if getattr(message, "name", None):
                 message_dict["name"] = message.name
             if getattr(message, "tool_calls", None):
-                message_dict["tool_calls"] = message.tool_calls
+                message_dict["tool_call_count"] = len(message.tool_calls)
             if getattr(message, "additional_kwargs", None):
-                message_dict["additional_kwargs"] = message.additional_kwargs
+                message_dict["additional_kwargs_keys"] = sorted(
+                    list(message.additional_kwargs.keys())
+                )
             return message_dict
-        return message
+        return {
+            "type": type(message).__name__,
+            "content_preview": _preview_text(message),
+            "content_length": len(_preview_text(message, max_chars=100000)),
+        }
+
+    def _summarize_messages(messages: list[Any]) -> dict[str, Any]:
+        serialized_messages = [_serialize_message(message) for message in messages]
+        last_user_message = next(
+            (
+                message
+                for message in reversed(serialized_messages)
+                if message.get("type") == "HumanMessage"
+            ),
+            None,
+        )
+        last_assistant_message = next(
+            (
+                message
+                for message in reversed(serialized_messages)
+                if message.get("type") in ("AIMessage", "AIMessageChunk")
+            ),
+            None,
+        )
+
+        return {
+            "count": len(messages),
+            "recent_messages": serialized_messages[-MAX_RECENT_MESSAGES:],
+            "last_user_message_preview": (
+                last_user_message.get("content_preview") if last_user_message else None
+            ),
+            "last_assistant_message_preview": (
+                last_assistant_message.get("content_preview")
+                if last_assistant_message
+                else None
+            ),
+            "message_ids": [
+                message["id"] for message in serialized_messages if message.get("id")
+            ][-MAX_RECENT_MESSAGES:],
+            "truncated": len(messages) > MAX_RECENT_MESSAGES,
+        }
+
+    def _summarize_execution_result(result: Any) -> Any:
+        if not isinstance(result, dict):
+            return result
+
+        sample_rows = result.get("result")
+        sample_rows_summary = None
+        if isinstance(sample_rows, list):
+            sample_rows_summary = sample_rows[:MAX_RESULT_SAMPLE_ROWS]
+
+        sql_text = result.get("sql")
+        sql_preview = (
+            _preview_text(sql_text, max_chars=MAX_SQL_PREVIEW_CHARS)
+            if isinstance(sql_text, str)
+            else None
+        )
+
+        return {
+            "status": result.get("status"),
+            "success": result.get("success"),
+            "query_number": result.get("query_number"),
+            "query_label": result.get("query_label"),
+            "row_count": result.get("row_count"),
+            "columns": result.get("columns"),
+            "column_count": len(result.get("columns", []) or []),
+            "sql_preview": sql_preview,
+            "sql_length": len(sql_text) if isinstance(sql_text, str) else None,
+            "sql_truncated": isinstance(sql_text, str)
+            and len(sql_text) > MAX_SQL_PREVIEW_CHARS,
+            "error_preview": _preview_text(result.get("error"))
+            if result.get("error")
+            else None,
+            "skip_reason_preview": _preview_text(result.get("skip_reason"))
+            if result.get("skip_reason")
+            else None,
+            "sql_explanation_preview": _preview_text(result.get("sql_explanation"))
+            if result.get("sql_explanation")
+            else None,
+            "row_grain_hint": result.get("row_grain_hint"),
+            "result_sample_rows": sample_rows_summary,
+            "result_sample_row_count": len(sample_rows_summary)
+            if sample_rows_summary is not None
+            else None,
+            "result_total_row_count": len(sample_rows)
+            if isinstance(sample_rows, list)
+            else None,
+            "result_payload_truncated": isinstance(sample_rows, list)
+            and len(sample_rows) > MAX_RESULT_SAMPLE_ROWS,
+        }
 
     snapshot: dict[str, Any] = {}
     for key, value in payload.items():
         if key == "messages":
             if isinstance(value, list):
-                snapshot["messages"] = [_serialize_message(message) for message in value]
+                snapshot["messages"] = _summarize_messages(value)
             else:
-                snapshot["messages"] = value
+                snapshot["messages"] = {"payload_type": type(value).__name__}
+        elif key == "execution_result":
+            snapshot["execution_result"] = _summarize_execution_result(value)
+        elif key == "execution_results":
+            if isinstance(value, list):
+                snapshot["execution_results"] = [
+                    _summarize_execution_result(result) for result in value
+                ]
+            else:
+                snapshot["execution_results"] = {"payload_type": type(value).__name__}
         else:
             snapshot[key] = value
     return snapshot
@@ -75,7 +189,7 @@ def _sync_turn_metadata(state: Any, result: Any) -> None:
     if parent_turn_id := current_turn.get("parent_turn_id"):
         trace_metadata["chat.parent_turn_id"] = parent_turn_id
 
-    if trace_metadata:
+    if trace_metadata and mlflow.get_current_active_span() is not None:
         mlflow.update_current_trace(metadata=trace_metadata)
 
 
