@@ -75,7 +75,7 @@ def _sync_turn_metadata(state: Any, result: Any) -> None:
     if parent_turn_id := current_turn.get("parent_turn_id"):
         trace_metadata["chat.parent_turn_id"] = parent_turn_id
 
-    if trace_metadata:
+    if trace_metadata and mlflow.get_current_active_span() is not None:
         mlflow.update_current_trace(metadata=trace_metadata)
 
 

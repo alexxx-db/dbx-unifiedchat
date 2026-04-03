@@ -20,6 +20,7 @@ import litellm
 import mlflow
 from mlflow.entities import SpanType
 from mlflow.genai.agent_server import get_request_headers, invoke, stream
+from mlflow.tracing.provider import with_active_span
 from mlflow.types.responses import (
     ResponsesAgentRequest,
     ResponsesAgentResponse,
@@ -91,6 +92,7 @@ _store_lock = threading.Lock()
 _compiled_workflow_app = None
 _compiled_workflow_checkpointer = None
 _compiled_workflow_checkpointer_exit = None
+_compiled_workflow_last_used_monotonic: Optional[float] = None
 _compiled_workflow_lock = threading.Lock()
 _keep_warm_thread = None
 _keep_warm_lock = threading.Lock()
@@ -100,10 +102,14 @@ _RECOVERABLE_CHECKPOINTER_ERROR_MARKERS = (
     "terminating connection due to administrator command",
     "server closed the connection unexpectedly",
     "ssl connection has been closed unexpectedly",
+    "ssl syscall error",
     "connection is closed",
     "connection not open",
     "broken pipe",
     "connection reset by peer",
+    "operation timed out",
+    "could not receive data from server",
+    "consuming input failed",
 )
 
 
@@ -145,13 +151,32 @@ def _close_compiled_workflow_resources() -> None:
         _compiled_workflow_checkpointer = None
 
 
+def _get_workflow_cache_max_idle_seconds() -> int:
+    raw_value = os.getenv("AGENT_CHECKPOINTER_MAX_IDLE_SECONDS", "300").strip() or "300"
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        logger.warning(
+            "Invalid AGENT_CHECKPOINTER_MAX_IDLE_SECONDS=%r; defaulting to 300 seconds",
+            raw_value,
+        )
+        return 300
+
+
+def _get_compiled_workflow_idle_seconds() -> Optional[float]:
+    if _compiled_workflow_last_used_monotonic is None:
+        return None
+    return time.monotonic() - _compiled_workflow_last_used_monotonic
+
+
 def _reset_compiled_workflow_app(reason: Optional[str] = None) -> None:
     """Drop cached workflow state so the next request rebuilds it."""
-    global _compiled_workflow_app
+    global _compiled_workflow_app, _compiled_workflow_last_used_monotonic
     with _compiled_workflow_lock:
         if reason:
             logger.warning(f"Resetting cached workflow app: {reason}")
         _compiled_workflow_app = None
+        _compiled_workflow_last_used_monotonic = None
         _close_compiled_workflow_resources()
 
 
@@ -175,20 +200,40 @@ atexit.register(_close_compiled_workflow_resources)
 
 def _get_compiled_workflow_app(*, record_trace: bool = True):
     """Compile the workflow once and reuse it across requests."""
-    global _compiled_workflow_app, _compiled_workflow_checkpointer, _compiled_workflow_checkpointer_exit
+    global _compiled_workflow_app, _compiled_workflow_checkpointer
+    global _compiled_workflow_checkpointer_exit, _compiled_workflow_last_used_monotonic
     with mlflow_span_if(
         record_trace,
         name="get_compiled_workflow_app",
         span_type=SpanType.AGENT,
     ) as span:
-        if _compiled_workflow_app is not None:
-            span.set_outputs({"cache_hit": True})
-            return _compiled_workflow_app
-
         with _compiled_workflow_lock:
+            cache_max_idle_seconds = _get_workflow_cache_max_idle_seconds()
             if _compiled_workflow_app is not None:
-                span.set_outputs({"cache_hit": True, "waited_for_lock": True})
-                return _compiled_workflow_app
+                idle_seconds = _get_compiled_workflow_idle_seconds()
+                if (
+                    cache_max_idle_seconds > 0
+                    and idle_seconds is not None
+                    and idle_seconds >= cache_max_idle_seconds
+                ):
+                    logger.warning(
+                        "Cached workflow app idle for %.1f seconds (limit=%ss); recreating checkpointer",
+                        idle_seconds,
+                        cache_max_idle_seconds,
+                    )
+                    _compiled_workflow_app = None
+                    _compiled_workflow_last_used_monotonic = None
+                    _close_compiled_workflow_resources()
+                else:
+                    _compiled_workflow_last_used_monotonic = time.monotonic()
+                    span.set_outputs(
+                        {
+                            "cache_hit": True,
+                            "idle_seconds": idle_seconds,
+                            "cache_max_idle_seconds": cache_max_idle_seconds,
+                        }
+                    )
+                    return _compiled_workflow_app
 
             from databricks_langchain import CheckpointSaver
 
@@ -199,7 +244,12 @@ def _get_compiled_workflow_app(*, record_trace: bool = True):
                 span_type=SpanType.TOOL,
                 attributes={"lakebase_instance_name": LAKEBASE_INSTANCE_NAME or ""},
             ):
+                checkpointer_init_started = time.perf_counter()
                 cm = CheckpointSaver(instance_name=LAKEBASE_INSTANCE_NAME)
+            logger.info(
+                "Initialized workflow checkpointer in %.1f ms",
+                (time.perf_counter() - checkpointer_init_started) * 1000,
+            )
             checkpointer = cm
             exit_fn = None
 
@@ -209,7 +259,12 @@ def _get_compiled_workflow_app(*, record_trace: bool = True):
                     name="workflow_checkpointer_enter",
                     span_type=SpanType.TOOL,
                 ):
+                    checkpointer_enter_started = time.perf_counter()
                     entered = cm.__enter__()
+                logger.info(
+                    "Entered workflow checkpointer context in %.1f ms",
+                    (time.perf_counter() - checkpointer_enter_started) * 1000,
+                )
                 if entered is not None:
                     checkpointer = entered
                 exit_fn = cm.__exit__
@@ -220,8 +275,11 @@ def _get_compiled_workflow_app(*, record_trace: bool = True):
                     name="workflow_compile",
                     span_type=SpanType.AGENT,
                 ) as compile_span:
+                    workflow_compile_started = time.perf_counter()
                     compiled = _workflow.compile(checkpointer=checkpointer)
+                    workflow_compile_ms = (time.perf_counter() - workflow_compile_started) * 1000
                     compile_span.set_outputs({"compiled": True})
+                    logger.info("Compiled workflow in %.1f ms", workflow_compile_ms)
             except Exception:
                 if exit_fn is not None:
                     try:
@@ -235,8 +293,15 @@ def _get_compiled_workflow_app(*, record_trace: bool = True):
             _compiled_workflow_app = compiled
             _compiled_workflow_checkpointer = checkpointer
             _compiled_workflow_checkpointer_exit = exit_fn
+            _compiled_workflow_last_used_monotonic = time.monotonic()
             logger.info("Workflow app compiled and cached")
-            span.set_outputs({"cache_hit": False, "compiled": True})
+            span.set_outputs(
+                {
+                    "cache_hit": False,
+                    "compiled": True,
+                    "cache_max_idle_seconds": cache_max_idle_seconds,
+                }
+            )
             return _compiled_workflow_app
 
 
@@ -519,17 +584,23 @@ async def stream_handler(
     request: ResponsesAgentRequest,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
     """Stream the multi-agent workflow — async wrapper around sync LangGraph execution."""
-    if session_id := get_session_id(request):
-        mlflow.update_current_trace(metadata={"mlflow.trace.session": session_id})
-
+    session_id = get_session_id(request)
     thread_id = _get_or_create_thread_id(request)
     user_id = _get_user_id(request)
     trace_kind = _get_request_header("x-chat-request-kind") or "chat-turn"
     trace_source = _get_request_header("x-chat-trace-source") or "chat-route"
     original_trace_kind = _get_request_header("x-chat-original-request-kind")
+    request_id = _get_request_header("x-chat-request-id") or thread_id
+    user_message_id = _get_request_header("x-chat-user-message-id")
+    retry_attempt_header = _get_request_header("x-chat-retry-attempt") or "0"
+    try:
+        retry_attempt = int(retry_attempt_header)
+    except ValueError:
+        retry_attempt = 0
 
     ci = dict(request.custom_inputs or {})
     ci["thread_id"] = thread_id
+    ci["request_id"] = request_id
     if user_id:
         ci["user_id"] = user_id
     request.custom_inputs = ci
@@ -542,19 +613,50 @@ async def stream_handler(
     cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
     latest_query_input = cc_msgs[-1]["content"] if cc_msgs else ""
     request_preview = _format_request_preview(latest_query_input)
-    if trace_kind != "chat-turn" and request_preview:
+    if trace_kind not in ("chat-turn", "chat-fallback") and request_preview:
         request_preview = f"[{trace_kind}] {request_preview}"
 
-    mlflow.update_current_trace(
-        request_preview=request_preview,
-        metadata={
+    request_span = mlflow.start_span_no_context(
+        name="chat_request",
+        span_type=SpanType.AGENT,
+        inputs={
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "request_id": request_id,
+            "request_kind": trace_kind,
+            "retry_attempt": retry_attempt,
+            "latest_query": latest_query_input,
+        },
+        attributes={
             "chat.thread_id": thread_id,
             "chat.request_kind": trace_kind,
             "chat.trace_source": trace_source,
+            "chat.request_id": request_id,
+            "chat.retry_attempt": str(retry_attempt),
+            "chat.is_retry": str(trace_kind == "chat-fallback").lower(),
             **({"chat.original_request_kind": original_trace_kind} if original_trace_kind else {}),
             **({"chat.user_id": user_id} if user_id else {}),
+            **({"chat.user_message_id": user_message_id} if user_message_id else {}),
         },
     )
+    with with_active_span(request_span):
+        if session_id:
+            mlflow.update_current_trace(metadata={"mlflow.trace.session": session_id})
+
+        mlflow.update_current_trace(
+            request_preview=request_preview,
+            metadata={
+                "chat.thread_id": thread_id,
+                "chat.request_kind": trace_kind,
+                "chat.trace_source": trace_source,
+                "chat.request_id": request_id,
+                "chat.retry_attempt": str(retry_attempt),
+                "chat.is_retry": str(trace_kind == "chat-fallback").lower(),
+                **({"chat.original_request_kind": original_trace_kind} if original_trace_kind else {}),
+                **({"chat.user_id": user_id} if user_id else {}),
+                **({"chat.user_message_id": user_message_id} if user_message_id else {}),
+            },
+        )
 
     latest_query = latest_query_input
 
@@ -602,26 +704,42 @@ Guidelines:
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    parent_span = request_span
 
     def _run_workflow():
         """Stream events from the sync LangGraph workflow into an asyncio.Queue."""
+        workflow_span = mlflow.start_span_no_context(
+            name="langgraph_workflow",
+            span_type=SpanType.AGENT,
+            parent_span=parent_span,
+            inputs={
+                "original_query": latest_query,
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "request_id": request_id,
+                "execution_mode": execution_mode,
+                "force_synthesis_route": force_synthesis_route,
+                "clarification_sensitivity": clarification_sensitivity,
+                "count_only": count_only,
+            },
+            attributes={
+                "thread_id": thread_id,
+                "request_id": request_id,
+                "execution_mode": execution_mode,
+                "force_synthesis_route": force_synthesis_route,
+                "clarification_sensitivity": clarification_sensitivity,
+                "count_only": str(count_only).lower(),
+            },
+        )
         try:
-            with mlflow.start_span(
-                name="langgraph_workflow",
-                span_type=SpanType.AGENT,
-                attributes={
-                    "thread_id": thread_id,
-                    "execution_mode": execution_mode,
-                    "force_synthesis_route": force_synthesis_route,
-                    "clarification_sensitivity": clarification_sensitivity,
-                    "count_only": count_only,
-                },
-            ) as span:
+            with with_active_span(workflow_span):
+                span = workflow_span
                 span.set_inputs(
                     {
                         "original_query": latest_query,
                         "thread_id": thread_id,
                         "user_id": user_id,
+                        "request_id": request_id,
                         "execution_mode": execution_mode,
                         "force_synthesis_route": force_synthesis_route,
                         "clarification_sensitivity": clarification_sensitivity,
@@ -633,13 +751,29 @@ Guidelines:
 
                 for attempt in range(2):
                     attempt_emitted_events = False
+                    workflow_stage = "app_load"
                     try:
+                        attempt_started = time.perf_counter()
+                        app_load_started = time.perf_counter()
                         app = _get_compiled_workflow_app()
+                        app_load_ms = (time.perf_counter() - app_load_started) * 1000
                         logger.info(
-                            f"Executing cached workflow app (thread: {thread_id}, attempt: {attempt + 1})"
+                            "Executing cached workflow app (thread: %s, attempt: %s, app_load_ms=%.1f)",
+                            thread_id,
+                            attempt + 1,
+                            app_load_ms,
                         )
 
+                        workflow_stage = "state_load"
+                        state_load_started = time.perf_counter()
                         existing_state = app.get_state(run_config)
+                        state_load_ms = (time.perf_counter() - state_load_started) * 1000
+                        logger.info(
+                            "Loaded workflow state for thread %s on attempt %s in %.1f ms",
+                            thread_id,
+                            attempt + 1,
+                            state_load_ms,
+                        )
                         if existing_state.tasks and any(
                             hasattr(t, "interrupts") and t.interrupts for t in existing_state.tasks
                         ):
@@ -652,6 +786,8 @@ Guidelines:
                         else:
                             input_data = initial_state
 
+                        workflow_stage = "stream"
+                        stream_started = time.perf_counter()
                         for raw_event in app.stream(
                             input_data,
                             run_config,
@@ -671,12 +807,39 @@ Guidelines:
                             if mode == "updates" and not ns and isinstance(data, dict):
                                 last_state.update(data)
                             # Only retry before any stream events were emitted to avoid duplicates.
+                            if not attempt_emitted_events:
+                                logger.info(
+                                    "First workflow stream event for thread %s on attempt %s after %.1f ms "
+                                    "(app_load_ms=%.1f, state_load_ms=%.1f)",
+                                    thread_id,
+                                    attempt + 1,
+                                    (time.perf_counter() - stream_started) * 1000,
+                                    app_load_ms,
+                                    state_load_ms,
+                                )
                             attempt_emitted_events = True
                             loop.call_soon_threadsafe(
                                 queue.put_nowait, (ns, mode, data)
                             )
+                        logger.info(
+                            "Workflow stream completed for thread %s on attempt %s in %.1f ms",
+                            thread_id,
+                            attempt + 1,
+                            (time.perf_counter() - attempt_started) * 1000,
+                        )
                         break
                     except Exception as exc:
+                        timeout_shaped_state_load_failure = (
+                            workflow_stage == "state_load"
+                            and _is_recoverable_checkpointer_error(exc)
+                        )
+                        if timeout_shaped_state_load_failure:
+                            _reset_compiled_workflow_app(
+                                reason=(
+                                    f"timeout-shaped workflow state load failure on thread {thread_id}: {exc}"
+                                )
+                            )
+
                         is_retryable = (
                             attempt == 0
                             and not attempt_emitted_events
@@ -691,7 +854,8 @@ Guidelines:
                             thread_id,
                             exc,
                         )
-                        _reset_compiled_workflow_app(reason=str(exc))
+                        if not timeout_shaped_state_load_failure:
+                            _reset_compiled_workflow_app(reason=str(exc))
                         last_state = {}
                         continue
 
@@ -707,6 +871,10 @@ Guidelines:
         except Exception as exc:
             loop.call_soon_threadsafe(queue.put_nowait, exc)
         finally:
+            try:
+                workflow_span.end()
+            except Exception:
+                logger.debug("Failed to end workflow span cleanly", exc_info=True)
             loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 
     trace_context = contextvars.copy_context()
@@ -925,3 +1093,13 @@ Guidelines:
         f"Workflow completed (thread: {thread_id}) "
         f"TTFT={first_token_time - workflow_start_time if first_token_time else 'N/A'}s, TTCL={ttcl:.3f}s"
     )
+    request_span.set_outputs(
+        {
+            "thread_id": thread_id,
+            "request_id": request_id,
+            "ttft_seconds": first_token_time - workflow_start_time if first_token_time else None,
+            "ttcl_seconds": ttcl,
+            "first_token_emitted": first_token_time is not None,
+        }
+    )
+    request_span.end()

@@ -75,6 +75,151 @@ const chatAgentSettingsSchema = z.object({
 });
 
 const streamCache = new StreamCache();
+const ACTIVE_TURN_DEDUPE_WINDOW_MS = 15 * 1000;
+
+type ActiveTurnRequest = {
+  logicalRequestId: string;
+  incomingMessageId: string | null;
+  partFingerprint: string | null;
+  previousAnchorId: string | null;
+  streamId: string;
+  createdAt: number;
+  streamReadyPromise: Promise<void>;
+  resolveStreamReady: () => void;
+};
+
+const activeTurnRequests = new Map<string, ActiveTurnRequest>();
+
+function getMessagePartFingerprint(message?: ChatMessage): string | null {
+  if (!message) {
+    return null;
+  }
+
+  try {
+    return JSON.stringify(message.parts);
+  } catch {
+    return null;
+  }
+}
+
+function getPreviousAnchorId(previousMessages: ChatMessage[]): string | null {
+  return previousMessages.at(-1)?.id ?? null;
+}
+
+function getLogicalRequestId({
+  chatId,
+  message,
+  previousMessages,
+}: {
+  chatId: string;
+  message?: ChatMessage;
+  previousMessages: ChatMessage[];
+}): string {
+  if (message?.id) {
+    return message.id;
+  }
+
+  return `${chatId}:${previousMessages.at(-1)?.id ?? 'continuation'}`;
+}
+
+function clearActiveTurnRequest(chatId: string): void {
+  activeTurnRequests.delete(chatId);
+}
+
+function createActiveTurnRequest({
+  logicalRequestId,
+  message,
+  previousMessages,
+  streamId,
+}: {
+  logicalRequestId: string;
+  message: ChatMessage;
+  previousMessages: ChatMessage[];
+  streamId: string;
+}): ActiveTurnRequest {
+  let resolveStreamReady!: () => void;
+  const streamReadyPromise = new Promise<void>((resolve) => {
+    resolveStreamReady = resolve;
+  });
+
+  return {
+    logicalRequestId,
+    incomingMessageId: message.id,
+    partFingerprint: getMessagePartFingerprint(message),
+    previousAnchorId: getPreviousAnchorId(previousMessages),
+    streamId,
+    createdAt: Date.now(),
+    streamReadyPromise,
+    resolveStreamReady,
+  };
+}
+
+function findDuplicateActiveTurn({
+  chatId,
+  message,
+  previousMessages,
+}: {
+  chatId: string;
+  message?: ChatMessage;
+  previousMessages: ChatMessage[];
+}): ActiveTurnRequest | null {
+  if (!message) {
+    return null;
+  }
+
+  const activeTurn = activeTurnRequests.get(chatId);
+  if (!activeTurn) {
+    return null;
+  }
+
+  if (Date.now() - activeTurn.createdAt > ACTIVE_TURN_DEDUPE_WINDOW_MS) {
+    clearActiveTurnRequest(chatId);
+    return null;
+  }
+
+  const sameMessageId = activeTurn.incomingMessageId === message.id;
+  const sameContentAndContext =
+    activeTurn.partFingerprint === getMessagePartFingerprint(message) &&
+    activeTurn.previousAnchorId === getPreviousAnchorId(previousMessages);
+
+  return sameMessageId || sameContentAndContext ? activeTurn : null;
+}
+
+async function pipeCachedStreamToResponse({
+  res,
+  streamId,
+  streamReadyPromise,
+}: {
+  res: Response;
+  streamId: string;
+  streamReadyPromise?: Promise<void>;
+}): Promise<boolean> {
+  if (streamReadyPromise) {
+    await Promise.race([
+      streamReadyPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+    ]);
+  }
+
+  const stream = streamCache.getStream(streamId);
+  if (!stream) {
+    return false;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  stream.pipe(res);
+  stream.on('error', (error) => {
+    console.error('[Chat] Cached stream replay error:', error);
+    if (!res.headersSent) {
+      res.status(500).end();
+    }
+  });
+
+  return true;
+}
 // Apply auth middleware to all chat routes
 chatRouter.use(authMiddleware);
 
@@ -100,6 +245,8 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     const response = error.toResponse();
     return res.status(response.status).json(response.json);
   }
+
+  let activeTurnRequest: ActiveTurnRequest | null = null;
 
   try {
     const {
@@ -202,11 +349,54 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     const previousMessages = useClientMessages
       ? (requestBody.previousMessages ?? [])
       : convertToUIMessages(messagesFromDb);
+    const logicalRequestId = getLogicalRequestId({
+      chatId: id,
+      message,
+      previousMessages: previousMessages as ChatMessage[],
+    });
+    const streamId = generateUUID();
+
+    const duplicateActiveTurn = findDuplicateActiveTurn({
+      chatId: id,
+      message,
+      previousMessages: previousMessages as ChatMessage[],
+    });
+    if (duplicateActiveTurn) {
+      console.warn(
+        '[Chat] Duplicate turn detected, reusing active stream',
+        {
+          chatId: id,
+          logicalRequestId: duplicateActiveTurn.logicalRequestId,
+          incomingMessageId: message?.id,
+        },
+      );
+      const attached = await pipeCachedStreamToResponse({
+        res,
+        streamId: duplicateActiveTurn.streamId,
+        streamReadyPromise: duplicateActiveTurn.streamReadyPromise,
+      });
+      if (attached) {
+        return;
+      }
+
+      return res.status(409).json({
+        error: 'Duplicate chat turn already in progress',
+      });
+    }
+
+    clearActiveTurnRequest(id);
 
     // If message is provided, add it to the list and save it
     // If not (continuation/regeneration), just use previous messages
     let uiMessages: ChatMessage[];
     if (message) {
+      activeTurnRequest = createActiveTurnRequest({
+        logicalRequestId,
+        message,
+        previousMessages: previousMessages as ChatMessage[],
+        streamId,
+      });
+      activeTurnRequests.set(id, activeTurnRequest);
       uiMessages = [...previousMessages, message];
       await saveMessages({
         messages: [
@@ -270,11 +460,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
 
     // Clear any previous active stream for this chat
     streamCache.clearActiveStream(id);
+    if (!message) {
+      clearActiveTurnRequest(id);
+    }
 
     let finalUsage: LanguageModelUsage | undefined;
     let traceId: string | null = null;
     let clarificationData: { reason: string; options: string[] } | null = null;
-    const streamId = generateUUID();
 
     const model = await myProvider.languageModel(selectedChatModel);
     const modelMessages = await convertToModelMessages(uiMessages);
@@ -283,6 +475,8 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     const requestHeaders = {
       [CONTEXT_HEADER_CONVERSATION_ID]: id,
       [CONTEXT_HEADER_USER_ID]: session.user.email ?? session.user.id,
+      'x-chat-request-id': logicalRequestId,
+      'x-chat-user-message-id': message?.id ?? '',
       'x-agent-execution-mode': chatAgentSettings?.executionMode ?? 'parallel',
       'x-agent-synthesis-route': chatAgentSettings?.synthesisRoute ?? 'auto',
       'x-agent-clarification-sensitivity':
@@ -290,6 +484,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       'x-agent-count-only': String(chatAgentSettings?.countOnly ?? false),
       'x-chat-request-kind': traceKind,
       'x-chat-trace-source': 'chat-route',
+      'x-chat-retry-attempt': '0',
       ...(req.headers['x-forwarded-access-token']
         ? { 'x-forwarded-access-token': req.headers['x-forwarded-access-token'] as string }
         : {}),
@@ -375,6 +570,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
                 ...requestHeaders,
                 'x-chat-request-kind': 'chat-fallback',
                 'x-chat-original-request-kind': traceKind,
+                'x-chat-retry-attempt': '1',
               },
             },
             writer,
@@ -426,6 +622,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         }
 
         streamCache.clearActiveStream(id);
+        if (
+          activeTurnRequest &&
+          activeTurnRequests.get(id)?.logicalRequestId ===
+            activeTurnRequest.logicalRequestId
+        ) {
+          clearActiveTurnRequest(id);
+        }
       },
     });
 
@@ -438,9 +641,25 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           chatId: id,
           stream,
         });
+        if (
+          activeTurnRequest &&
+          activeTurnRequests.get(id)?.logicalRequestId ===
+            activeTurnRequest.logicalRequestId
+        ) {
+          activeTurnRequest.resolveStreamReady();
+        }
       },
     });
   } catch (error) {
+    if (
+      activeTurnRequest &&
+      activeTurnRequests.get(requestBody.id)?.logicalRequestId ===
+        activeTurnRequest.logicalRequestId
+    ) {
+      activeTurnRequest.resolveStreamReady();
+      clearActiveTurnRequest(requestBody.id);
+    }
+
     console.error('[Chat] Caught error in chat API:', {
       errorType: error?.constructor?.name,
       message: error instanceof Error ? error.message : String(error),
